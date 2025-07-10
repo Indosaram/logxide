@@ -49,9 +49,11 @@ pre-commit run
 
 ### Configuration Files
 
-- `.pre-commit-config.yaml`: Pre-commit configuration
-- `ruff.toml`: Ruff (Python) configuration
+- `.pre-commit-config.yaml`: Pre-commit hook configuration
+- `pyproject.toml`: All Python tool configurations (ruff, pytest, coverage, pyright)
 - No additional Rust config needed (uses defaults)
+
+All Python project settings are centralized in `pyproject.toml` following modern Python packaging standards.
 
 ### Development Workflow
 
@@ -75,10 +77,24 @@ Install these extensions for optimal development experience:
 
 ### Configuration
 
-Ruff is configured to work as a drop-in replacement for:
+All Python tools are configured in `pyproject.toml` following PEP 518 standards:
+
+**Ruff** (replaces multiple tools):
 - Black (formatting)
 - isort (import sorting)
 - flake8 (linting)
 - pyupgrade (syntax upgrades)
 
-The configuration allows for necessary exceptions in examples and tests while maintaining strict standards for the core codebase.
+**Pytest** (testing):
+- Test discovery and execution settings
+- Coverage reporting configuration
+- Custom markers for test organization
+
+**Coverage** (code coverage):
+- Source and omit patterns
+- Report exclusion rules
+
+**Pyright** (type checking):
+- Virtual environment configuration
+
+This single-file approach simplifies project maintenance and follows modern Python packaging best practices.

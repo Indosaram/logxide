@@ -1,14 +1,12 @@
 [project]
-name="logxide"
-description="Fast and powerful logging library for Python, written in Rust."
-requires-python =">=3.9, <3.14"
+name = "logxide"
+description = "Fast and powerful logging library for Python, written in Rust."
+requires-python = ">=3.9, <3.14"
 dynamic = ["version"]
 dependencies = []
 
 [build-system]
-requires = [
-  "maturin",
-]
+requires = ["maturin"]
 
 [project.optional-dependencies]
 dev = [
@@ -18,3 +16,146 @@ dev = [
     "ruff",
     "pre-commit",
 ]
+
+# ===== Tool Configurations =====
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "target",
+]
+
+# Same as Black.
+line-length = 88
+indent-width = 4
+
+# Assume Python 3.9+ (matching requires-python)
+target-version = "py39"
+
+[tool.ruff.lint]
+# Enable pycodestyle (`E`) and Pyflakes (`F`) codes by default.
+# Additionally enable:
+# - pyupgrade (`UP`) - upgrade syntax for newer versions of Python
+# - flake8-bugbear (`B`) - find likely bugs and design problems
+# - flake8-simplify (`SIM`) - suggest simpler alternatives
+# - isort (`I`) - import sorting
+# - flake8-comprehensions (`C4`) - improve list/dict/set comprehensions
+select = ["E", "F", "UP", "B", "SIM", "I", "C4"]
+
+ignore = [
+    # Allow non-abstract empty methods in abstract base classes
+    "B027",
+    # Allow boolean positional values in function calls, like `dict.get(... True)`
+    "FBT003",
+    # Ignore checks for possible passwords
+    "S105", "S106", "S107",
+    # Ignore complexity
+    "C901",
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can use magic values, assertions, and relative imports
+"tests/**/*" = ["PLR2004", "S101", "TID252", "E501", "F841", "B007"]
+# Examples can have magic values, assertions, and imports not at top (due to logxide.install())
+"examples/**/*" = ["PLR2004", "S101", "E402", "F401", "E501", "F841"]
+# Benchmark scripts can have long lines and unused variables
+"benchmark/**/*" = ["E501", "F841"]
+# Main package
+"logxide/__init__.py" = ["E402", "SIM102"]
+# Root level test files
+"test_*.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["logxide"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--verbose",
+    "--tb=short",
+    "--strict-markers",
+    "--disable-warnings",
+    "--cov=logxide",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "threading: marks tests that involve threading",
+    "formatting: marks tests for log formatting",
+]
+
+[tool.coverage.run]
+source = ["logxide"]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+    "setup.py",
+    "*/venv/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\(Protocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+ignore = []
