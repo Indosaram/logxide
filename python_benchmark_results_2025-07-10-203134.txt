@@ -1,0 +1,1 @@
+Python benchmark with NUM_THREADS=100 emitted 486452 logs in 10 seconds

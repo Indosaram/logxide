@@ -1,0 +1,1 @@
+Rust benchmark emitted 3316035 logs in 10 seconds

@@ -1,0 +1,20 @@
+[project]
+name="logxide"
+description="Fast and powerful logging library for Python, written in Rust."
+requires-python =">=3.9, <3.14"
+dynamic = ["version"]
+dependencies = []
+
+[build-system]
+requires = [
+  "maturin",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "mypy",
+    "ruff",
+    "pre-commit",
+]
