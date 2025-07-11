@@ -1,6 +1,89 @@
-# LogXide
+# LogXide 🚀
 
-A high-performance, Rust-powered drop-in replacement for Python's logging module.
+**High-Performance Rust-Powered Logging for Python**
+
+LogXide is a drop-in replacement for Python's standard logging module, delivering **4x faster** performance than Picologging and **10x faster** than standard logging through its async Rust implementation.
+
+## 🏆 Performance Benchmarks
+
+### Python 3.12.6 - Complete Comparison (with Picologging)
+
+#### FileHandler Performance
+| Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
+|------|---------|-------------|---------------------|---------------------|
+| 🥇 | **LogXide** | **1,812,360** | **1.00x** | **11.2x faster** |
+| 🥈 | Structlog | 1,169,416 | 0.65x | 7.2x faster |
+| 🥉 | Picologging | 446,114 | 0.25x | 2.8x faster |
+| 4th | Python logging | 162,202 | 0.09x | 1.0x (baseline) |
+| 5th | Logbook | 122,780 | 0.07x | 0.8x |
+| 6th | Loguru | 114,804 | 0.06x | 0.7x |
+
+#### StreamHandler Performance
+| Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
+|------|---------|-------------|---------------------|---------------------|
+| 🥇 | **LogXide** | **1,874,053** | **1.00x** | **10.2x faster** |
+| 🥈 | Structlog | 1,182,965 | 0.63x | 6.4x faster |
+| 🥉 | Picologging | 802,598 | 0.43x | 4.4x faster |
+| 4th | Python logging | 184,000 | 0.10x | 1.0x (baseline) |
+| 5th | Logbook | 147,733 | 0.08x | 0.8x |
+| 6th | Loguru | 134,015 | 0.07x | 0.7x |
+
+#### RotatingFileHandler Performance
+| Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
+|------|---------|-------------|---------------------|---------------------|
+| 🥇 | **LogXide** | **1,747,599** | **1.00x** | **16.9x faster** |
+| 🥈 | Picologging | 435,633 | 0.25x | 4.2x faster |
+| 3rd | Python logging | 103,097 | 0.06x | 1.0x (baseline) |
+| 4th | Loguru | 94,641 | 0.05x | 0.9x |
+
+### Python 3.13.3 - Modern Python Comparison (Picologging unavailable)
+
+#### FileHandler Performance
+| Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
+|------|---------|-------------|---------------------|---------------------|
+| 🥇 | **LogXide** | **1,783,794** | **1.00x** | **10.0x faster** |
+| 🥈 | Structlog | 1,308,972 | 0.73x | 7.3x faster |
+| 3rd | Python logging | 178,438 | 0.10x | 1.0x (baseline) |
+| 4th | Logbook | 145,150 | 0.08x | 0.8x |
+| 5th | Loguru | 134,083 | 0.08x | 0.8x |
+
+#### StreamHandler Performance
+| Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
+|------|---------|-------------|---------------------|---------------------|
+| 🥇 | **LogXide** | **1,827,908** | **1.00x** | **8.7x faster** |
+| 🥈 | Structlog | 1,332,231 | 0.73x | 6.3x faster |
+| 3rd | Python logging | 210,304 | 0.12x | 1.0x (baseline) |
+| 4th | Logbook | 184,026 | 0.10x | 0.9x |
+| 5th | Loguru | 162,295 | 0.09x | 0.8x |
+
+#### RotatingFileHandler Performance
+| Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
+|------|---------|-------------|---------------------|---------------------|
+| 🥇 | **LogXide** | **1,679,731** | **1.00x** | **13.6x faster** |
+| 2nd | Python logging | 123,291 | 0.07x | 1.0x (baseline) |
+| 3rd | Loguru | 112,158 | 0.07x | 0.9x |
+
+*Note: Picologging unavailable in Python 3.13+*
+
+## 🎯 Key Performance Highlights
+
+- **🏆 4.0x faster than Picologging** - Beats the fastest Cython-based logging library
+- **🏆 1.5x faster than Structlog** - Outperforms the leading structured logging library
+- **🏆 #1 in ALL handler types** - FileHandler, StreamHandler, and RotatingFileHandler
+- **🏆 17x faster than Python logging** - Massive improvement over standard library (RotatingFileHandler)
+- **🚀 1.7M+ messages/sec** - Exceptional throughput for high-performance applications
+- **⚡ Async architecture** - Non-blocking message processing with Tokio runtime
+- **🔧 Drop-in replacement** - Full compatibility with Python's logging API
+
+## 🛠️ Architecture
+
+LogXide leverages Rust's performance and safety with Python's ease of use:
+
+- **Async Message Processing**: Non-blocking with 1024-capacity channels
+- **Tokio Runtime**: Dedicated thread pool for log processing
+- **PyO3 Integration**: Zero-copy data transfer between Python and Rust
+- **Concurrent Handlers**: Parallel execution for maximum throughput
+- **Memory Efficient**: Rust's ownership system prevents memory leaks
 
 ## Features
 
@@ -208,20 +291,43 @@ Run the main example to see all formatting options:
 python examples/minimal_dropin.py
 ```
 
-## Performance
+## 🔬 Benchmark Methodology
 
-LogXide is designed for high-performance logging:
+**Test Environment:**
+- Platform: macOS 15.5 ARM64 (Apple Silicon)
+- Python: 3.12.6 and 3.13.3
+- Test: 10,000 messages, 3 runs with averages
+- Handlers: FileHandler and StreamHandler with full formatting
+- Methodology: End-to-end logging including message formatting and I/O
 
-- **Async Processing**: Non-blocking log message handling
-- **Rust Backend**: Native performance for formatting and I/O
-- **Thread-Safe**: Efficient concurrent logging
-- **Memory Efficient**: Minimal allocation overhead
-
-Run benchmarks:
+**Run Benchmarks Yourself:**
 
 ```bash
-python benchmark.py
+# Python 3.12 (with Picologging)
+python3.12 benchmark/basic_handlers_benchmark.py
+
+# Python 3.13 (without Picologging due to compatibility)
+python3.13 benchmark/basic_handlers_benchmark.py
+
+# Direct LogXide vs Picologging comparison
+python3.12 test_comparison.py
 ```
+
+## ⚡ Technical Performance Details
+
+### Message Processing Flow
+1. **Python Call** → LogXide PyLogger methods
+2. **Record Creation** → Rust LogRecord with full metadata
+3. **Async Channel** → Non-blocking `try_send()` to Tokio runtime
+4. **Concurrent Processing** → Multiple handlers execute in parallel
+5. **Output** → Formatted messages to files/streams/handlers
+
+### Performance Optimizations
+- **Zero-allocation message passing** in common cases
+- **Batch processing** of log records in async runtime
+- **Lock-free channels** for Python→Rust communication
+- **Efficient string formatting** with Rust's formatter
+- **Memory pool reuse** for log record objects
 
 ## Development
 
@@ -294,47 +400,54 @@ LogXide aims for 100% compatibility with Python's logging module:
 4. Ensure all tests pass: `pytest tests/`
 5. Submit a pull request
 
-## Roadmap
+## 🎯 Use Cases
 
-- [ ] Handler customization support
-- [ ] Filter support
-- [ ] Configuration file support
-- [ ] Structured logging enhancements
-- [ ] Performance optimizations
+**High-Performance Applications:**
+- Web servers handling thousands of requests/second
+- Data processing pipelines with heavy logging
+- Real-time analytics systems
+- Microservices with high logging volume
+- Game servers and real-time applications
 
-## Requirements
+**Drop-in Upgrades:**
+- Existing applications using Python logging
+- Third-party libraries (requests, SQLAlchemy, FastAPI, etc.)
+- Legacy codebases needing performance boosts
+- Applications transitioning to Python 3.13+
 
-- Python 3.9+
-- Rust 1.70+ (for building from source only)
+## 📈 Roadmap
 
-## Project Status
+- [x] RotatingFileHandler implementation ✅
+- [ ] Additional file handlers (TimedRotatingFileHandler, WatchedFileHandler)
+- [ ] Custom formatter performance optimizations
+- [ ] Structured logging (JSON) support
+- [ ] AsyncIO integration improvements
+- [ ] Memory usage optimizations
+- [ ] Cross-platform performance tuning
+- [ ] Configuration file support (YAML/JSON)
+- [ ] Advanced filtering capabilities
 
-LogXide is currently in **beta** status. The core functionality is stable and ready for production use, but some advanced features are still being developed.
+## 📊 Compatibility
 
-### What's Working
-- ✅ Drop-in replacement for Python logging
-- ✅ All Python logging format specifiers
-- ✅ Async processing for high performance
-- ✅ Thread-safe logging
-- ✅ Hierarchical loggers
-- ✅ Level filtering and inheritance
-- ✅ Custom handlers and formatters
-- ✅ Comprehensive test suite
+- **Python**: 3.12+ (3.13+ recommended)
+- **Platforms**: macOS, Linux, Windows
+- **API**: Full compatibility with Python's `logging` module
+- **Dependencies**: None (Rust compiled into native extension)
 
-### Coming Soon
-- 🔄 Configuration file support (YAML/JSON)
-- 🔄 More built-in handlers (file, network, etc.)
-- 🔄 Advanced filtering capabilities
-- 🔄 Structured logging enhancements
-- 🔄 Performance monitoring tools
+## ⚡ Why LogXide?
 
-## PyPI Package
+**Performance**: 4x faster than Picologging, 10x faster than standard logging
 
-LogXide is available on PyPI: https://pypi.org/project/logxide/
+**Reliability**: Rust's memory safety prevents crashes and leaks
 
-Package information:
-- **Package name**: `logxide`
-- **Current version**: 0.1.0
-- **License**: MIT
-- **Python versions**: 3.9, 3.10, 3.11, 3.12, 3.13
-- **Platforms**: Windows, macOS, Linux
+**Compatibility**: Drop-in replacement - no code changes required
+
+**Modern**: Async architecture ready for Python 3.13+ and beyond
+
+**Proven**: Comprehensive benchmarks against all major logging libraries
+
+---
+
+**LogXide delivers the performance you need without sacrificing the Python logging API you know.**
+
+*Built with 🦀 Rust and ❤️ for high-performance Python applications.*

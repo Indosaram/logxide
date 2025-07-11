@@ -61,7 +61,7 @@ module-name = "logxide.logxide"
 dev = [
     "pytest",
     "pytest-cov",
-    "mypy",
+    "pyright",
     "ruff",
     "pre-commit",
     "mkdocs",
@@ -153,7 +153,7 @@ line-ending = "auto"
 # Examples can have magic values, assertions, and imports not at top (due to logxide.install())
 "examples/**/*" = ["PLR2004", "S101", "E402", "F401", "E501", "F841"]
 # Benchmark scripts can have long lines and unused variables
-"benchmark/**/*" = ["E501", "F841"]
+"benchmark/**/*" = ["E501", "F841", "F401"]
 # Main package
 "logxide/__init__.py" = ["E402", "SIM102"]
 # Root level test files
