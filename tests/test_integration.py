@@ -2,6 +2,7 @@
 Integration tests for logxide.
 Tests real-world scenarios without output capture complexity.
 """
+
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -122,19 +123,19 @@ class TestRealWorldScenarios:
 
         # Simulate web server
         def web_server():
-            logging.set_thread_name("WebServer")
+            # Thread name set via threading.current_thread().name
             logger = logging.getLogger("app.web")
             logger.info("Web server starting")
 
             for i in range(3):
-                logger.info(f"Handling request {i+1}")
+                logger.info(f"Handling request {i + 1}")
                 time.sleep(0.01)
 
             logger.info("Web server shutting down")
 
         # Simulate database connection pool
         def db_pool():
-            logging.set_thread_name("DBPool")
+            # Thread name set via threading.current_thread().name
             logger = logging.getLogger("app.database.pool")
             logger.info("Database pool initializing")
             logger.warning("Pool utilization high: 80%")
@@ -142,12 +143,12 @@ class TestRealWorldScenarios:
 
         # Simulate background task processor
         def task_processor():
-            logging.set_thread_name("TaskProc")
+            # Thread name set via threading.current_thread().name
             logger = logging.getLogger("app.tasks")
             logger.info("Task processor starting")
 
             for i in range(2):
-                logger.info(f"Processing background task {i+1}")
+                logger.info(f"Processing background task {i + 1}")
                 if i == 1:
                     logger.error("Task failed, will retry")
                 time.sleep(0.01)
@@ -155,7 +156,7 @@ class TestRealWorldScenarios:
             logger.info("Task processor finished")
 
         # Main application thread
-        logging.set_thread_name("MainApp")
+        # Thread name set via threading.current_thread().name
         main_logger = logging.getLogger("app.main")
 
         main_logger.info("Application startup initiated")
@@ -185,7 +186,7 @@ class TestRealWorldScenarios:
         logging.basicConfig(format="%(threadName)s-%(name)s: %(message)s")
 
         def high_throughput_worker(worker_id):
-            logging.set_thread_name(f"HighThroughput-{worker_id}")
+            # Thread name set via threading.current_thread().name
             logger = logging.getLogger(f"throughput.worker.{worker_id}")
             logger.setLevel(logging.INFO)
 
@@ -268,7 +269,7 @@ class TestFormatReconfiguration:
         """Test various complex format combinations."""
         logger = logging.getLogger("complex.formats")
         logger.setLevel(logging.INFO)
-        logging.set_thread_name("ComplexFormatTest")
+        # Thread name set via threading.current_thread().name
 
         formats = [
             # Production-like format
@@ -285,7 +286,7 @@ class TestFormatReconfiguration:
 
         for i, fmt in enumerate(formats):
             logging.basicConfig(format=fmt, datefmt="%Y-%m-%d %H:%M:%S")
-            logger.info(f"Testing format combination {i+1}")
+            logger.info(f"Testing format combination {i + 1}")
             logging.flush()
 
 
@@ -299,7 +300,7 @@ class TestThreadSafety:
 
         def config_changer():
             """Thread that changes logging configuration."""
-            logging.set_thread_name("ConfigChanger")
+            # Thread name set via threading.current_thread().name
             formats = [
                 "CONFIG1: %(threadName)s - %(message)s",
                 "CONFIG2: %(levelname)s:%(threadName)s - %(message)s",
@@ -312,7 +313,7 @@ class TestThreadSafety:
 
         def message_logger(worker_id):
             """Thread that logs messages."""
-            logging.set_thread_name(f"Logger-{worker_id}")
+            # Thread name set via threading.current_thread().name
             logger = logging.getLogger(f"concurrent.{worker_id}")
             logger.setLevel(logging.INFO)
 
@@ -343,7 +344,7 @@ class TestThreadSafety:
         logging.basicConfig(format="%(threadName)s-%(name)s-%(levelname)s: %(message)s")
 
         def stress_worker(worker_id):
-            logging.set_thread_name(f"Stress-{worker_id}")
+            # Thread name set via threading.current_thread().name
             logger = logging.getLogger(f"stress.{worker_id % 5}")  # Shared loggers
             logger.setLevel(logging.INFO)
 

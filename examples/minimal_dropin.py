@@ -117,7 +117,7 @@ def test_multithreaded_format():
         logger.setLevel(logging.INFO)
 
         for i in range(3):
-            logger.info(f"Processing task {i+1}")
+            logger.info(f"Processing task {i + 1}")
             time.sleep(0.1)  # Simulate work
 
         logger.info("Worker completed all tasks")

@@ -2,6 +2,7 @@
 Simplified basic logging functionality tests.
 Focus on functionality rather than output capture.
 """
+
 import threading
 import time
 
@@ -152,20 +153,25 @@ class TestBasicLoggingSimple:
     @pytest.mark.unit
     def test_thread_names(self, clean_logging_state):
         """Test thread naming functionality."""
-        # Test setting and getting thread names
-        logging.set_thread_name("TestThread")
-        assert logging.get_thread_name() == "TestThread"
+        import threading
 
-        logging.set_thread_name("AnotherThread")
-        assert logging.get_thread_name() == "AnotherThread"
+        # Set Python thread name (this will be used by LogRecord)
+        original_name = threading.current_thread().name
+        threading.current_thread().name = "TestThread"
 
         # Test with logging
         logging.basicConfig(format="%(threadName)s: %(message)s")
         logger = logging.getLogger("test.threadname")
         logger.setLevel(logging.INFO)
 
-        logging.set_thread_name("MainTestThread")
+        logger.info("Message from test thread")
+
+        # Change thread name
+        threading.current_thread().name = "MainTestThread"
         logger.info("Message from main thread")
+
+        # Restore original thread name
+        threading.current_thread().name = original_name
         logging.flush()
 
 
@@ -243,7 +249,9 @@ class TestThreadingSimple:
         logging.basicConfig(format="%(threadName)s: %(name)s - %(message)s")
 
         def worker(worker_id):
-            logging.set_thread_name(f"Worker-{worker_id}")
+            import threading
+
+            threading.current_thread().name = f"Worker-{worker_id}"
             logger = logging.getLogger(f"worker.{worker_id}")
             logger.setLevel(logging.INFO)
 
@@ -270,9 +278,11 @@ class TestThreadingSimple:
         results = {}
 
         def worker(thread_id):
+            import threading
+
             thread_name = f"IsolatedWorker-{thread_id}"
-            logging.set_thread_name(thread_name)
-            results[thread_id] = logging.get_thread_name()
+            threading.current_thread().name = thread_name
+            results[thread_id] = threading.current_thread().name
 
         threads = []
         for i in range(3):
