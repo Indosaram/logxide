@@ -3,10 +3,31 @@
 //! A high-performance logging library for Python, implemented in Rust.
 //! LogXide provides a drop-in replacement for Python's standard logging module
 //! with asynchronous processing capabilities and enhanced performance.
+//!
+//! ## Architecture
+//!
+//! LogXide uses an async architecture with the following components:
+//! - **PyLogger**: Python-facing logger class that wraps Rust Logger
+//! - **LogMessage**: Message types for async communication
+//! - **Global Runtime**: Tokio runtime for async processing
+//! - **Message Channel**: High-throughput channel for log records
+//! - **Handler Registry**: Global registry of log handlers
+//!
+//! ## Usage
+//!
+//! ```python
+//! import logxide
+//! logxide.install()  # Replace Python's logging module
+//!
+//! import logging
+//! logging.basicConfig(level=logging.INFO)
+//! logger = logging.getLogger(__name__)
+//! logger.info("High-performance logging!")
+//! ```
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny, PyDict, PyModule};
 use std::sync::{Arc, Mutex};
 
 mod config;
@@ -28,6 +49,7 @@ use core::{
 };
 use formatter::{Formatter, PythonFormatter};
 use handler::{ConsoleHandler, Handler, PythonHandler};
+use pyo3::types::IntoPyDict;
 
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
@@ -51,7 +73,7 @@ static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
 /// and control messages are sent through a channel to be processed asynchronously.
 enum LogMessage {
     /// A log record to be processed by registered handlers
-    Record(Box<LogRecord>),
+    Record(LogRecord),
     /// A flush request with a completion signal
     Flush(oneshot::Sender<()>),
 }
@@ -137,6 +159,15 @@ impl PyLogger {
     }
 
     #[getter]
+    fn manager(&self, py: Python) -> PyResult<PyObject> {
+        // Return a manager object with disable attribute for SQLAlchemy compatibility
+        let logxide_module = py.import("logxide")?;
+        let manager_class = logxide_module.getattr("LoggingManager")?;
+        let manager_instance = manager_class.call0()?;
+        Ok(manager_instance.to_object(py))
+    }
+
+    #[getter]
     fn disabled(&self) -> PyResult<bool> {
         // Return false - logger is not disabled
         Ok(false)
@@ -155,108 +186,177 @@ impl PyLogger {
     }
 
     #[allow(non_snake_case)]
-    fn addHandler(&mut self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
+    fn addHandler(&mut self, py: Python, handler: &PyAny) -> PyResult<()> {
         // Wrap the Python callable as a PythonHandler and register globally
         if !handler.is_callable() {
             return Err(PyValueError::new_err("Handler must be callable"));
         }
-        // Use a simple counter for handler identity
-        static HANDLER_COUNTER: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        let handler_id = HANDLER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let py_handler = PythonHandler::with_id(handler.clone().unbind(), handler_id);
+        // Use Python's id() for handler identity
+        let handler_id: usize = py
+            .eval("id(obj)", Some([("obj", handler)].into_py_dict(py)), None)
+            .unwrap()
+            .extract()
+            .unwrap();
+        let py_handler = PythonHandler::with_id(handler.to_object(py), handler_id);
         HANDLERS.lock().unwrap().push(Arc::new(py_handler));
         Ok(())
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
-    fn debug(&self, py: Python, msg: &str, args: &Bound<PyAny>, kwargs: Option<&Bound<PyDict>>) {
-        let _ = py;
-        let _ = args;
+    fn debug(&self, py: Python, msg: &str, args: &PyAny, kwargs: Option<&PyDict>) {
         let _ = kwargs; // Ignore kwargs for now
         let logger = self.inner.lock().unwrap();
         if !logger.is_enabled_for(LogLevel::Debug) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
-        let formatted_msg = msg.to_string();
+        // Format the message if args are provided
+        let formatted_msg = if let Ok(args_tuple) = args.downcast::<pyo3::types::PyTuple>() {
+            if !args_tuple.is_empty() {
+                // Use Python's % formatting
+                match py.eval(
+                    &format!("'{}' % {}", msg.replace("'", "\\'"), args_tuple),
+                    None,
+                    None,
+                ) {
+                    Ok(formatted) => formatted
+                        .extract::<String>()
+                        .unwrap_or_else(|_| msg.to_string()),
+                    Err(_) => msg.to_string(),
+                }
+            } else {
+                msg.to_string()
+            }
+        } else {
+            msg.to_string()
+        };
 
         let record = create_log_record(logger.name.clone(), LogLevel::Debug, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let _ = SENDER.try_send(LogMessage::Record(record));
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
-    fn info(&self, py: Python, msg: &str, args: &Bound<PyAny>, kwargs: Option<&Bound<PyDict>>) {
-        let _ = py;
-        let _ = args;
+    fn info(&self, py: Python, msg: &str, args: &PyAny, kwargs: Option<&PyDict>) {
         let _ = kwargs;
         let logger = self.inner.lock().unwrap();
         if !logger.is_enabled_for(LogLevel::Info) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
-        let formatted_msg = msg.to_string();
+        let formatted_msg = if let Ok(args_tuple) = args.downcast::<pyo3::types::PyTuple>() {
+            if !args_tuple.is_empty() {
+                match py.eval(
+                    &format!("'{}' % {}", msg.replace("'", "\\'"), args_tuple),
+                    None,
+                    None,
+                ) {
+                    Ok(formatted) => formatted
+                        .extract::<String>()
+                        .unwrap_or_else(|_| msg.to_string()),
+                    Err(_) => msg.to_string(),
+                }
+            } else {
+                msg.to_string()
+            }
+        } else {
+            msg.to_string()
+        };
 
         let record = create_log_record(logger.name.clone(), LogLevel::Info, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let _ = SENDER.try_send(LogMessage::Record(record));
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
-    fn warning(&self, py: Python, msg: &str, args: &Bound<PyAny>, kwargs: Option<&Bound<PyDict>>) {
-        let _ = py;
-        let _ = args;
+    fn warning(&self, py: Python, msg: &str, args: &PyAny, kwargs: Option<&PyDict>) {
         let _ = kwargs;
         let logger = self.inner.lock().unwrap();
         if !logger.is_enabled_for(LogLevel::Warning) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
-        let formatted_msg = msg.to_string();
+        let formatted_msg = if let Ok(args_tuple) = args.downcast::<pyo3::types::PyTuple>() {
+            if !args_tuple.is_empty() {
+                match py.eval(
+                    &format!("'{}' % {}", msg.replace("'", "\\'"), args_tuple),
+                    None,
+                    None,
+                ) {
+                    Ok(formatted) => formatted
+                        .extract::<String>()
+                        .unwrap_or_else(|_| msg.to_string()),
+                    Err(_) => msg.to_string(),
+                }
+            } else {
+                msg.to_string()
+            }
+        } else {
+            msg.to_string()
+        };
 
         let record = create_log_record(logger.name.clone(), LogLevel::Warning, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let _ = SENDER.try_send(LogMessage::Record(record));
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
-    fn error(&self, py: Python, msg: &str, args: &Bound<PyAny>, kwargs: Option<&Bound<PyDict>>) {
-        let _ = py;
-        let _ = args;
+    fn error(&self, py: Python, msg: &str, args: &PyAny, kwargs: Option<&PyDict>) {
         let _ = kwargs;
         let logger = self.inner.lock().unwrap();
         if !logger.is_enabled_for(LogLevel::Error) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
-        let formatted_msg = msg.to_string();
+        let formatted_msg = if let Ok(args_tuple) = args.downcast::<pyo3::types::PyTuple>() {
+            if !args_tuple.is_empty() {
+                match py.eval(
+                    &format!("'{}' % {}", msg.replace("'", "\\'"), args_tuple),
+                    None,
+                    None,
+                ) {
+                    Ok(formatted) => formatted
+                        .extract::<String>()
+                        .unwrap_or_else(|_| msg.to_string()),
+                    Err(_) => msg.to_string(),
+                }
+            } else {
+                msg.to_string()
+            }
+        } else {
+            msg.to_string()
+        };
 
         let record = create_log_record(logger.name.clone(), LogLevel::Error, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let _ = SENDER.try_send(LogMessage::Record(record));
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
-    fn critical(&self, py: Python, msg: &str, args: &Bound<PyAny>, kwargs: Option<&Bound<PyDict>>) {
-        let _ = py;
-        let _ = args;
+    fn critical(&self, py: Python, msg: &str, args: &PyAny, kwargs: Option<&PyDict>) {
         let _ = kwargs;
         let logger = self.inner.lock().unwrap();
         if !logger.is_enabled_for(LogLevel::Critical) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
-        let formatted_msg = msg.to_string();
+        let formatted_msg = if let Ok(args_tuple) = args.downcast::<pyo3::types::PyTuple>() {
+            if !args_tuple.is_empty() {
+                match py.eval(
+                    &format!("'{}' % {}", msg.replace("'", "\\'"), args_tuple),
+                    None,
+                    None,
+                ) {
+                    Ok(formatted) => formatted
+                        .extract::<String>()
+                        .unwrap_or_else(|_| msg.to_string()),
+                    Err(_) => msg.to_string(),
+                }
+            } else {
+                msg.to_string()
+            }
+        } else {
+            msg.to_string()
+        };
 
         let record = create_log_record(logger.name.clone(), LogLevel::Critical, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let _ = SENDER.try_send(LogMessage::Record(record));
     }
 
     // Add compatibility methods that third-party libraries might expect
@@ -268,25 +368,31 @@ impl PyLogger {
     }
 
     #[allow(non_snake_case)]
-    fn removeHandler(&self, _handler: &Bound<PyAny>) -> PyResult<()> {
+    fn removeHandler(&self, _handler: &PyAny) -> PyResult<()> {
         // For compatibility - logxide manages handlers globally
         Ok(())
     }
 
     #[allow(non_snake_case)]
-    fn addFilter(&self, _filter: &Bound<PyAny>) -> PyResult<()> {
+    fn addFilter(&self, _filter: &PyAny) -> PyResult<()> {
         // For compatibility - not implemented yet
         Ok(())
     }
 
     #[allow(non_snake_case)]
-    fn removeFilter(&self, _filter: &Bound<PyAny>) -> PyResult<()> {
+    fn removeFilter(&self, _filter: &PyAny) -> PyResult<()> {
         // For compatibility - not implemented yet
         Ok(())
     }
 
     fn disable(&self, _level: u32) -> PyResult<()> {
         // For compatibility - disable functionality not implemented
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    fn setFormatter(&self, _formatter: &PyAny) -> PyResult<()> {
+        // For compatibility - logxide manages formatters globally
         Ok(())
     }
 
@@ -299,11 +405,95 @@ impl PyLogger {
             inner: child_logger,
         })
     }
+
+    fn log(&self, level: u32, msg: &str) {
+        let logger = self.inner.lock().unwrap();
+        let level = LogLevel::from_usize(level as usize);
+        let record = LogRecord {
+            name: logger.name.clone(),
+            levelno: level as i32,
+            levelname: format!("{:?}", level).to_uppercase(),
+            pathname: "".to_string(),
+            filename: "".to_string(),
+            module: "".to_string(),
+            lineno: 0,
+            func_name: "".to_string(),
+            created: 0.0,
+            msecs: 0.0,
+            relative_created: 0.0,
+            thread: 0,
+            thread_name: "".to_string(),
+            process_name: "".to_string(),
+            process: 0,
+            msg: msg.to_string(),
+            args: None,
+            exc_info: None,
+            exc_text: None,
+            stack_info: None,
+            task_name: None,
+        };
+        let _ = SENDER.try_send(LogMessage::Record(record));
+    }
+
+    #[pyo3(signature = (level, msg, args, **kwargs))]
+    fn _log(&self, py: Python, level: u32, msg: &str, args: &PyAny, kwargs: Option<&PyDict>) {
+        let _ = kwargs;
+        let logger = self.inner.lock().unwrap();
+        let level_enum = LogLevel::from_usize(level as usize);
+
+        if !logger.is_enabled_for(level_enum) {
+            return;
+        }
+
+        // Format the message if args are provided
+        let formatted_msg = if let Ok(args_tuple) = args.downcast::<pyo3::types::PyTuple>() {
+            if !args_tuple.is_empty() {
+                match py.eval(
+                    &format!("'{}' % {}", msg.replace("'", "\\'"), args_tuple),
+                    None,
+                    None,
+                ) {
+                    Ok(formatted) => formatted
+                        .extract::<String>()
+                        .unwrap_or_else(|_| msg.to_string()),
+                    Err(_) => msg.to_string(),
+                }
+            } else {
+                msg.to_string()
+            }
+        } else {
+            msg.to_string()
+        };
+
+        let record = create_log_record(logger.name.clone(), level_enum, formatted_msg);
+        let _ = SENDER.try_send(LogMessage::Record(record));
+    }
 }
 
 /// Get a logger by name, mirroring Python's `logging.getLogger()`.
+///
+/// Creates or retrieves a logger with the specified name. If no name is provided,
+/// returns the root logger. Logger names follow a hierarchical structure using
+/// dots as separators (e.g., "myapp.database.connection").
+///
+/// # Arguments
+///
+/// * `name` - Optional logger name. If None, returns the root logger.
+///
+/// # Returns
+///
+/// A PyLogger instance wrapping the Rust logger implementation.
+///
+/// # Examples
+///
+/// ```python
+/// # Get the root logger
+/// root = logging.getLogger()
+///
+/// # Get a named logger
+/// logger = logging.getLogger("myapp.database")
+/// ```
 #[pyfunction(name = "getLogger")]
-#[pyo3(signature = (name = None))]
 fn get_logger(name: Option<&str>) -> PyResult<PyLogger> {
     let logger = match name {
         Some(n) => core_get_logger(n),
@@ -313,14 +503,33 @@ fn get_logger(name: Option<&str>) -> PyResult<PyLogger> {
 }
 
 /// Basic configuration for the logging system, mirroring Python's `logging.basicConfig()`.
+///
+/// Configures the root logger with the specified level and format. This function
+/// clears any existing handlers and adds a new console handler with the given configuration.
+///
+/// # Arguments
+///
+/// * `kwargs` - Configuration options including:
+///   - `level`: Minimum log level (default: WARNING)
+///   - `format`: Log message format string (default: "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+///   - `datefmt`: Date format string (optional)
+///
+/// # Examples
+///
+/// ```python
+/// logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
+/// ```
 #[pyfunction(name = "basicConfig")]
-#[pyo3(signature = (**kwargs))]
 fn basic_config(_py: Python, kwargs: Option<&Bound<PyDict>>) -> PyResult<()> {
     // Set root logger level
     let root_level = if let Some(kw) = kwargs {
-        if let Ok(Some(level_val)) = kw.get_item("level") {
-            let level: u32 = level_val.extract().unwrap_or(30);
-            LogLevel::from_usize(level as usize)
+        if let Ok(level) = kw.get_item("level") {
+            if let Some(level_val) = level {
+                let level: u32 = level_val.extract().unwrap_or(30);
+                LogLevel::from_usize(level as usize)
+            } else {
+                LogLevel::Warning
+            }
         } else {
             LogLevel::Warning
         }
@@ -350,11 +559,8 @@ fn basic_config(_py: Python, kwargs: Option<&Bound<PyDict>>) -> PyResult<()> {
     // Check for date format parameter
     let date_format = if let Some(kw) = kwargs {
         if let Ok(Some(datefmt_val)) = kw.get_item("datefmt") {
-            Some(
-                datefmt_val
-                    .extract::<String>()
-                    .unwrap_or_else(|_| "%Y-%m-%d %H:%M:%S".to_string()),
-            )
+            Some(datefmt_val.extract::<String>()
+                .unwrap_or_else(|_| "%Y-%m-%d %H:%M:%S".to_string()))
         } else {
             None
         }
@@ -390,9 +596,9 @@ fn flush() -> PyResult<()> {
     Ok(())
 }
 
-/// Register a Python handler globally
+/// Register a Python handler globally (for demonstration)
 #[pyfunction]
-fn register_python_handler(_py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
+fn register_python_handler(py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
     if !handler.is_callable() {
         return Err(PyValueError::new_err("Handler must be callable"));
     }
@@ -405,7 +611,7 @@ fn register_python_handler(_py: Python, handler: &Bound<PyAny>) -> PyResult<()> 
 #[pymodule]
 fn logxide(py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     // Create a submodule named "logging"
-    let logging_mod = PyModule::new(py, "logging")?;
+    let logging_mod = PyModule::new_bound(py, "logging")?;
     logging_mod.add_class::<PyLogger>()?;
     logging_mod.add_function(wrap_pyfunction!(get_logger, &logging_mod)?)?;
     logging_mod.add_function(wrap_pyfunction!(basic_config, &logging_mod)?)?;

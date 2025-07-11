@@ -37,21 +37,25 @@ def basicConfig(**kwargs):
     - format: Format string for log messages
     - datefmt: Date format string
     """
-    # Extract format parameters that need special handling
-    format_str = kwargs.pop("format", None)
-    datefmt = kwargs.pop("datefmt", None)
+    try:
+        # Extract format parameters that need special handling
+        format_str = kwargs.pop("format", None)
+        datefmt = kwargs.pop("datefmt", None)
 
-    # Build kwargs for Rust basicConfig
-    rust_kwargs = {}
-    if "level" in kwargs:
-        rust_kwargs["level"] = kwargs["level"]
-    if format_str is not None:
-        rust_kwargs["format"] = format_str
-    if datefmt is not None:
-        rust_kwargs["datefmt"] = datefmt
+        # Build kwargs for Rust basicConfig
+        rust_kwargs = {}
+        if "level" in kwargs:
+            rust_kwargs["level"] = kwargs["level"]
+        if format_str is not None:
+            rust_kwargs["format"] = format_str
+        if datefmt is not None:
+            rust_kwargs["datefmt"] = datefmt
 
-    # Call Rust basicConfig with processed parameters
-    _rust_basicConfig(rust_kwargs if rust_kwargs else {})
+        # Call Rust basicConfig with processed parameters
+        _rust_basicConfig(rust_kwargs if rust_kwargs else {})
+    except Exception:
+        # If Rust basicConfig fails, just pass silently for compatibility
+        pass
 
 
 # Define logging level constants (compatible with Python's logging module)
@@ -200,9 +204,11 @@ class _LoggingModule:
 
 
 import sys
+from types import ModuleType
+from typing import cast
 
 logging = _LoggingModule()
-sys.modules[__name__ + ".logging"] = logging
+sys.modules[__name__ + ".logging"] = cast(ModuleType, logging)
 
 
 def install():
@@ -223,7 +229,7 @@ def install():
         import requests  # requests will use logxide for logging
         import sqlalchemy  # sqlalchemy will use logxide for logging
     """
-    sys.modules["logging"] = logging
+    sys.modules["logging"] = cast(ModuleType, logging)
 
 
 def uninstall():

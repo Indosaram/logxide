@@ -9,7 +9,7 @@ name = "logxide"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.18", features = ["extension-module"] }
+pyo3 = { version = "0.24.1", features = ["extension-module"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["time"] }
 tokio = { version = "1", features = ["full"] }

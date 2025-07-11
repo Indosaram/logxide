@@ -24,6 +24,9 @@ use async_trait::async_trait;
 use chrono::TimeZone;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -120,7 +123,7 @@ impl PythonHandler {
     pub fn new(py_callable: PyObject) -> Self {
         let py_id = Python::with_gil(|py| {
             py_callable
-                .as_ref(py)
+                .bind(py)
                 .getattr("__hash__")
                 .and_then(|h| h.call0())
                 .and_then(|v| v.extract::<isize>())
@@ -366,6 +369,252 @@ impl Handler for ConsoleHandler {
         use std::io::{self, Write};
         println!("{}", output);
         io::stdout().flush().unwrap();
+    }
+
+    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        self.formatter = Some(formatter);
+    }
+
+    fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>) {
+        self.filters.push(filter);
+    }
+}
+
+/// Rotating file handler that automatically rotates log files when they exceed a specified size.
+///
+/// This handler writes log records to a file and automatically rotates the file when it
+/// reaches the maximum size. It maintains a specified number of backup files.
+///
+/// # File Rotation Strategy
+///
+/// When the current log file exceeds `max_bytes`:
+/// 1. Close the current file
+/// 2. Rename existing backup files (log.1 -> log.2, log.2 -> log.3, etc.)
+/// 3. Rename the current file to log.1
+/// 4. Create a new current file
+///
+/// # Thread Safety
+///
+/// All file operations are protected by a Mutex to ensure thread-safe writing
+/// and rotation in concurrent environments.
+pub struct RotatingFileHandler {
+    /// Path to the log file
+    pub filename: PathBuf,
+    /// Maximum file size before rotation (in bytes)
+    pub max_bytes: u64,
+    /// Number of backup files to keep
+    pub backup_count: u32,
+    /// Current file writer (protected by Mutex for thread safety)
+    pub writer: Mutex<Option<BufWriter<File>>>,
+    /// Current file size (protected by Mutex for thread safety)
+    pub current_size: Mutex<u64>,
+    /// Minimum log level to output
+    pub level: Mutex<LogLevel>,
+    /// Optional formatter for customizing output format
+    pub formatter: Option<Arc<dyn Formatter + Send + Sync>>,
+    /// List of filters applied before output
+    pub filters: Vec<Arc<dyn Filter + Send + Sync>>,
+}
+
+impl RotatingFileHandler {
+    /// Create a new RotatingFileHandler.
+    ///
+    /// # Arguments
+    ///
+    /// * `filename` - Path to the log file
+    /// * `max_bytes` - Maximum file size before rotation (in bytes)
+    /// * `backup_count` - Number of backup files to keep
+    ///
+    /// # Returns
+    ///
+    /// A new RotatingFileHandler instance
+    pub fn new<P: AsRef<Path>>(filename: P, max_bytes: u64, backup_count: u32) -> Self {
+        Self {
+            filename: filename.as_ref().to_path_buf(),
+            max_bytes,
+            backup_count,
+            writer: Mutex::new(None),
+            current_size: Mutex::new(0),
+            level: Mutex::new(LogLevel::Warning),
+            formatter: None,
+            filters: Vec::new(),
+        }
+    }
+
+    /// Create a new RotatingFileHandler with a specific level and formatter.
+    ///
+    /// # Arguments
+    ///
+    /// * `filename` - Path to the log file
+    /// * `max_bytes` - Maximum file size before rotation (in bytes)
+    /// * `backup_count` - Number of backup files to keep
+    /// * `level` - Minimum log level to output
+    /// * `formatter` - Formatter to use for output formatting
+    ///
+    /// # Returns
+    ///
+    /// A new RotatingFileHandler instance with the specified configuration
+    pub fn with_formatter<P: AsRef<Path>>(
+        filename: P,
+        max_bytes: u64,
+        backup_count: u32,
+        level: LogLevel,
+        formatter: Arc<dyn Formatter + Send + Sync>,
+    ) -> Self {
+        Self {
+            filename: filename.as_ref().to_path_buf(),
+            max_bytes,
+            backup_count,
+            writer: Mutex::new(None),
+            current_size: Mutex::new(0),
+            level: Mutex::new(level),
+            formatter: Some(formatter),
+            filters: Vec::new(),
+        }
+    }
+
+    /// Get or create the file writer.
+    ///
+    /// This method ensures that a file writer exists and is ready for writing.
+    /// If no writer exists, it creates one and initializes the current size.
+    fn ensure_writer(&self) -> Result<(), std::io::Error> {
+        let mut writer = self.writer.lock().unwrap();
+        let mut current_size = self.current_size.lock().unwrap();
+
+        if writer.is_none() {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.filename)?;
+
+            // Get the current file size
+            *current_size = file.metadata()?.len();
+            *writer = Some(BufWriter::new(file));
+        }
+
+        Ok(())
+    }
+
+    /// Rotate the log file.
+    ///
+    /// This method performs the file rotation by:
+    /// 1. Closing the current writer
+    /// 2. Rotating existing backup files
+    /// 3. Moving the current file to .1
+    /// 4. Creating a new current file
+    fn do_rollover(&self) -> Result<(), std::io::Error> {
+        // Close the current writer
+        {
+            let mut writer = self.writer.lock().unwrap();
+            if let Some(w) = writer.take() {
+                drop(w); // This will flush and close the file
+            }
+        }
+
+        // Rotate backup files (from highest to lowest)
+        for i in (1..self.backup_count).rev() {
+            let old_name = format!("{}.{}", self.filename.display(), i);
+            let new_name = format!("{}.{}", self.filename.display(), i + 1);
+
+            if Path::new(&old_name).exists() {
+                let _ = std::fs::rename(&old_name, &new_name);
+            }
+        }
+
+        // Move the current file to .1
+        if self.filename.exists() {
+            let backup_name = format!("{}.1", self.filename.display());
+            std::fs::rename(&self.filename, backup_name)?;
+        }
+
+        // Reset the current size
+        {
+            let mut current_size = self.current_size.lock().unwrap();
+            *current_size = 0;
+        }
+
+        // The next write will create a new file
+        Ok(())
+    }
+
+    /// Check if rotation is needed and perform it if necessary.
+    fn should_rollover(&self, record_size: usize) -> bool {
+        let current_size = self.current_size.lock().unwrap();
+        *current_size + record_size as u64 > self.max_bytes
+    }
+}
+
+/// Implementation of Handler trait for RotatingFileHandler.
+#[async_trait]
+impl Handler for RotatingFileHandler {
+    /// Emit a log record to the rotating file.
+    ///
+    /// This method:
+    /// 1. Checks the log level
+    /// 2. Formats the record
+    /// 3. Checks if rotation is needed
+    /// 4. Writes the record to the file
+    /// 5. Updates the current size
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - The log record to emit
+    async fn emit(&self, record: &LogRecord) {
+        // Check if we should log this record based on level
+        let level = self.level.lock().unwrap();
+        if record.levelno < *level as i32 {
+            return;
+        }
+        drop(level);
+
+        // Format the record
+        let output = if let Some(ref formatter) = self.formatter {
+            formatter.format(record)
+        } else {
+            // Default format if no formatter is set
+            format!(
+                "[{}] [Thread-{} {}] {} {} - {}\n",
+                chrono::Local
+                    .timestamp_opt(record.created as i64, (record.msecs * 1_000_000.0) as u32)
+                    .single()
+                    .unwrap_or_else(chrono::Local::now)
+                    .format("%Y-%m-%d %H:%M:%S%.3f"),
+                record.thread,
+                record.thread_name,
+                record.levelname,
+                record.name,
+                record.msg
+            )
+        };
+
+        let output_bytes = output.as_bytes();
+
+        // Check if we need to rotate
+        if self.should_rollover(output_bytes.len()) {
+            if let Err(e) = self.do_rollover() {
+                eprintln!("Error rotating log file: {}", e);
+                return;
+            }
+        }
+
+        // Ensure we have a writer
+        if let Err(e) = self.ensure_writer() {
+            eprintln!("Error opening log file: {}", e);
+            return;
+        }
+
+        // Write the record
+        {
+            let mut writer = self.writer.lock().unwrap();
+            let mut current_size = self.current_size.lock().unwrap();
+
+            if let Some(ref mut w) = writer.as_mut() {
+                if w.write_all(output_bytes).is_ok() {
+                    let _ = w.flush();
+                    *current_size += output_bytes.len() as u64;
+                }
+            }
+        }
     }
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {

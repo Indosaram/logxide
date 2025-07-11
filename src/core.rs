@@ -29,7 +29,7 @@ use std::thread;
 
 use pyo3::conversion::FromPyObject;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyTuple};
+use pyo3::types::PyAny;
 
 /// Log levels, matching Python's logging levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -114,10 +114,10 @@ pub struct LogRecord {
     pub process: u32,
     /// The logged message
     pub msg: String,
-    /// Arguments passed to the logging call (for % formatting)
-    pub args: Option<Py<PyTuple>>,
-    /// Exception information (sys.exc_info() result)
-    pub exc_info: Option<Py<PyAny>>,
+    /// Arguments passed to the logging call (for % formatting) - simplified to string
+    pub args: Option<String>,
+    /// Exception information (simplified to string)
+    pub exc_info: Option<String>,
     /// Exception text (if exc_info was processed)
     pub exc_text: Option<String>,
     /// Stack information (if requested)
@@ -132,32 +132,64 @@ pub struct LogRecord {
 /// instances to Rust LogRecord structs, enabling interoperability with
 /// existing Python logging infrastructure.
 impl<'source> FromPyObject<'source> for LogRecord {
-    fn extract(obj: &'source PyAny) -> PyResult<Self> {
+    fn extract_bound(obj: &Bound<'source, PyAny>) -> PyResult<Self> {
+        let name: String = obj.getattr("name")?.extract()?;
+        let levelno: i32 = obj.getattr("levelno")?.extract()?;
+        let levelname: String = obj.getattr("levelname")?.extract()?;
+        let pathname: String = obj.getattr("pathname")?.extract()?;
+        let filename: String = obj.getattr("filename")?.extract()?;
+        let module: String = obj.getattr("module")?.extract()?;
+        let lineno: u32 = obj.getattr("lineno")?.extract()?;
+        let func_name: String = obj.getattr("funcName")?.extract()?;
+        let created: f64 = obj.getattr("created")?.extract()?;
+        let msecs: f64 = obj.getattr("msecs")?.extract()?;
+        let relative_created: f64 = obj.getattr("relativeCreated")?.extract()?;
+        let thread: u64 = obj.getattr("thread")?.extract()?;
+        let thread_name: String = obj.getattr("threadName")?.extract()?;
+        let process_name: String = obj.getattr("processName")?.extract()?;
+        let process: u32 = obj.getattr("process")?.extract()?;
+        let msg: String = obj.getattr("msg")?.extract()?;
+
+        // Optional fields - convert to strings if present
+        let args: Option<String> = obj
+            .getattr("args")
+            .ok()
+            .and_then(|v| v.str().ok())
+            .map(|s| s.to_string());
+        let exc_info: Option<String> = obj
+            .getattr("exc_info")
+            .ok()
+            .and_then(|v| v.str().ok())
+            .map(|s| s.to_string());
+        let exc_text: Option<String> = obj.getattr("exc_text").ok().and_then(|v| v.extract().ok());
+        let stack_info: Option<String> = obj
+            .getattr("stack_info")
+            .ok()
+            .and_then(|v| v.extract().ok());
+        let task_name: Option<String> = obj.getattr("taskName").ok().and_then(|v| v.extract().ok());
+
         Ok(LogRecord {
-            name: obj.getattr("name").unwrap().extract().unwrap(),
-            levelno: obj.getattr("levelno").unwrap().extract().unwrap(),
-            levelname: obj.getattr("levelname").unwrap().extract().unwrap(),
-            pathname: obj.getattr("pathname").unwrap().extract().unwrap(),
-            filename: obj.getattr("filename").unwrap().extract().unwrap(),
-            module: obj.getattr("module").unwrap().extract().unwrap(),
-            lineno: obj.getattr("lineno").unwrap().extract().unwrap(),
-            func_name: obj.getattr("funcName").unwrap().extract().unwrap(),
-            created: obj.getattr("created").unwrap().extract().unwrap(),
-            msecs: obj.getattr("msecs").unwrap().extract().unwrap(),
-            relative_created: obj.getattr("relativeCreated").unwrap().extract().unwrap(),
-            thread: obj.getattr("thread").unwrap().extract().unwrap(),
-            thread_name: obj.getattr("threadName").unwrap().extract().unwrap(),
-            process_name: obj.getattr("processName").unwrap().extract().unwrap(),
-            process: obj.getattr("process").unwrap().extract().unwrap(),
-            msg: obj.getattr("msg").unwrap().extract().unwrap(),
-            args: obj.getattr("args").ok().and_then(|v| v.extract().ok()),
-            exc_info: obj.getattr("exc_info").ok().and_then(|v| v.extract().ok()),
-            exc_text: obj.getattr("exc_text").ok().and_then(|v| v.extract().ok()),
-            stack_info: obj
-                .getattr("stack_info")
-                .ok()
-                .and_then(|v| v.extract().ok()),
-            task_name: obj.getattr("taskName").ok().and_then(|v| v.extract().ok()),
+            name,
+            levelno,
+            levelname,
+            pathname,
+            filename,
+            module,
+            lineno,
+            func_name,
+            created,
+            msecs,
+            relative_created,
+            thread,
+            thread_name,
+            process_name,
+            process,
+            msg,
+            args,
+            exc_info,
+            exc_text,
+            stack_info,
+            task_name,
         })
     }
 }
