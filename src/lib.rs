@@ -11,9 +11,11 @@ use std::sync::{Arc, Mutex};
 
 mod config;
 pub mod core;
+mod fast_logger;
 mod filter;
 pub mod formatter;
 pub mod handler;
+mod string_cache;
 
 // Pure Rust modules for testing without PyO3
 #[cfg(test)]
@@ -29,9 +31,9 @@ use core::{
 use formatter::{Formatter, PythonFormatter};
 use handler::{ConsoleHandler, Handler, PythonHandler};
 
+use crossbeam::channel::{self, Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::oneshot;
 
 /// Global Tokio runtime for async logging operations.
@@ -58,37 +60,43 @@ enum LogMessage {
 
 /// Global sender for log messages to the async processing system.
 ///
-/// This channel has a capacity of 1024 messages and uses try_send to avoid
-/// blocking the caller if the channel is full. Messages are processed by
-/// a background task spawned in the global RUNTIME.
-static SENDER: Lazy<Sender<LogMessage>> = Lazy::new(|| {
-    let (sender, mut receiver): (Sender<LogMessage>, Receiver<LogMessage>) = mpsc::channel(1024);
+/// This channel is unbounded using crossbeam for better performance.
+/// Messages are processed by a background task spawned in the global RUNTIME.
+static SENDER: Lazy<CrossbeamSender<LogMessage>> = Lazy::new(|| {
+    let (sender, receiver): (CrossbeamSender<LogMessage>, CrossbeamReceiver<LogMessage>) =
+        channel::unbounded();
+
     // Spawn background task for processing log messages
     RUNTIME.spawn(async move {
-        while let Some(message) = receiver.recv().await {
-            match message {
-                LogMessage::Record(record) => {
-                    // Dispatch to all registered handlers
-                    let handlers = HANDLERS.lock().unwrap().clone();
-                    let mut tasks = Vec::new();
-                    for handler in handlers {
-                        // Each handler is async
-                        let record = record.clone();
-                        let handler = handler.clone();
-                        let task = RUNTIME.spawn(async move {
-                            handler.emit(&record).await;
-                        });
-                        tasks.push(task);
-                    }
-                    // Wait for all handlers to complete
-                    for task in tasks {
-                        let _ = task.await;
+        loop {
+            match receiver.recv() {
+                Ok(message) => {
+                    match message {
+                        LogMessage::Record(record) => {
+                            // Dispatch to all registered handlers
+                            let handlers = HANDLERS.lock().unwrap().clone();
+                            let mut tasks = Vec::new();
+                            for handler in handlers {
+                                // Each handler is async
+                                let record = record.clone();
+                                let handler = handler.clone();
+                                let task = RUNTIME.spawn(async move {
+                                    handler.emit(&record).await;
+                                });
+                                tasks.push(task);
+                            }
+                            // Wait for all handlers to complete
+                            for task in tasks {
+                                let _ = task.await;
+                            }
+                        }
+                        LogMessage::Flush(sender) => {
+                            // Send completion signal
+                            let _ = sender.send(());
+                        }
                     }
                 }
-                LogMessage::Flush(sender) => {
-                    // Send completion signal
-                    let _ = sender.send(());
-                }
+                Err(_) => break, // Channel closed
             }
         }
     });
@@ -116,18 +124,20 @@ static HANDLERS: Lazy<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>> =
 pub struct PyLogger {
     /// The underlying Rust logger implementation
     inner: Arc<Mutex<Logger>>,
+    /// Fast logger for atomic level checking
+    fast_logger: Arc<fast_logger::FastLogger>,
 }
 
 #[pymethods]
 impl PyLogger {
     #[getter]
     fn name(&self) -> PyResult<String> {
-        Ok(self.inner.lock().unwrap().name.clone())
+        Ok(self.fast_logger.name.to_string())
     }
 
     #[getter]
     fn level(&self) -> PyResult<u32> {
-        Ok(self.inner.lock().unwrap().level as u32)
+        Ok(self.fast_logger.get_level() as u32)
     }
 
     #[getter]
@@ -145,13 +155,15 @@ impl PyLogger {
     #[allow(non_snake_case)]
     fn setLevel(&mut self, level: u32) -> PyResult<()> {
         let level = LogLevel::from_usize(level as usize);
+        self.fast_logger.set_level(level);
+        // Also update the inner logger for compatibility
         self.inner.lock().unwrap().set_level(level);
         Ok(())
     }
 
     #[allow(non_snake_case)]
     fn getEffectiveLevel(&self) -> PyResult<u32> {
-        Ok(self.inner.lock().unwrap().get_effective_level() as u32)
+        Ok(self.fast_logger.get_level() as u32)
     }
 
     #[allow(non_snake_case)]
@@ -174,17 +186,20 @@ impl PyLogger {
         let _ = py;
         let _ = args;
         let _ = kwargs; // Ignore kwargs for now
-        let logger = self.inner.lock().unwrap();
-        if !logger.is_enabled_for(LogLevel::Debug) {
+
+        // Fast atomic level check - no lock needed
+        if !self.fast_logger.is_enabled_for(LogLevel::Debug) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
+        // Only create record if level is enabled
         let formatted_msg = msg.to_string();
-
-        let record = create_log_record(logger.name.clone(), LogLevel::Debug, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let record = create_log_record(
+            self.fast_logger.name.to_string(),
+            LogLevel::Debug,
+            formatted_msg,
+        );
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
@@ -192,17 +207,18 @@ impl PyLogger {
         let _ = py;
         let _ = args;
         let _ = kwargs;
-        let logger = self.inner.lock().unwrap();
-        if !logger.is_enabled_for(LogLevel::Info) {
+
+        if !self.fast_logger.is_enabled_for(LogLevel::Info) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
         let formatted_msg = msg.to_string();
-
-        let record = create_log_record(logger.name.clone(), LogLevel::Info, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let record = create_log_record(
+            self.fast_logger.name.to_string(),
+            LogLevel::Info,
+            formatted_msg,
+        );
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
@@ -210,17 +226,18 @@ impl PyLogger {
         let _ = py;
         let _ = args;
         let _ = kwargs;
-        let logger = self.inner.lock().unwrap();
-        if !logger.is_enabled_for(LogLevel::Warning) {
+
+        if !self.fast_logger.is_enabled_for(LogLevel::Warning) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
         let formatted_msg = msg.to_string();
-
-        let record = create_log_record(logger.name.clone(), LogLevel::Warning, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let record = create_log_record(
+            self.fast_logger.name.to_string(),
+            LogLevel::Warning,
+            formatted_msg,
+        );
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
@@ -228,17 +245,18 @@ impl PyLogger {
         let _ = py;
         let _ = args;
         let _ = kwargs;
-        let logger = self.inner.lock().unwrap();
-        if !logger.is_enabled_for(LogLevel::Error) {
+
+        if !self.fast_logger.is_enabled_for(LogLevel::Error) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
         let formatted_msg = msg.to_string();
-
-        let record = create_log_record(logger.name.clone(), LogLevel::Error, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let record = create_log_record(
+            self.fast_logger.name.to_string(),
+            LogLevel::Error,
+            formatted_msg,
+        );
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
@@ -246,25 +264,25 @@ impl PyLogger {
         let _ = py;
         let _ = args;
         let _ = kwargs;
-        let logger = self.inner.lock().unwrap();
-        if !logger.is_enabled_for(LogLevel::Critical) {
+
+        if !self.fast_logger.is_enabled_for(LogLevel::Critical) {
             return;
         }
 
-        // Simple message formatting - just use the message as-is for now
-        // In a full implementation, we would handle Python % formatting here
         let formatted_msg = msg.to_string();
-
-        let record = create_log_record(logger.name.clone(), LogLevel::Critical, formatted_msg);
-        let _ = SENDER.try_send(LogMessage::Record(Box::new(record)));
+        let record = create_log_record(
+            self.fast_logger.name.to_string(),
+            LogLevel::Critical,
+            formatted_msg,
+        );
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
     }
 
     // Add compatibility methods that third-party libraries might expect
     #[allow(non_snake_case)]
     fn isEnabledFor(&self, level: u32) -> PyResult<bool> {
-        let logger = self.inner.lock().unwrap();
         let level = LogLevel::from_usize(level as usize);
-        Ok(logger.is_enabled_for(level))
+        Ok(self.fast_logger.is_enabled_for(level))
     }
 
     #[allow(non_snake_case)]
@@ -293,10 +311,16 @@ impl PyLogger {
     #[allow(non_snake_case)]
     fn getChild(&self, suffix: &str) -> PyResult<PyLogger> {
         // Create a child logger
-        let logger_name = format!("{}.{}", self.inner.lock().unwrap().name, suffix);
+        let logger_name = if self.fast_logger.name.is_empty() {
+            suffix.to_string()
+        } else {
+            format!("{}.{}", self.fast_logger.name, suffix)
+        };
         let child_logger = core_get_logger(&logger_name);
+        let child_fast_logger = fast_logger::get_fast_logger(&logger_name);
         Ok(PyLogger {
             inner: child_logger,
+            fast_logger: child_fast_logger,
         })
     }
 }
@@ -305,11 +329,16 @@ impl PyLogger {
 #[pyfunction(name = "getLogger")]
 #[pyo3(signature = (name = None))]
 fn get_logger(name: Option<&str>) -> PyResult<PyLogger> {
+    let logger_name = name.unwrap_or("");
     let logger = match name {
         Some(n) => core_get_logger(n),
         None => get_root_logger(),
     };
-    Ok(PyLogger { inner: logger })
+    let fast_logger = fast_logger::get_fast_logger(logger_name);
+    Ok(PyLogger {
+        inner: logger,
+        fast_logger,
+    })
 }
 
 /// Basic configuration for the logging system, mirroring Python's `logging.basicConfig()`.
@@ -380,7 +409,7 @@ fn basic_config(_py: Python, kwargs: Option<&Bound<PyDict>>) -> PyResult<()> {
 #[pyfunction]
 fn flush() -> PyResult<()> {
     let (sender, receiver) = oneshot::channel();
-    let _ = SENDER.try_send(LogMessage::Flush(sender));
+    let _ = SENDER.send(LogMessage::Flush(sender));
 
     // Wait for the flush to complete
     RUNTIME.block_on(async {
