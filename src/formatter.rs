@@ -229,7 +229,7 @@ impl Formatter for PythonFormatter {
                         format!("{:>width$}", record.levelname, width = width)
                     }
                 } else {
-                    record.levelname.clone()
+                    record.levelname.to_string()
                 }
             })
             .to_string();
@@ -248,7 +248,7 @@ impl Formatter for PythonFormatter {
                         format!("{:>width$}", record.thread_name, width = width)
                     }
                 } else {
-                    record.thread_name.clone()
+                    record.thread_name.to_string()
                 }
             })
             .to_string();
@@ -267,7 +267,7 @@ impl Formatter for PythonFormatter {
                         format!("{:>width$}", record.name, width = width)
                     }
                 } else {
-                    record.name.clone()
+                    record.name.to_string()
                 }
             })
             .to_string();

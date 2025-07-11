@@ -83,21 +83,21 @@ impl LogLevel {
 #[derive(Debug, Clone)]
 pub struct LogRecord {
     /// Logger name that generated this record
-    pub name: String,
+    pub name: Arc<str>,
     /// Numeric log level (10, 20, 30, 40, 50)
     pub levelno: i32,
     /// String representation of log level ("DEBUG", "INFO", etc.)
-    pub levelname: String,
+    pub levelname: Arc<str>,
     /// Full pathname of source file (if available)
-    pub pathname: String,
+    pub pathname: Arc<str>,
     /// Filename portion of pathname
-    pub filename: String,
+    pub filename: Arc<str>,
     /// Module name (if available)
-    pub module: String,
+    pub module: Arc<str>,
     /// Source line number (if available)
     pub lineno: u32,
     /// Function name (if available)
-    pub func_name: String,
+    pub func_name: Arc<str>,
     /// Time when LogRecord was created (seconds since epoch)
     pub created: f64,
     /// Millisecond portion of creation time
@@ -107,13 +107,13 @@ pub struct LogRecord {
     /// Thread ID number
     pub thread: u64,
     /// Thread name
-    pub thread_name: String,
+    pub thread_name: Arc<str>,
     /// Process name
-    pub process_name: String,
+    pub process_name: Arc<str>,
     /// Process ID
     pub process: u32,
     /// The logged message
-    pub msg: String,
+    pub msg: Arc<str>,
     /// Arguments passed to the logging call (for % formatting) - simplified to string
     pub args: Option<String>,
     /// Exception information (simplified to string)
@@ -123,7 +123,7 @@ pub struct LogRecord {
     /// Stack information (if requested)
     pub stack_info: Option<String>,
     /// Async task name (if in asyncio context)
-    pub task_name: Option<String>,
+    pub task_name: Option<Arc<str>>,
 }
 
 /// Conversion from Python LogRecord objects.
@@ -166,30 +166,31 @@ impl<'source> FromPyObject<'source> for LogRecord {
             .getattr("stack_info")
             .ok()
             .and_then(|v| v.extract().ok());
-        let task_name: Option<String> = obj.getattr("taskName").ok().and_then(|v| v.extract().ok());
+        let task_name_str: Option<String> =
+            obj.getattr("taskName").ok().and_then(|v| v.extract().ok());
 
         Ok(LogRecord {
-            name,
+            name: Arc::from(name.as_str()),
             levelno,
-            levelname,
-            pathname,
-            filename,
-            module,
+            levelname: Arc::from(levelname.as_str()),
+            pathname: Arc::from(pathname.as_str()),
+            filename: Arc::from(filename.as_str()),
+            module: Arc::from(module.as_str()),
             lineno,
-            func_name,
+            func_name: Arc::from(func_name.as_str()),
             created,
             msecs,
             relative_created,
             thread,
-            thread_name,
-            process_name,
+            thread_name: Arc::from(thread_name.as_str()),
+            process_name: Arc::from(process_name.as_str()),
             process,
-            msg,
+            msg: Arc::from(msg.as_str()),
             args,
             exc_info,
             exc_text,
             stack_info,
-            task_name,
+            task_name: task_name_str.map(|s| Arc::from(s.as_str())),
         })
     }
 }
@@ -244,6 +245,8 @@ pub struct Logger {
 /// assert_eq!(record.levelno, 20);
 /// ```
 pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecord {
+    use crate::string_cache::{get_common_message, get_level_name, get_logger_name};
+
     let now = chrono::Local::now();
     let created = now.timestamp() as f64 + now.timestamp_subsec_nanos() as f64 / 1_000_000_000.0;
     let msecs = (now.timestamp_subsec_millis() % 1000) as f64;
@@ -253,7 +256,7 @@ pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecor
     let thread_id = format!("{:?}", current_thread.id());
 
     // Use native thread name
-    let thread_name = current_thread.name().unwrap_or("unnamed").to_string();
+    let thread_name = current_thread.name().unwrap_or("unnamed");
 
     // Extract numeric thread ID (this is platform-specific)
     let thread_numeric_id = thread_id
@@ -263,22 +266,22 @@ pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecor
         .unwrap_or(0);
 
     LogRecord {
-        name,
+        name: get_logger_name(&name),
         levelno: level as i32,
-        levelname: format!("{:?}", level).to_uppercase(),
-        pathname: "".to_string(),
-        filename: "".to_string(),
-        module: "".to_string(),
+        levelname: get_level_name(level),
+        pathname: Arc::from(""),
+        filename: Arc::from(""),
+        module: Arc::from(""),
         lineno: 0,
-        func_name: "".to_string(),
+        func_name: Arc::from(""),
         created,
         msecs,
         relative_created: 0.0,
         thread: thread_numeric_id,
-        thread_name,
-        process_name: "".to_string(),
+        thread_name: Arc::from(thread_name),
+        process_name: Arc::from(""),
         process: std::process::id(),
-        msg,
+        msg: get_common_message(&msg),
         args: None,
         exc_info: None,
         exc_text: None,
@@ -320,23 +323,25 @@ impl Logger {
 
     /// Construct a LogRecord from a message and level.
     pub fn make_log_record(&self, level: LogLevel, msg: &str) -> crate::core::LogRecord {
+        use crate::string_cache::{get_common_message, get_level_name, get_logger_name};
+
         crate::core::LogRecord {
-            name: self.name.clone(),
+            name: get_logger_name(&self.name),
             levelno: level as i32,
-            levelname: format!("{:?}", level),
-            pathname: "".to_string(),
-            filename: "".to_string(),
-            module: "".to_string(),
+            levelname: get_level_name(level),
+            pathname: Arc::from(""),
+            filename: Arc::from(""),
+            module: Arc::from(""),
             lineno: 0,
-            func_name: "".to_string(),
+            func_name: Arc::from(""),
             created: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
             msecs: 0.0,
             relative_created: 0.0,
             thread: 0,
-            thread_name: "".to_string(),
-            process_name: "".to_string(),
+            thread_name: Arc::from(""),
+            process_name: Arc::from(""),
             process: 0,
-            msg: msg.to_string(),
+            msg: get_common_message(msg),
             args: None,
             exc_info: None,
             exc_text: None,

@@ -190,24 +190,36 @@ impl Handler for PythonHandler {
     async fn emit(&self, record: &LogRecord) {
         Python::with_gil(|py| {
             let py_record = PyDict::new(py);
-            py_record.set_item("name", &record.name).ok();
+            py_record.set_item("name", record.name.as_ref()).ok();
             py_record.set_item("levelno", record.levelno).ok();
-            py_record.set_item("levelname", &record.levelname).ok();
-            py_record.set_item("pathname", &record.pathname).ok();
-            py_record.set_item("filename", &record.filename).ok();
-            py_record.set_item("module", &record.module).ok();
+            py_record
+                .set_item("levelname", record.levelname.as_ref())
+                .ok();
+            py_record
+                .set_item("pathname", record.pathname.as_ref())
+                .ok();
+            py_record
+                .set_item("filename", record.filename.as_ref())
+                .ok();
+            py_record.set_item("module", record.module.as_ref()).ok();
             py_record.set_item("lineno", record.lineno).ok();
-            py_record.set_item("funcName", &record.func_name).ok();
+            py_record
+                .set_item("funcName", record.func_name.as_ref())
+                .ok();
             py_record.set_item("created", record.created).ok();
             py_record.set_item("msecs", record.msecs).ok();
             py_record
                 .set_item("relativeCreated", record.relative_created)
                 .ok();
             py_record.set_item("thread", record.thread).ok();
-            py_record.set_item("threadName", &record.thread_name).ok();
-            py_record.set_item("processName", &record.process_name).ok();
+            py_record
+                .set_item("threadName", record.thread_name.as_ref())
+                .ok();
+            py_record
+                .set_item("processName", record.process_name.as_ref())
+                .ok();
             py_record.set_item("process", record.process).ok();
-            py_record.set_item("msg", &record.msg).ok();
+            py_record.set_item("msg", record.msg.as_ref()).ok();
             // Optionals omitted for brevity
 
             let _ = self.py_callable.call1(py, (py_record,));
