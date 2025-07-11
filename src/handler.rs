@@ -1,3 +1,25 @@
+//! # Log Handlers
+//!
+//! This module provides handler implementations for processing log records.
+//! Handlers are responsible for outputting log records to their final destinations
+//! such as console, files, network services, or Python logging handlers.
+//!
+//! ## Handler Types
+//!
+//! - **PythonHandler**: Wraps Python callable objects for compatibility
+//! - **ConsoleHandler**: Outputs formatted log records to stdout
+//!
+//! ## Async Design
+//!
+//! All handlers implement an async `emit` method to ensure non-blocking
+//! log processing in the async runtime. This allows high-throughput logging
+//! without blocking application threads.
+//!
+//! ## Filtering and Formatting
+//!
+//! Handlers can have their own filters and formatters, providing fine-grained
+//! control over which records are processed and how they are presented.
+
 use async_trait::async_trait;
 use chrono::TimeZone;
 use pyo3::prelude::*;
@@ -9,32 +31,92 @@ use crate::core::{LogLevel, LogRecord};
 use crate::filter::Filter;
 use crate::formatter::Formatter;
 
-/// Trait for all log handlers. Now async-aware.
+/// Trait for all log handlers with async processing capabilities.
+///
+/// Handlers are responsible for the final processing and output of log records.
+/// All handlers must be thread-safe (Send + Sync) and support async emission
+/// for high-performance logging in async contexts.
+///
+/// # Design Philosophy
+///
+/// Handlers implement async `emit` to avoid blocking the logging system.
+/// They can optionally have formatters to control output format and filters
+/// to determine which records to process.
 #[async_trait::async_trait]
 pub trait Handler: Send + Sync {
     /// Emit a log record asynchronously.
+    ///
+    /// This is the core method where handlers process log records.
+    /// Implementations should be non-blocking and efficient.
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - The log record to process
     async fn emit(&self, record: &LogRecord);
 
     /// Set the formatter for this handler.
+    ///
+    /// Formatters control how log records are converted to strings
+    /// for output. If no formatter is set, handlers should provide
+    /// a reasonable default format.
+    ///
+    /// # Arguments
+    ///
+    /// * `formatter` - The formatter to use for this handler
     #[allow(dead_code)]
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>);
 
     /// Add a filter to this handler.
+    ///
+    /// Filters allow handlers to selectively process records based
+    /// on custom criteria beyond just log level.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter` - The filter to add to this handler
     #[allow(dead_code)]
     fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>);
 }
 
-/// Handler that wraps a Python callable.
-/// When a log record is emitted, this handler calls the Python function.
+/// Handler that wraps a Python callable for compatibility with Python logging.
+///
+/// This handler allows LogXide to interface with existing Python logging
+/// infrastructure by accepting Python handler objects and calling them
+/// with properly formatted log records.
+///
+/// # Compatibility
+///
+/// The handler converts Rust LogRecord structs to Python dict objects
+/// that match the format expected by Python logging handlers.
+///
+/// # Thread Safety
+///
+/// Uses PyO3's GIL management to safely call Python code from Rust threads.
 pub struct PythonHandler {
+    /// Python callable object (typically a logging.Handler instance)
     pub py_callable: PyObject,
+    /// Unique identifier for this handler instance
     #[allow(dead_code)]
     pub py_id: usize,
+    /// Optional formatter for this handler
     pub formatter: Option<Arc<dyn Formatter + Send + Sync>>,
+    /// List of filters applied to records before emission
     pub filters: Vec<Arc<dyn Filter + Send + Sync>>,
 }
 
 impl PythonHandler {
+    /// Create a new PythonHandler wrapping a Python callable.
+    ///
+    /// The handler will attempt to generate a unique ID by calling
+    /// the Python object's __hash__ method.
+    ///
+    /// # Arguments
+    ///
+    /// * `py_callable` - Python object that can be called with log records
+    ///
+    /// # Returns
+    ///
+    /// A new PythonHandler instance
     pub fn new(py_callable: PyObject) -> Self {
         let py_id = Python::with_gil(|py| {
             py_callable
@@ -53,6 +135,19 @@ impl PythonHandler {
         }
     }
 
+    /// Create a new PythonHandler with an explicit ID.
+    ///
+    /// This constructor allows specifying the handler ID directly,
+    /// which is useful when the ID is already known (e.g., from Python's id() function).
+    ///
+    /// # Arguments
+    ///
+    /// * `py_callable` - Python object that can be called with log records
+    /// * `py_id` - Unique identifier for this handler
+    ///
+    /// # Returns
+    ///
+    /// A new PythonHandler instance with the specified ID
     pub fn with_id(py_callable: PyObject, py_id: usize) -> Self {
         Self {
             py_callable,
@@ -62,14 +157,33 @@ impl PythonHandler {
         }
     }
 
+    /// Get the unique ID for this handler.
+    ///
+    /// The ID can be used to identify and manage handler instances.
+    ///
+    /// # Returns
+    ///
+    /// The unique identifier for this handler
     #[allow(dead_code)]
     pub fn id(&self) -> usize {
         self.py_id
     }
 }
 
+/// Implementation of Handler trait for PythonHandler.
+///
+/// Converts Rust LogRecord to Python dict and calls the wrapped Python callable.
 #[async_trait]
 impl Handler for PythonHandler {
+    /// Emit a log record by calling the wrapped Python callable.
+    ///
+    /// Converts the LogRecord to a Python dictionary with the same field
+    /// names and types as Python's logging.LogRecord, then calls the
+    /// Python handler with this dictionary.
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - The log record to emit
     async fn emit(&self, record: &LogRecord) {
         Python::with_gil(|py| {
             let py_record = PyDict::new(py);
@@ -106,14 +220,45 @@ impl Handler for PythonHandler {
     }
 }
 
-/// Simple console handler that writes to stdout
+/// Simple console handler that writes formatted log records to stdout.
+///
+/// This handler provides basic console output functionality with support
+/// for level filtering, custom formatting, and record filtering.
+///
+/// # Output Format
+///
+/// Uses a default timestamp-based format when no formatter is specified.
+/// With a formatter, uses the formatter's output exactly.
+///
+/// # Thread Safety
+///
+/// The handler level is protected by a Mutex to allow safe concurrent access.
 pub struct ConsoleHandler {
+    /// Minimum log level to output (protected by Mutex for thread safety)
     pub level: Mutex<LogLevel>,
+    /// Optional formatter for customizing output format
     pub formatter: Option<Arc<dyn Formatter + Send + Sync>>,
+    /// List of filters applied before output
     pub filters: Vec<Arc<dyn Filter + Send + Sync>>,
 }
 
+impl Default for ConsoleHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConsoleHandler {
+    /// Create a new ConsoleHandler with default settings.
+    ///
+    /// The handler is initialized with:
+    /// - Level: Warning (only warnings and above are shown)
+    /// - No formatter (uses built-in format)
+    /// - No filters
+    ///
+    /// # Returns
+    ///
+    /// A new ConsoleHandler instance
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
@@ -123,6 +268,15 @@ impl ConsoleHandler {
         }
     }
 
+    /// Create a new ConsoleHandler with a specific log level.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - Minimum log level to output
+    ///
+    /// # Returns
+    ///
+    /// A new ConsoleHandler instance with the specified level
     #[allow(dead_code)]
     pub fn with_level(level: LogLevel) -> Self {
         Self {
@@ -132,6 +286,19 @@ impl ConsoleHandler {
         }
     }
 
+    /// Create a new ConsoleHandler with a specific level and formatter.
+    ///
+    /// This is the most commonly used constructor for ConsoleHandler
+    /// as it allows full customization of both filtering and formatting.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - Minimum log level to output
+    /// * `formatter` - Formatter to use for output formatting
+    ///
+    /// # Returns
+    ///
+    /// A new ConsoleHandler instance with the specified configuration
     pub fn with_formatter(level: LogLevel, formatter: Arc<dyn Formatter + Send + Sync>) -> Self {
         Self {
             level: Mutex::new(level),
@@ -140,14 +307,34 @@ impl ConsoleHandler {
         }
     }
 
+    /// Set the formatter for this handler.
+    ///
+    /// This method allows changing the formatter after the handler
+    /// has been created.
+    ///
+    /// # Arguments
+    ///
+    /// * `formatter` - The new formatter to use
     #[allow(dead_code)]
     pub fn set_formatter_arc(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
         self.formatter = Some(formatter);
     }
 }
 
+/// Implementation of Handler trait for ConsoleHandler.
+///
+/// Provides console output with level filtering and optional formatting.
 #[async_trait]
 impl Handler for ConsoleHandler {
+    /// Emit a log record to stdout.
+    ///
+    /// First checks if the record level meets the handler's minimum level.
+    /// Then formats the record using the configured formatter or a default format.
+    /// Finally outputs the formatted message to stdout with immediate flushing.
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - The log record to emit
     async fn emit(&self, record: &LogRecord) {
         // Check if we should log this record based on level
         let level = self.level.lock().unwrap();

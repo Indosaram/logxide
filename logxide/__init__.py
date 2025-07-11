@@ -1,3 +1,20 @@
+"""
+LogXide: High-performance, Rust-powered drop-in replacement for Python's logging module.
+
+LogXide provides a fast, async-capable logging system that maintains full compatibility
+with Python's standard logging module while delivering superior performance through
+its Rust backend.
+"""
+
+__version__ = "0.1.0"
+__author__ = "LogXide Team"
+__email__ = "logxide@example.com"
+__license__ = "MIT"
+__description__ = (
+    "High-performance, Rust-powered drop-in replacement for Python's logging module"
+)
+__url__ = "https://github.com/yourusername/logxide"
+
 # Allow `from logxide import logging` to work as a drop-in replacement,
 # by creating a pure Python module that forwards to the Rust extension's API.
 
@@ -7,8 +24,6 @@ logging_mod = __import__("logxide.logxide", fromlist=["logging"]).logging
 getLogger = logging_mod.getLogger
 _rust_basicConfig = logging_mod.basicConfig
 flush = logging_mod.flush
-set_thread_name = logging_mod.set_thread_name
-get_thread_name = logging_mod.get_thread_name
 register_python_handler = logging_mod.register_python_handler
 PyLogger = logging_mod.PyLogger
 
@@ -155,8 +170,6 @@ class _LoggingModule:
     getLogger = staticmethod(getLogger)
     basicConfig = staticmethod(basicConfig)
     flush = staticmethod(flush)
-    set_thread_name = staticmethod(set_thread_name)
-    get_thread_name = staticmethod(get_thread_name)
     register_python_handler = staticmethod(register_python_handler)
     PyLogger = PyLogger
 
@@ -227,4 +240,32 @@ def uninstall():
             del sys.modules["logging"]
 
 
-__all__ = ["logging", "install", "uninstall", "LoggingManager"]
+__all__ = [
+    # Core functionality
+    "logging",
+    "install",
+    "uninstall",
+    "LoggingManager",
+    # Version and metadata
+    "__version__",
+    "__author__",
+    "__email__",
+    "__license__",
+    "__description__",
+    "__url__",
+    # Logging levels (for convenience)
+    "DEBUG",
+    "INFO",
+    "WARNING",
+    "ERROR",
+    "CRITICAL",
+    # Classes
+    "NullHandler",
+    "Formatter",
+    "Handler",
+    "StreamHandler",
+    # Functions
+    "getLogger",
+    "basicConfig",
+    "flush",
+]

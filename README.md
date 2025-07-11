@@ -14,7 +14,30 @@ A high-performance, Rust-powered drop-in replacement for Python's logging module
 
 ## Installation
 
+### From PyPI (Recommended)
+
+Install LogXide from PyPI using pip:
+
+```bash
+pip install logxide
+```
+
+### Quick Start
+
+```python
+import logxide
+logxide.install()  # Make logxide the default logging module
+
+# Now use logging as normal
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.info("Hello from LogXide!")
+```
+
 ### Development Setup
+
+For development or building from source:
 
 1. Install `maturin` to build the Python package:
 
@@ -281,5 +304,37 @@ LogXide aims for 100% compatibility with Python's logging module:
 
 ## Requirements
 
-- Python 3.8+
-- Rust 1.70+ (for building from source)
+- Python 3.9+
+- Rust 1.70+ (for building from source only)
+
+## Project Status
+
+LogXide is currently in **beta** status. The core functionality is stable and ready for production use, but some advanced features are still being developed.
+
+### What's Working
+- ✅ Drop-in replacement for Python logging
+- ✅ All Python logging format specifiers
+- ✅ Async processing for high performance
+- ✅ Thread-safe logging
+- ✅ Hierarchical loggers
+- ✅ Level filtering and inheritance
+- ✅ Custom handlers and formatters
+- ✅ Comprehensive test suite
+
+### Coming Soon
+- 🔄 Configuration file support (YAML/JSON)
+- 🔄 More built-in handlers (file, network, etc.)
+- 🔄 Advanced filtering capabilities
+- 🔄 Structured logging enhancements
+- 🔄 Performance monitoring tools
+
+## PyPI Package
+
+LogXide is available on PyPI: https://pypi.org/project/logxide/
+
+Package information:
+- **Package name**: `logxide`
+- **Current version**: 0.1.0
+- **License**: MIT
+- **Python versions**: 3.9, 3.10, 3.11, 3.12, 3.13
+- **Platforms**: Windows, macOS, Linux

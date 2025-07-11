@@ -1,12 +1,61 @@
 [project]
 name = "logxide"
-description = "Fast and powerful logging library for Python, written in Rust."
-requires-python = ">=3.9, <3.14"
-dynamic = ["version"]
+version = "0.1.0"
+description = "High-performance, Rust-powered drop-in replacement for Python's logging module"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Indosaram", email = "freedomzero91@gmail.com"},
+]
+maintainers = [
+    {name = "Indosaram", email = "freedomzero91@gmail.com"},
+]
+keywords = [
+    "logging",
+    "rust",
+    "async",
+    "performance",
+    "drop-in-replacement",
+    "high-performance",
+    "thread-safe",
+    "structured-logging",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Logging",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
+]
+requires-python = ">=3.9"
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/Indosaram/logxide"
+Repository = "https://github.com/Indosaram/logxide"
+Documentation = "https://Indosaram.readthedocs.io/logxide"
+"Bug Tracker" = "https://github.com/Indosaram/logxide/issues"
+Changelog = "https://github.com/Indosaram/logxide/blob/main/CHANGELOG.md"
+"Source Code" = "https://github.com/Indosaram/logxide"
+
 [build-system]
-requires = ["maturin"]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "logxide"
+module-name = "logxide.logxide"
 
 [project.optional-dependencies]
 dev = [
@@ -15,6 +64,10 @@ dev = [
     "mypy",
     "ruff",
     "pre-commit",
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "pymdown-extensions",
 ]
 
 # ===== Tool Configurations =====
@@ -105,6 +158,10 @@ line-ending = "auto"
 "logxide/__init__.py" = ["E402", "SIM102"]
 # Root level test files
 "test_*.py" = ["E501"]
+# Debug and format test files
+"tests/debug_*.py" = ["E402"]
+"tests/test_formatting.py" = ["E402"]
+"tests/test_sqlalchemy_simple.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["logxide"]

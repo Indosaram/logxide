@@ -1,0 +1,55 @@
+# Include important documentation files
+include README.md
+include LICENSE
+include CHANGELOG.md
+
+# Include configuration files
+include pyproject.toml
+include Cargo.toml
+include Cargo.lock
+
+# Include all Rust source files
+recursive-include src *.rs
+
+# Include Python source files
+recursive-include logxide *.py
+recursive-include logxide *.pyi
+
+# Include tests for source distributions
+recursive-include tests *.py
+include tests/README.md
+
+# Include examples
+recursive-include examples *.py
+include examples/README.md
+
+# Include documentation
+recursive-include docs *.md
+include mkdocs.yml
+
+# Include benchmarks
+recursive-include benchmark *.py
+
+# Exclude build artifacts and development files
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .pytest_cache
+global-exclude .coverage
+global-exclude htmlcov
+global-exclude .git*
+global-exclude .DS_Store
+global-exclude *.so
+global-exclude target
+global-exclude .venv
+global-exclude node_modules
+global-exclude dist
+global-exclude build
+global-exclude *.egg-info
+
+# Exclude development and CI files
+exclude .pre-commit-config.yaml
+exclude .github
+exclude .gitignore
+exclude pyrightconfig.json
+exclude .python-version
+exclude uv.lock

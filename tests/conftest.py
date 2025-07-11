@@ -1,6 +1,7 @@
 """
 Test configuration and fixtures for logxide tests.
 """
+
 import io
 import sys
 import threading
@@ -27,7 +28,7 @@ def clean_logging_state():
     logging.flush()
 
     # Reset thread name
-    logging.set_thread_name("TestThread")
+    threading.current_thread().name = "TestThread"
 
 
 @pytest.fixture

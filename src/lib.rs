@@ -1,15 +1,48 @@
+//! # LogXide
+//!
+//! A high-performance logging library for Python, implemented in Rust.
+//! LogXide provides a drop-in replacement for Python's standard logging module
+//! with asynchronous processing capabilities and enhanced performance.
+//!
+//! ## Architecture
+//!
+//! LogXide uses an async architecture with the following components:
+//! - **PyLogger**: Python-facing logger class that wraps Rust Logger
+//! - **LogMessage**: Message types for async communication
+//! - **Global Runtime**: Tokio runtime for async processing
+//! - **Message Channel**: High-throughput channel for log records
+//! - **Handler Registry**: Global registry of log handlers
+//!
+//! ## Usage
+//!
+//! ```python
+//! import logxide
+//! logxide.install()  # Replace Python's logging module
+//!
+//! import logging
+//! logging.basicConfig(level=logging.INFO)
+//! logger = logging.getLogger(__name__)
+//! logger.info("High-performance logging!")
+//! ```
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 mod config;
-mod core;
+pub mod core;
 mod filter;
-mod formatter;
-mod handler;
+pub mod formatter;
+pub mod handler;
+
+// Pure Rust modules for testing without PyO3
+#[cfg(test)]
+mod concurrency_pure;
+#[cfg(test)]
+mod core_pure;
+#[cfg(test)]
+mod formatter_pure;
 
 use core::{
     create_log_record, get_logger as core_get_logger, get_root_logger, LogLevel, LogRecord, Logger,
@@ -23,7 +56,10 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::oneshot;
 
-// Global Tokio runtime for async logging
+/// Global Tokio runtime for async logging operations.
+///
+/// This runtime handles all asynchronous log processing in a dedicated thread pool,
+/// ensuring that logging operations don't block the main application threads.
 static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -31,13 +67,22 @@ static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
         .expect("Failed to create Tokio runtime")
 });
 
-// Message types for the logging system
+/// Message types for communication with the async logging system.
+///
+/// The logging system uses a message-passing architecture where log records
+/// and control messages are sent through a channel to be processed asynchronously.
 enum LogMessage {
+    /// A log record to be processed by registered handlers
     Record(LogRecord),
+    /// A flush request with a completion signal
     Flush(oneshot::Sender<()>),
 }
 
-// Global sender for log messages
+/// Global sender for log messages to the async processing system.
+///
+/// This channel has a capacity of 1024 messages and uses try_send to avoid
+/// blocking the caller if the channel is full. Messages are processed by
+/// a background task spawned in the global RUNTIME.
 static SENDER: Lazy<Sender<LogMessage>> = Lazy::new(|| {
     let (sender, mut receiver): (Sender<LogMessage>, Receiver<LogMessage>) = mpsc::channel(1024);
     // Spawn background task for processing log messages
@@ -72,17 +117,26 @@ static SENDER: Lazy<Sender<LogMessage>> = Lazy::new(|| {
     sender
 });
 
-// Global registry of handlers
+/// Global registry of log handlers.
+///
+/// All registered handlers receive copies of log records for processing.
+/// Handlers are executed concurrently in the async runtime for maximum performance.
 static HANDLERS: Lazy<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>> =
     Lazy::new(|| Mutex::new(Vec::new()));
 
-// Global registry of Python thread names (ThreadId -> thread name)
-static THREAD_NAMES: Lazy<Mutex<HashMap<thread::ThreadId, String>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Python-exposed Logger class, wrapping the Rust Logger.
+/// Python-exposed Logger class that wraps the Rust Logger implementation.
+///
+/// This class provides the Python logging API while delegating the actual
+/// logging work to the high-performance Rust implementation. It maintains
+/// compatibility with Python's logging module interface.
+///
+/// # Thread Safety
+///
+/// PyLogger is thread-safe and can be used from multiple Python threads
+/// simultaneously. The underlying Rust Logger is protected by a Mutex.
 #[pyclass]
 pub struct PyLogger {
+    /// The underlying Rust logger implementation
     inner: Arc<Mutex<Logger>>,
 }
 
@@ -416,7 +470,29 @@ impl PyLogger {
     }
 }
 
-/// Get a logger by name (mirrors logging.getLogger)
+/// Get a logger by name, mirroring Python's `logging.getLogger()`.
+///
+/// Creates or retrieves a logger with the specified name. If no name is provided,
+/// returns the root logger. Logger names follow a hierarchical structure using
+/// dots as separators (e.g., "myapp.database.connection").
+///
+/// # Arguments
+///
+/// * `name` - Optional logger name. If None, returns the root logger.
+///
+/// # Returns
+///
+/// A PyLogger instance wrapping the Rust logger implementation.
+///
+/// # Examples
+///
+/// ```python
+/// # Get the root logger
+/// root = logging.getLogger()
+///
+/// # Get a named logger
+/// logger = logging.getLogger("myapp.database")
+/// ```
 #[pyfunction(name = "getLogger")]
 fn get_logger(name: Option<&str>) -> PyResult<PyLogger> {
     let logger = match name {
@@ -426,7 +502,23 @@ fn get_logger(name: Option<&str>) -> PyResult<PyLogger> {
     Ok(PyLogger { inner: logger })
 }
 
-/// Basic configuration (mirrors logging.basicConfig)
+/// Basic configuration for the logging system, mirroring Python's `logging.basicConfig()`.
+///
+/// Configures the root logger with the specified level and format. This function
+/// clears any existing handlers and adds a new console handler with the given configuration.
+///
+/// # Arguments
+///
+/// * `kwargs` - Configuration options including:
+///   - `level`: Minimum log level (default: WARNING)
+///   - `format`: Log message format string (default: "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+///   - `datefmt`: Date format string (optional)
+///
+/// # Examples
+///
+/// ```python
+/// logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
+/// ```
 #[pyfunction(name = "basicConfig")]
 fn basic_config(_py: Python, kwargs: Option<&PyDict>) -> PyResult<()> {
     // Set root logger level
@@ -499,26 +591,6 @@ fn flush() -> PyResult<()> {
     Ok(())
 }
 
-/// Set the current thread's name for logging purposes
-#[pyfunction]
-fn set_thread_name(name: String) -> PyResult<()> {
-    let current_thread_id = thread::current().id();
-    THREAD_NAMES.lock().unwrap().insert(current_thread_id, name);
-    Ok(())
-}
-
-/// Get the current thread's name for logging purposes
-#[pyfunction]
-fn get_thread_name() -> PyResult<String> {
-    let current_thread_id = thread::current().id();
-    let thread_names = THREAD_NAMES.lock().unwrap();
-    let name = thread_names
-        .get(&current_thread_id)
-        .cloned()
-        .unwrap_or_else(|| "unnamed".to_string());
-    Ok(name)
-}
-
 /// Register a Python handler globally (for demonstration)
 #[pyfunction]
 fn register_python_handler(py: Python, handler: &PyAny) -> PyResult<()> {
@@ -539,8 +611,6 @@ fn logxide(py: Python, m: &PyModule) -> PyResult<()> {
     logging_mod.add_function(wrap_pyfunction!(get_logger, logging_mod)?)?;
     logging_mod.add_function(wrap_pyfunction!(basic_config, logging_mod)?)?;
     logging_mod.add_function(wrap_pyfunction!(flush, logging_mod)?)?;
-    logging_mod.add_function(wrap_pyfunction!(set_thread_name, logging_mod)?)?;
-    logging_mod.add_function(wrap_pyfunction!(get_thread_name, logging_mod)?)?;
     logging_mod.add_function(wrap_pyfunction!(register_python_handler, logging_mod)?)?;
     m.add_submodule(logging_mod)?;
     // The global SENDER and HANDLERS are initialized on first use
