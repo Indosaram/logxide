@@ -1,6 +1,20 @@
-# Welcome to Logxide
+# Welcome to LogXide
 
-Logxide is a high-performance, Rust-powered, drop-in replacement for Python's standard logging module. It's designed to be fast, thread-safe, and easy to use, providing a familiar API for Python developers while leveraging the power of Rust for performance-critical logging operations.
+LogXide is a high-performance, Rust-powered, drop-in replacement for Python's standard logging module. It's designed to be fast, thread-safe, and easy to use, providing a familiar API for Python developers while leveraging the power of Rust for performance-critical logging operations.
+
+## Documentation
+
+### Getting Started
+- **[Installation Guide](installation.md)** - Installation and setup instructions
+- **[Usage Guide](usage.md)** - Complete usage examples and API guide
+
+### Performance & Architecture  
+- **[Performance Benchmarks](benchmarks.md)** - Comprehensive performance analysis and comparisons
+- **[Architecture](architecture.md)** - Technical architecture and design details
+
+### Development
+- **[Development Guide](development.md)** - Contributing and development setup
+- **[API Reference](reference.md)** - Complete API documentation
 
 ## Key Features
 
