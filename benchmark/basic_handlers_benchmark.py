@@ -238,7 +238,7 @@ class BasicHandlersBenchmark:
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
                 structlog.processors.UnicodeDecoder(),
-                structlog.processors.JSONRenderer(),
+                structlog.stdlib.ProcessorFormatter.wrap_for_formatter, # Use ProcessorFormatter
             ],
             context_class=dict,
             logger_factory=structlog.stdlib.LoggerFactory(),
@@ -252,7 +252,11 @@ class BasicHandlersBenchmark:
         py_logger.handlers = []
 
         handler = logging.FileHandler(log_file)
-        handler.setFormatter(logging.Formatter("%(message)s"))
+        # Use ProcessorFormatter to bridge structlog and standard logging
+        handler.setFormatter(structlog.stdlib.ProcessorFormatter(
+            processor=structlog.dev.ConsoleRenderer(colors=False), # Or another structlog processor
+            fmt="%(message)s" # This format string is used by ProcessorFormatter
+        ))
         py_logger.addHandler(handler)
 
         logger = structlog.get_logger(f"structlog_file_{time.time()}")
@@ -360,7 +364,7 @@ class BasicHandlersBenchmark:
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
                 structlog.processors.UnicodeDecoder(),
-                structlog.processors.JSONRenderer(),
+                structlog.stdlib.ProcessorFormatter.wrap_for_formatter, # Use ProcessorFormatter
             ],
             context_class=dict,
             logger_factory=structlog.stdlib.LoggerFactory(),
@@ -374,7 +378,11 @@ class BasicHandlersBenchmark:
         py_logger.handlers = []
 
         handler = logging.StreamHandler(self.null_stream)
-        handler.setFormatter(logging.Formatter("%(message)s"))
+        # Use ProcessorFormatter to bridge structlog and standard logging
+        handler.setFormatter(structlog.stdlib.ProcessorFormatter(
+            processor=structlog.dev.ConsoleRenderer(colors=False), # Or another structlog processor
+            fmt="%(message)s" # This format string is used by ProcessorFormatter
+        ))
         py_logger.addHandler(handler)
 
         logger = structlog.get_logger(f"structlog_stream_{time.time()}")
