@@ -20,7 +20,7 @@ try:
         sys.path.remove('.')
     
     # Import from installed package
-    import logxide.logxide as logxide_rust
+    import logxide as logxide_rust
     
     # Get the logging module from the Rust extension
     logging_mod = logxide_rust.logging

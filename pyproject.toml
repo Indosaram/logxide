@@ -54,8 +54,7 @@ build-backend = "maturin"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-python-source = "logxide"
-module-name = "logxide.logxide"
+module-name = "logxide"
 
 [project.optional-dependencies]
 dev = [
