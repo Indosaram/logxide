@@ -255,8 +255,10 @@ pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecor
     let current_thread = thread::current();
     let thread_id = format!("{:?}", current_thread.id());
 
-    // Use native thread name
-    let thread_name = current_thread.name().unwrap_or("unnamed");
+    // Use custom thread name if available, otherwise use native thread name
+    let thread_name = crate::THREAD_NAME
+        .with(|custom_name| custom_name.borrow().clone())
+        .unwrap_or_else(|| current_thread.name().unwrap_or("unnamed").to_string());
 
     // Extract numeric thread ID (this is platform-specific)
     let thread_numeric_id = thread_id
@@ -278,7 +280,7 @@ pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecor
         msecs,
         relative_created: 0.0,
         thread: thread_numeric_id,
-        thread_name: Arc::from(thread_name),
+        thread_name: Arc::from(thread_name.as_str()),
         process_name: Arc::from(""),
         process: std::process::id(),
         msg: get_common_message(&msg),

@@ -27,7 +27,7 @@ try:
     if '.' in sys.path:
         sys.path.remove('.')
     
-    import logxide.logxide as logxide_rust
+    import logxide as logxide_rust
     logging_mod = logxide_rust.logging
     logxide_getLogger = logging_mod.getLogger
     

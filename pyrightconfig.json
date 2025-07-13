@@ -1,0 +1,14 @@
+{
+    "venv": ".venv",
+    "venvPath": ".",
+    "pythonVersion": "3.13",
+    "typeCheckingMode": "basic",
+    "useLibraryCodeForTypes": true,
+    "autoSearchPaths": true,
+    "extraPaths": [],
+    "executionEnvironments": [
+        {
+            "root": "."
+        }
+    ]
+}
