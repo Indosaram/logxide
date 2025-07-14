@@ -52,6 +52,61 @@ class _LoggingModule:
     Handler = Handler
     StreamHandler = StreamHandler
     Logger = PyLogger  # Standard logging uses Logger class
+    BASIC_FORMAT = "%(levelname)s:%(name)s:%(message)s"
+    LogRecord = logxide.logging.LogRecord
+    
+    class Filter:
+        """Basic Filter implementation for compatibility"""
+        def __init__(self, name=''):
+            self.name = name
+            self.nlen = len(name)
+
+        def filter(self, record):
+            if self.nlen == 0:
+                return True
+            if self.nlen <= len(record.name):
+                if self.name == record.name[:self.nlen]:
+                    if record.name[self.nlen] == '.' or len(record.name) == self.nlen:
+                        return True
+            return False
+
+    class LoggerAdapter:
+        """Basic LoggerAdapter implementation for compatibility"""
+        def __init__(self, logger, extra=None):
+            self.logger = logger
+            self.extra = extra
+
+        def process(self, msg, kwargs):
+            if self.extra:
+                if "extra" in kwargs:
+                    kwargs["extra"].update(self.extra)
+                else:
+                    kwargs["extra"] = self.extra
+            return msg, kwargs
+
+        def debug(self, msg, *args, **kwargs):
+            self.logger.debug(msg, *args, **kwargs)
+
+        def info(self, msg, *args, **kwargs):
+            self.logger.info(msg, *args, **kwargs)
+
+        def warning(self, msg, *args, **kwargs):
+            self.logger.warning(msg, *args, **kwargs)
+
+        def error(self, msg, *args, **kwargs):
+            self.logger.error(msg, *args, **kwargs)
+
+        def critical(self, msg, *args, **kwargs):
+            self.logger.critical(msg, *args, **kwargs)
+
+        def exception(self, msg, *args, **kwargs):
+            self.logger.exception(msg, *args, **kwargs)
+
+        def log(self, level, msg, *args, **kwargs):
+            self.logger.log(level, msg, *args, **kwargs)
+
+        def isEnabledFor(self, level):
+            return self.logger.isEnabledFor(level)
 
     # Add compatibility functions
     addLevelName = staticmethod(addLevelName)
@@ -77,24 +132,91 @@ class _LoggingModule:
         self._handlerList = []
         
         # Use standard logging's root logger and utility functions
-        self.root = _std_logging.root
+        self.root = getLogger()
         self.FileHandler = _std_logging.FileHandler
+        self.lastResort = NullHandler()
+        self.raiseExceptions = True
         
         # Create mock shutdown function that delegates to standard logging
-        def mock_shutdown():
-            try:
-                _std_logging.shutdown()
-            except:
-                pass
-        self.shutdown = mock_shutdown
+        def shutdown():
+            # Flush all handlers
+            logxide.logging.flush() # Flush LogXide's internal buffers
+            for handler in _std_logging.root.handlers:
+                try:
+                    handler.flush()
+                except:
+                    pass
+
+        self.shutdown = shutdown
         
         # Create mock _checkLevel function that delegates to standard logging
-        def mock_checkLevel(level):
-            try:
-                return _std_logging._checkLevel(level)
-            except:
+        def _checkLevel(level):
+            if isinstance(level, int):
                 return level
-        self._checkLevel = mock_checkLevel
+            if isinstance(level, str):
+                s = level.upper()
+                if s in _std_logging._nameToLevel:
+                    return _std_logging._nameToLevel[s]
+            raise ValueError("Unknown level: %s" % level)
+
+        self._checkLevel = _checkLevel
+
+    def debug(self, msg, *args, **kwargs):
+        self.root.debug(msg, *args, **kwargs)
+
+    def info(self, msg, *args, **kwargs):
+        self.root.info(msg, *args, **kwargs)
+
+    def warning(self, msg, *args, **kwargs):
+        self.root.warning(msg, *args, **kwargs)
+
+    def error(self, msg, *args, **kwargs):
+        self.root.error(msg, *args, **kwargs)
+
+    def critical(self, msg, *args, **kwargs):
+        self.root.critical(msg, *args, **kwargs)
+
+    def exception(self, msg, *args, **kwargs):
+        self.root.exception(msg, *args, **kwargs)
+
+    def log(self, level, msg, *args, **kwargs):
+        self.root.log(level, msg, *args, **kwargs)
+
+    def fatal(self, msg, *args, **kwargs):
+        self.root.fatal(msg, *args, **kwargs)
+
+    def warn(self, msg, *args, **kwargs):
+        self.root.warn(msg, *args, **kwargs)
+
+    def captureWarnings(self, capture=True):
+        _std_logging.captureWarnings(capture)
+
+    def makeLogRecord(self, dict):
+        return self.LogRecord()
+
+    def getLogRecordFactory(self):
+        return self.LogRecord
+
+    def setLogRecordFactory(self, factory):
+        pass
+
+    def getLevelNamesMapping(self):
+        return {
+            'CRITICAL': CRITICAL,
+            'FATAL': FATAL,
+            'ERROR': ERROR,
+            'WARNING': WARNING,
+            'WARN': WARN,
+            'INFO': INFO,
+            'DEBUG': DEBUG,
+            'NOTSET': NOTSET,
+        }
+
+    def getHandlerByName(self, name):
+        return None
+
+    def getHandlerNames(self):
+        return []
     
     # Add logging submodules for compatibility
     @property
@@ -107,6 +229,9 @@ class _LoggingModule:
         """Provide access to logging.handlers for compatibility"""
         return _std_logging.handlers
 
+
+# Create the global logging manager instance
+_manager = LoggingManager()
 
 # Create the logging module instance
 logging = _LoggingModule()
@@ -149,7 +274,7 @@ def install():
         
         # Replace the standard logger's methods with logxide versions
         # Only replace methods that exist in both loggers
-        methods_to_replace = ['debug', 'info', 'warning', 'error', 'critical']
+        methods_to_replace = ['debug', 'info', 'warning', 'error', 'critical', 'exception', 'log', 'fatal', 'warn']
         
         for method in methods_to_replace:
             if hasattr(logxide_logger, method):
@@ -159,7 +284,7 @@ def install():
         if hasattr(std_logger, 'exception'):
             def exception_wrapper(msg, *args, **kwargs):
                 # Use logxide error method for exception logging
-                logxide_logger.error(msg, *args, **kwargs)
+                logxide_logger.exception(msg, *args, **kwargs)
             std_logger.exception = exception_wrapper
         
         return std_logger
@@ -210,3 +335,5 @@ def uninstall():
     if hasattr(std_logging, '_original_basicConfig'):
         std_logging.basicConfig = std_logging._original_basicConfig
         delattr(std_logging, '_original_basicConfig')
+
+''

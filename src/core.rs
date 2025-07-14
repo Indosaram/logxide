@@ -27,9 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use pyo3::conversion::FromPyObject;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
 
 /// Log levels, matching Python's logging levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -80,122 +78,114 @@ impl LogLevel {
 /// # Field Documentation
 ///
 /// Most fields mirror Python's logging.LogRecord attributes exactly.
+#[pyclass]
 #[derive(Debug, Clone)]
 pub struct LogRecord {
     /// Logger name that generated this record
-    pub name: Arc<str>,
+    #[pyo3(get, set)]
+    pub name: String,
     /// Numeric log level (10, 20, 30, 40, 50)
+    #[pyo3(get, set)]
     pub levelno: i32,
     /// String representation of log level ("DEBUG", "INFO", etc.)
-    pub levelname: Arc<str>,
+    #[pyo3(get, set)]
+    pub levelname: String,
     /// Full pathname of source file (if available)
-    pub pathname: Arc<str>,
+    #[pyo3(get, set)]
+    pub pathname: String,
     /// Filename portion of pathname
-    pub filename: Arc<str>,
+    #[pyo3(get, set)]
+    pub filename: String,
     /// Module name (if available)
-    pub module: Arc<str>,
+    #[pyo3(get, set)]
+    pub module: String,
     /// Source line number (if available)
+    #[pyo3(get, set)]
     pub lineno: u32,
     /// Function name (if available)
-    pub func_name: Arc<str>,
+    #[pyo3(get, set)]
+    pub func_name: String,
     /// Time when LogRecord was created (seconds since epoch)
+    #[pyo3(get, set)]
     pub created: f64,
     /// Millisecond portion of creation time
+    #[pyo3(get, set)]
     pub msecs: f64,
     /// Time in milliseconds since module load
+    #[pyo3(get, set)]
     pub relative_created: f64,
     /// Thread ID number
+    #[pyo3(get, set)]
     pub thread: u64,
     /// Thread name
-    pub thread_name: Arc<str>,
+    #[pyo3(get, set)]
+    pub thread_name: String,
     /// Process name
-    pub process_name: Arc<str>,
+    #[pyo3(get, set)]
+    pub process_name: String,
     /// Process ID
+    #[pyo3(get, set)]
     pub process: u32,
     /// The logged message
-    pub msg: Arc<str>,
+    #[pyo3(get, set)]
+    pub msg: String,
     /// Arguments passed to the logging call (for % formatting) - simplified to string
+    #[pyo3(get, set)]
     pub args: Option<String>,
     /// Exception information (simplified to string)
+    #[pyo3(get, set)]
     pub exc_info: Option<String>,
     /// Exception text (if exc_info was processed)
+    #[pyo3(get, set)]
     pub exc_text: Option<String>,
     /// Stack information (if requested)
+    #[pyo3(get, set)]
     pub stack_info: Option<String>,
     /// Async task name (if in asyncio context)
-    pub task_name: Option<Arc<str>>,
+    #[pyo3(get, set)]
+    pub task_name: Option<String>,
 }
 
-/// Conversion from Python LogRecord objects.
-///
-/// This implementation allows seamless conversion from Python logging.LogRecord
-/// instances to Rust LogRecord structs, enabling interoperability with
-/// existing Python logging infrastructure.
-impl<'source> FromPyObject<'source> for LogRecord {
-    fn extract_bound(obj: &Bound<'source, PyAny>) -> PyResult<Self> {
-        let name: String = obj.getattr("name")?.extract()?;
-        let levelno: i32 = obj.getattr("levelno")?.extract()?;
-        let levelname: String = obj.getattr("levelname")?.extract()?;
-        let pathname: String = obj.getattr("pathname")?.extract()?;
-        let filename: String = obj.getattr("filename")?.extract()?;
-        let module: String = obj.getattr("module")?.extract()?;
-        let lineno: u32 = obj.getattr("lineno")?.extract()?;
-        let func_name: String = obj.getattr("funcName")?.extract()?;
-        let created: f64 = obj.getattr("created")?.extract()?;
-        let msecs: f64 = obj.getattr("msecs")?.extract()?;
-        let relative_created: f64 = obj.getattr("relativeCreated")?.extract()?;
-        let thread: u64 = obj.getattr("thread")?.extract()?;
-        let thread_name: String = obj.getattr("threadName")?.extract()?;
-        let process_name: String = obj.getattr("processName")?.extract()?;
-        let process: u32 = obj.getattr("process")?.extract()?;
-        let msg: String = obj.getattr("msg")?.extract()?;
-
-        // Optional fields - convert to strings if present
-        let args: Option<String> = obj
-            .getattr("args")
-            .ok()
-            .and_then(|v| v.str().ok())
-            .map(|s| s.to_string());
-        let exc_info: Option<String> = obj
-            .getattr("exc_info")
-            .ok()
-            .and_then(|v| v.str().ok())
-            .map(|s| s.to_string());
-        let exc_text: Option<String> = obj.getattr("exc_text").ok().and_then(|v| v.extract().ok());
-        let stack_info: Option<String> = obj
-            .getattr("stack_info")
-            .ok()
-            .and_then(|v| v.extract().ok());
-        let task_name_str: Option<String> =
-            obj.getattr("taskName").ok().and_then(|v| v.extract().ok());
-
-        Ok(LogRecord {
-            name: Arc::from(name.as_str()),
+#[pymethods]
+impl LogRecord {
+    #[new]
+    fn new(
+        name: String,
+        levelno: i32,
+        pathname: String,
+        lineno: u32,
+        msg: String,
+        args: Option<String>,
+        exc_info: Option<String>,
+        func_name: String,
+        stack_info: Option<String>,
+    ) -> Self {
+        LogRecord {
+            name: name.into(),
             levelno,
-            levelname: Arc::from(levelname.as_str()),
-            pathname: Arc::from(pathname.as_str()),
-            filename: Arc::from(filename.as_str()),
-            module: Arc::from(module.as_str()),
+            levelname: "".into(), // Will be set by Python
+            pathname: pathname.into(),
+            filename: "".into(), // Will be set by Python
+            module: "".into(),   // Will be set by Python
             lineno,
-            func_name: Arc::from(func_name.as_str()),
-            created,
-            msecs,
-            relative_created,
-            thread,
-            thread_name: Arc::from(thread_name.as_str()),
-            process_name: Arc::from(process_name.as_str()),
-            process,
-            msg: Arc::from(msg.as_str()),
+            func_name: func_name.into(),
+            created: 0.0,            // Will be set by Python
+            msecs: 0.0,              // Will be set by Python
+            relative_created: 0.0,   // Will be set by Python
+            thread: 0,               // Will be set by Python
+            thread_name: "".into(),  // Will be set by Python
+            process_name: "".into(), // Will be set by Python
+            process: 0,              // Will be set by Python
+            msg: msg.into(),
             args,
             exc_info,
-            exc_text,
+            exc_text: None, // Will be set by Python
             stack_info,
-            task_name: task_name_str.map(|s| Arc::from(s.as_str())),
-        })
+            task_name: None, // Will be set by Python
+        }
     }
 }
 
-/// Logger struct supporting hierarchical logging with handlers and filters.
 ///
 /// Loggers form a hierarchy based on their names using dot notation.
 /// Each logger can have its own level, handlers, and filters, but will
@@ -268,22 +258,22 @@ pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecor
         .unwrap_or(0);
 
     LogRecord {
-        name: get_logger_name(&name),
+        name: get_logger_name(&name).to_string(),
         levelno: level as i32,
-        levelname: get_level_name(level),
-        pathname: Arc::from(""),
-        filename: Arc::from(""),
-        module: Arc::from(""),
+        levelname: get_level_name(level).to_string(),
+        pathname: "".to_string(),
+        filename: "".to_string(),
+        module: "".to_string(),
         lineno: 0,
-        func_name: Arc::from(""),
+        func_name: "".to_string(),
         created,
         msecs,
         relative_created: 0.0,
         thread: thread_numeric_id,
-        thread_name: Arc::from(thread_name.as_str()),
-        process_name: Arc::from(""),
+        thread_name: thread_name,
+        process_name: "".to_string(),
         process: std::process::id(),
-        msg: get_common_message(&msg),
+        msg: get_common_message(&msg).to_string(),
         args: None,
         exc_info: None,
         exc_text: None,
@@ -328,22 +318,22 @@ impl Logger {
         use crate::string_cache::{get_common_message, get_level_name, get_logger_name};
 
         crate::core::LogRecord {
-            name: get_logger_name(&self.name),
+            name: get_logger_name(&self.name).to_string(),
             levelno: level as i32,
-            levelname: get_level_name(level),
-            pathname: Arc::from(""),
-            filename: Arc::from(""),
-            module: Arc::from(""),
+            levelname: get_level_name(level).to_string(),
+            pathname: "".to_string(),
+            filename: "".to_string(),
+            module: "".to_string(),
             lineno: 0,
-            func_name: Arc::from(""),
+            func_name: "".to_string(),
             created: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
             msecs: 0.0,
             relative_created: 0.0,
             thread: 0,
-            thread_name: Arc::from(""),
-            process_name: Arc::from(""),
+            thread_name: "".to_string(),
+            process_name: "".to_string(),
             process: 0,
-            msg: get_common_message(msg),
+            msg: get_common_message(msg).to_string(),
             args: None,
             exc_info: None,
             exc_text: None,
