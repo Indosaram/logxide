@@ -19,9 +19,11 @@ These benchmarks test actual file and stream I/O operations, representing real-w
 
 | Rank | Library | Messages/sec | Relative Performance |
 |------|---------|-------------|---------------------|
-| 🥇 | **LogXide** | **8,637,132** | **1.00x** |
-| 🥈 | Picologging | 463,006 | 0.05x (18.7x slower) |
-| 🥉 | Structlog | 176,275 | 0.02x (49x slower) |
+| 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 |
+|------|---------|-------------|---------------------|
+| 1위 | **LogXide** | **8,637,132** | **1.00배** |
+| 2위 | Picologging | 463,006 | 0.05배 (LogXide보다 18.7배 느림) |
+| 3위 | Structlog | 176,275 | 0.02배 (LogXide보다 49배 느림) |
 
 **Key Findings:**
 - LogXide is **18.7x faster** than Picologging for file operations
@@ -34,9 +36,11 @@ These benchmarks test actual file and stream I/O operations, representing real-w
 
 | Rank | Library | Messages/sec | Relative Performance |
 |------|---------|-------------|---------------------|
-| 🥇 | **LogXide** | **9,945,301** | **1.00x** |
-| 🥈 | Picologging | 775,115 | 0.08x (12.8x slower) |
-| 🥉 | Structlog | 216,878 | 0.02x (45.8x slower) |
+| 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 |
+|------|---------|-------------|---------------------|
+| 1위 | **LogXide** | **9,945,301** | **1.00배** |
+| 2위 | Picologging | 775,115 | 0.08배 (LogXide보다 12.8배 느림) |
+| 3위 | Structlog | 216,878 | 0.02배 (LogXide보다 45.8배 느림) |
 
 **Key Findings:**
 - LogXide is **12.8x faster** than Picologging for stream operations
@@ -51,11 +55,11 @@ These benchmarks test pure logging performance without I/O overhead, focusing on
 
 *Test: 100,000 iterations, in-memory logging*
 
-| Test Scenario | LogXide (ops/sec) | Picologging (ops/sec) | Structlog (ops/sec) | LogXide vs Picologging |
+| 테스트 시나리오 | LogXide (초당 작업 수) | Picologging (초당 작업 수) | Structlog (초당 작업 수) | LogXide vs Picologging |
 |--------------|-------------------|---------------------|-------------------|----------------------|
-| **Simple Logging** | **1,371,829** | 1,177,578 | 245,301 | **1.16x faster** 🏆 |
-| **Structured Logging** | **1,167,209** | 1,108,635 | 220,907 | **1.05x faster** 🏆 |
-| **Error Logging** | **1,209,617** | 1,051,541 | 224,371 | **1.15x faster** 🏆 |
+| **단순 로깅** | **1,371,829** | 1,177,578 | 245,301 | **1.16배 더 빠름** |
+| **구조화된 로깅** | **1,167,209** | 1,108,635 | 220,907 | **1.05배 더 빠름** |
+| **오류 로깅** | **1,209,617** | 1,051,541 | 224,371 | **1.15배 더 빠름** |
 
 **Key Findings:**
 - LogXide maintains 5-16% performance advantage over Picologging in memory operations
@@ -66,11 +70,11 @@ These benchmarks test pure logging performance without I/O overhead, focusing on
 
 *Test: 100,000 iterations, messages filtered out by log level*
 
-| Library | Operations/sec | Performance |
+| 라이브러리 | 초당 작업 수 | 성능 |
 |---------|----------------|-------------|
-| **Picologging** | **27,285,067** | **Fastest** 🏆 |
-| LogXide | 10,106,429 | 2.7x slower |
-| Structlog | 231,104 | 118x slower |
+| **Picologging** | **27,285,067** | **가장 빠름** |
+| LogXide | 10,106,429 | 2.7배 느림 |
+| Structlog | 231,104 | 118배 느림 |
 
 **Key Findings:**
 - Picologging excels at disabled logging scenarios
@@ -84,30 +88,36 @@ These benchmarks test pure logging performance without I/O overhead, focusing on
 #### FileHandler Performance
 | Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
 |------|---------|-------------|---------------------|---------------------|
-| 🥇 | **LogXide** | **2,091,663** | **1.00x** | **12.5x faster** |
-| 🥈 | Structlog | 1,288,187 | 0.62x | 7.7x faster |
-| 🥉 | Picologging | 446,114 | 0.21x | 2.7x faster |
-| 4th | Python logging | 166,833 | 0.08x | 1.0x (baseline) |
-| 5th | Logbook | 145,410 | 0.07x | 0.9x |
-| 6th | Loguru | 132,228 | 0.06x | 0.8x |
+| 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 | 기준 대비 속도 향상 |
+|------|---------|-------------|---------------------|---------------------|
+| 1위 | **LogXide** | **2,091,663** | **1.00배** | **12.5배 더 빠름** |
+| 2위 | Structlog | 1,288,187 | 0.62배 | 7.7배 더 빠름 |
+| 3위 | Picologging | 446,114 | 0.21배 | 2.7배 더 빠름 |
+| 4위 | Python logging | 166,833 | 0.08배 | 1.0배 (기준) |
+| 5위 | Logbook | 145,410 | 0.07배 | 0.9배 |
+| 6위 | Loguru | 132,228 | 0.06배 | 0.8배 |
 
 #### StreamHandler Performance  
 | Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
 |------|---------|-------------|---------------------|---------------------|
-| 🥇 | **LogXide** | **2,137,244** | **1.00x** | **186.2x faster** |
-| 🥈 | Structlog | 1,222,748 | 0.57x | 106.5x faster |
-| 🥉 | Picologging | 802,598 | 0.38x | 69.9x faster |
-| 4th | Python logging | 11,474 | 0.01x | 1.0x (baseline) |
-| 5th | Logbook | 147,733 | 0.07x | 12.9x faster |
-| 6th | Loguru | 8,438 | 0.004x | 0.7x |
+| 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 | 기준 대비 속도 향상 |
+|------|---------|-------------|---------------------|---------------------|
+| 1위 | **LogXide** | **2,137,244** | **1.00배** | **186.2배 더 빠름** |
+| 2위 | Structlog | 1,222,748 | 0.57배 | 106.5배 더 빠름 |
+| 3위 | Picologging | 802,598 | 0.38배 | 69.9배 더 빠름 |
+| 4위 | Python logging | 11,474 | 0.01배 | 1.0배 (기준) |
+| 5위 | Logbook | 147,733 | 0.07배 | 12.9배 더 빠름 |
+| 6위 | Loguru | 8,438 | 0.004배 | 0.7배 |
 
 #### RotatingFileHandler Performance
 | Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
 |------|---------|-------------|---------------------|---------------------|
-| 🥇 | **LogXide** | **2,205,392** | **1.00x** | **17.7x faster** |
-| 🥈 | Picologging | 435,633 | 0.20x | 3.5x faster |
-| 3rd | Python logging | 124,900 | 0.06x | 1.0x (baseline) |
-| 4th | Loguru | 114,459 | 0.05x | 0.9x |
+| 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 | 기준 대비 속도 향상 |
+|------|---------|-------------|---------------------|---------------------|
+| 1위 | **LogXide** | **2,205,392** | **1.00배** | **17.7배 더 빠름** |
+| 2위 | Picologging | 435,633 | 0.20배 | 3.5배 더 빠름 |
+| 3위 | Python logging | 124,900 | 0.06배 | 1.0배 (기준) |
+| 4위 | Loguru | 114,459 | 0.05배 | 0.9배 |
 
 ## Performance Analysis
 
@@ -189,12 +199,12 @@ Picologging may be preferred if:
 
 ### Performance Summary
 
-| Scenario | LogXide | Picologging | Structlog |
+| 시나리오 | LogXide | Picologging | Structlog |
 |----------|---------|-------------|-----------|
-| **FileHandler** | 🏆 **Best** | Good | Fair |
-| **StreamHandler** | 🏆 **Best** | Good | Fair |
-| **Active Logging** | 🏆 **Best** | Very Good | Fair |
-| **Disabled Logging** | Good | 🏆 **Best** | Poor |
-| **Overall** | 🏆 **Best** | Very Good | Fair |
+| **FileHandler** | **최고** | 좋음 | 보통 |
+| **StreamHandler** | **최고** | 좋음 | 보통 |
+| **Active Logging** | **최고** | 매우 좋음 | 보통 |
+| **Disabled Logging** | 좋음 | **최고** | 나쁨 |
+| **전반적** | **최고** | 매우 좋음 | 보통 |
 
 **LogXide delivers exceptional performance where it matters most: when your application is actually logging.**

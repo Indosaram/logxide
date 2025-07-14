@@ -18,7 +18,7 @@ LogXide is a high-performance, Rust-powered, drop-in replacement for Python's st
 
 ## Key Features
 
-- 🚀 **High Performance**: Asynchronous logging powered by Rust and the Tokio runtime for non-blocking I/O.
+- **고성능**: Rust와 Tokio 런타임으로 구동되는 비동기 로깅은 비블로킹 I/O를 제공하여 높은 성능을 자랑합니다.
 - 🔄 **Drop-in Replacement**: Fully compatible with the `logging` module's API. You can switch to Logxide with minimal code changes.
 - 🧵 **Thread-Safe**: Designed from the ground up for multi-threaded applications, with features to make thread-based logging easier.
 - 📝 **Rich Formatting**: Supports all standard Python logging format specifiers, plus advanced features like padding and alignment.

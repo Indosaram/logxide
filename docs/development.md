@@ -33,7 +33,7 @@ logxide/
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/logxide
+git clone https://github.com/Indosaram/logxide
 cd logxide
 
 # Create virtual environment
