@@ -1,19 +1,19 @@
-# LogXide 🚀
+# LogXide
 
 **High-Performance Rust-Powered Logging for Python**
 
 LogXide is a drop-in replacement for Python's standard logging module, delivering exceptional performance through its async Rust implementation.
 
-## 🎯 Key Features
+## Key Features
 
-- **🚀 High Performance**: Rust-powered async logging with exceptional throughput
-- **🔄 Drop-in Replacement**: Full compatibility with Python's logging module API
-- **🧵 Thread-Safe**: Complete support for multi-threaded applications
-- **⚡ Async Processing**: Non-blocking log message processing with Tokio runtime
-- **📝 Rich Formatting**: All Python logging format specifiers with advanced features
-- **🎯 Level Filtering**: Hierarchical logger levels with inheritance
+- **High Performance**: Rust-powered async logging with exceptional throughput
+- **Drop-in Replacement**: Full compatibility with Python's logging module API
+- **Thread-Safe**: Complete support for multi-threaded applications
+- **Async Processing**: Non-blocking log message processing with Tokio runtime
+- **Rich Formatting**: All Python logging format specifiers with advanced features
+- **Level Filtering**: Hierarchical logger levels with inheritance
 
-## 🚀 Quick Start
+## Quick Start
 
 ```python
 import logxide
@@ -40,13 +40,13 @@ logger = logging.getLogger('myapp')
 logger.info('Hello from LogXide!')
 ```
 
-## 📦 Installation
+## Installation
 
 ```bash
 pip install logxide
 ```
 
-## 📚 Documentation
+## Documentation
 
 - **[Usage Guide](docs/usage.md)** - Complete usage examples and API guide
 - **[Integration Guide](docs/integration.md)** - Flask, Django, and FastAPI integration
@@ -56,7 +56,7 @@ pip install logxide
 - **[Development](docs/development.md)** - Contributing and development guide
 - **[API Reference](docs/reference.md)** - Complete API documentation
 
-## 🏆 Performance
+## Performance
 
 LogXide delivers exceptional performance through its Rust-powered async architecture. See our [comprehensive benchmarks](docs/benchmarks.md) for detailed performance analysis.
 
@@ -65,14 +65,14 @@ LogXide delivers exceptional performance through its Rust-powered async architec
 - **Async architecture** prevents blocking on log operations
 - **Concurrent handler execution** for maximum throughput
 
-## 🔧 Compatibility
+## Compatibility
 
 - **Python**: 3.12+ (3.13+ recommended)
 - **Platforms**: macOS, Linux, Windows
 - **API**: 100% compatible with Python's `logging` module
 - **Dependencies**: None (Rust compiled into native extension)
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! See our [development guide](docs/development.md) for details.
 
@@ -85,7 +85,7 @@ maturin develop
 pytest tests/
 ```
 
-## 📋 License
+## License
 
 [Add your license information here]
 
@@ -93,4 +93,4 @@ pytest tests/
 
 **LogXide delivers the performance you need without sacrificing the Python logging API you know.**
 
-*Built with 🦀 Rust and ❤️ for high-performance Python applications.*
+*Built with Rust for high-performance Python applications.*
