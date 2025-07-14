@@ -23,9 +23,10 @@ __url__ = "https://github.com/yourusername/logxide"
 # Import from organized modules
 from .module_system import logging, install, uninstall, set_thread_name
 from .compat_handlers import (
-    NullHandler, Formatter, Handler, StreamHandler, LoggingManager,
-    DEBUG, INFO, WARNING, ERROR, CRITICAL, NOTSET
+    NullHandler, Formatter, Handler, StreamHandler, FileHandler, LoggingManager,
+    DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, FATAL, NOTSET
 )
+from .compat_functions import addLevelName, getLevelName, disable, getLoggerClass, setLoggerClass
 from .logger_wrapper import getLogger, basicConfig
 from . import logxide
 
@@ -55,18 +56,38 @@ __all__ = [
     "DEBUG",
     "INFO", 
     "WARNING",
+    "WARN",
     "ERROR",
     "CRITICAL",
+    "FATAL",
+    "NOTSET",
     # Classes
     "NullHandler",
     "Formatter",
     "Handler",
     "StreamHandler",
+    "FileHandler",
     "PyLogger",
+    "Logger",
+    "LogRecord",
+    "Filter",
+    "LoggerAdapter",
     # Functions
     "getLogger",
     "basicConfig",
     "flush",
     "register_python_handler",
     "set_thread_name",
+    "addLevelName",
+    "getLevelName",
+    "disable",
+    "getLoggerClass",
+    "setLoggerClass",
+    "captureWarnings",
+    "makeLogRecord",
+    "getLogRecordFactory",
+    "setLogRecordFactory",
+    "getLevelNamesMapping",
+    "getHandlerByName",
+    "getHandlerNames",
 ]

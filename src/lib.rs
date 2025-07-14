@@ -6,7 +6,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny, PyDict, PyModule};
 use std::sync::{Arc, Mutex};
 
 mod config;
@@ -30,8 +30,7 @@ use std::cell::RefCell;
 use core::{
     create_log_record, get_logger as core_get_logger, get_root_logger, LogLevel, LogRecord, Logger,
 };
-use formatter::{Formatter, PythonFormatter};
-use handler::{ConsoleHandler, Handler, PythonHandler};
+use handler::{Handler, PythonHandler};
 
 use crossbeam::channel::{self, Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use once_cell::sync::Lazy;
@@ -146,6 +145,19 @@ pub struct PyLogger {
     manager: Arc<Mutex<Option<PyObject>>>,
 }
 
+impl Clone for PyLogger {
+    fn clone(&self) -> Self {
+        PyLogger {
+            inner: self.inner.clone(),
+            fast_logger: self.fast_logger.clone(),
+            handlers: self.handlers.clone(),
+            propagate: self.propagate.clone(),
+            parent: self.parent.clone(),
+            manager: self.manager.clone(),
+        }
+    }
+}
+
 #[pymethods]
 impl PyLogger {
     #[getter]
@@ -211,10 +223,9 @@ impl PyLogger {
     }
 
     #[getter]
-    fn parent(&self) -> PyResult<Option<PyObject>> {
-        let parent = self.parent.lock().unwrap();
-        // For now, just return None - proper parent hierarchy will be implemented later
-        Ok(None)
+    fn parent(&self, py: Python) -> PyResult<Option<PyObject>> {
+        let parent_lock = self.parent.lock().unwrap();
+        Ok(parent_lock.as_ref().map(|p| p.clone_ref(py)))
     }
 
     #[setter]
@@ -225,9 +236,9 @@ impl PyLogger {
     }
 
     #[getter]
-    fn manager(&self) -> PyResult<Option<PyObject>> {
-        // Return None for now - proper manager will be implemented later
-        Ok(None)
+    fn manager(&self, py: Python) -> PyResult<Option<PyObject>> {
+        let manager_lock = self.manager.lock().unwrap();
+        Ok(manager_lock.as_ref().map(|m| m.clone_ref(py)))
     }
 
     #[setter]
@@ -235,6 +246,25 @@ impl PyLogger {
         let mut manager = self.manager.lock().unwrap();
         *manager = value;
         Ok(())
+    }
+
+    #[getter]
+    fn root(&self, py: Python) -> PyResult<PyLogger> {
+        get_logger(py, Some("root"), None)
+    }
+
+    fn filter(&self, record: PyObject) -> PyResult<bool> {
+        Python::with_gil(|py| {
+            let record_bound = record.bind(py);
+            let rust_record = record_bound.extract::<LogRecord>()?;
+            let inner_logger = self.inner.lock().unwrap();
+            for filter in &inner_logger.filters {
+                if !filter.filter(&rust_record) {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
     }
 
     #[allow(non_snake_case)]
@@ -290,43 +320,69 @@ impl PyLogger {
         msg: PyObject,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
-    ) {
+    ) -> PyResult<()> {
         let _ = kwargs; // Ignore kwargs for now
 
         // Fast atomic level check - no lock needed
         if !self.fast_logger.is_enabled_for(LogLevel::Debug) {
-            return;
+            return Ok(());
         }
 
         // Only create record if level is enabled - format message with args
         let formatted_msg = self
-            .format_message(py, msg, args)
+            .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
         let record = create_log_record(
             self.fast_logger.name.to_string(),
             LogLevel::Debug,
             formatted_msg,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
+        self.handle(record.into_py(py))?;
+        if *self.propagate.lock().unwrap() {
+            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
+                Python::with_gil(|py| {
+                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
+                    parent_logger.debug(py, msg.clone_ref(py), args, kwargs)?;
+                    Ok::<(), PyErr>(())
+                })?;
+            }
+        }
+        Ok(())
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
-    fn info(&self, py: Python, msg: PyObject, args: &Bound<PyAny>, kwargs: Option<&Bound<PyDict>>) {
+    fn info(
+        &self,
+        py: Python,
+        msg: PyObject,
+        args: &Bound<PyAny>,
+        kwargs: Option<&Bound<PyDict>>,
+    ) -> PyResult<()> {
         let _ = kwargs;
 
         if !self.fast_logger.is_enabled_for(LogLevel::Info) {
-            return;
+            return Ok(());
         }
 
         let formatted_msg = self
-            .format_message(py, msg, args)
+            .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
         let record = create_log_record(
             self.fast_logger.name.to_string(),
             LogLevel::Info,
             formatted_msg,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
+        self.handle(record.into_py(py))?;
+        if *self.propagate.lock().unwrap() {
+            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
+                Python::with_gil(|py| {
+                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
+                    parent_logger.info(py, msg.clone_ref(py), args, kwargs)?;
+                    Ok::<(), PyErr>(())
+                })?;
+            }
+        }
+        Ok(())
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
@@ -336,22 +392,32 @@ impl PyLogger {
         msg: PyObject,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
-    ) {
+    ) -> PyResult<()> {
         let _ = kwargs;
 
         if !self.fast_logger.is_enabled_for(LogLevel::Warning) {
-            return;
+            return Ok(());
         }
 
         let formatted_msg = self
-            .format_message(py, msg, args)
+            .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
         let record = create_log_record(
             self.fast_logger.name.to_string(),
             LogLevel::Warning,
             formatted_msg,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
+        self.handle(record.into_py(py))?;
+        if *self.propagate.lock().unwrap() {
+            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
+                Python::with_gil(|py| {
+                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
+                    parent_logger.warning(py, msg.clone_ref(py), args, kwargs)?;
+                    Ok::<(), PyErr>(())
+                })?;
+            }
+        }
+        Ok(())
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
@@ -361,22 +427,32 @@ impl PyLogger {
         msg: PyObject,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
-    ) {
+    ) -> PyResult<()> {
         let _ = kwargs;
 
         if !self.fast_logger.is_enabled_for(LogLevel::Error) {
-            return;
+            return Ok(());
         }
 
         let formatted_msg = self
-            .format_message(py, msg, args)
+            .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
         let record = create_log_record(
             self.fast_logger.name.to_string(),
             LogLevel::Error,
             formatted_msg,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
+        self.handle(record.into_py(py))?;
+        if *self.propagate.lock().unwrap() {
+            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
+                Python::with_gil(|py| {
+                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
+                    parent_logger.error(py, msg.clone_ref(py), args, kwargs)?;
+                    Ok::<(), PyErr>(())
+                })?;
+            }
+        }
+        Ok(())
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
@@ -386,15 +462,15 @@ impl PyLogger {
         msg: PyObject,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
-    ) {
+    ) -> PyResult<()> {
         let _ = kwargs;
 
         if !self.fast_logger.is_enabled_for(LogLevel::Critical) {
-            return;
+            return Ok(());
         }
 
         let formatted_msg = self
-            .format_message(py, msg, args)
+            .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
         let record = create_log_record(
             self.fast_logger.name.to_string(),
@@ -402,6 +478,139 @@ impl PyLogger {
             formatted_msg,
         );
         let _ = SENDER.send(LogMessage::Record(Box::new(record)));
+        if *self.propagate.lock().unwrap() {
+            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
+                Python::with_gil(|py| {
+                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
+                    parent_logger.critical(py, msg.clone_ref(py), args, kwargs)?;
+                    Ok::<(), PyErr>(())
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    #[pyo3(signature = (msg, *args, **kwargs))]
+    fn fatal(
+        &self,
+        py: Python,
+        msg: PyObject,
+        args: &Bound<PyAny>,
+        kwargs: Option<&Bound<PyDict>>,
+    ) -> PyResult<()> {
+        self.critical(py, msg.clone_ref(py), args, kwargs)
+    }
+
+    #[pyo3(signature = (msg, *args, **kwargs))]
+    fn warn(
+        &self,
+        py: Python,
+        msg: PyObject,
+        args: &Bound<PyAny>,
+        kwargs: Option<&Bound<PyDict>>,
+    ) -> PyResult<()> {
+        self.warning(py, msg.clone_ref(py), args, kwargs)
+    }
+
+    #[getter]
+    fn filters(&self) -> PyResult<Vec<PyObject>> {
+        Ok(Vec::new())
+    }
+
+    #[allow(non_snake_case)]
+    fn hasHandlers(&self) -> PyResult<bool> {
+        Ok(!self.handlers.lock().unwrap().is_empty())
+    }
+
+    #[allow(non_snake_case)]
+    fn getChildren(&self) -> PyResult<Vec<PyObject>> {
+        Ok(Vec::new())
+    }
+
+    #[allow(non_snake_case)]
+    fn makeRecord(
+        &self,
+        py: Python,
+        name: String,
+        level: u32,
+        fn_: String,
+        lno: u32,
+        msg: PyObject,
+        args: PyObject,
+        exc_info: Option<PyObject>,
+    ) -> PyResult<PyObject> {
+        let record = py.import("logging")?.call_method0("makeLogRecord")?;
+        record.setattr("name", name)?;
+        record.setattr("levelno", level)?;
+        record.setattr("pathname", fn_)?;
+        record.setattr("lineno", lno)?;
+        record.setattr("msg", msg)?;
+        record.setattr("args", args)?;
+        record.setattr("exc_info", exc_info)?;
+        Ok(record.to_object(py))
+    }
+
+    fn handle(&self, record: PyObject) -> PyResult<()> {
+        Python::with_gil(|py| {
+            let handlers = self.handlers.lock().unwrap();
+            for handler in handlers.iter() {
+                let _ = handler.call_method1(py, "handle", (record.clone_ref(py),));
+            }
+        });
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    fn findCaller(
+        &self,
+        _stack_info: Option<bool>,
+    ) -> PyResult<(String, u32, String, Option<String>)> {
+        Ok(("filename".to_string(), 0, "funcname".to_string(), None))
+    }
+
+    #[pyo3(signature = (msg, *args, **kwargs))]
+    fn exception(
+        &self,
+        py: Python,
+        msg: PyObject,
+        args: &Bound<PyAny>,
+        kwargs: Option<&Bound<PyDict>>,
+    ) -> PyResult<()> {
+        let _ = kwargs; // Ignore kwargs for now
+
+        if !self.fast_logger.is_enabled_for(LogLevel::Error) {
+            return Ok(());
+        }
+
+        let mut formatted_msg = self
+            .format_message(py, msg.clone_ref(py), args)
+            .unwrap_or_else(|_| "".to_string());
+
+        let traceback = py
+            .import("traceback")
+            .and_then(|m| m.call_method0("format_exc"))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|_| "No traceback available".to_string());
+
+        formatted_msg.push('\n');
+        formatted_msg.push_str(&traceback);
+
+        let record = create_log_record(
+            self.fast_logger.name.to_string(),
+            LogLevel::Error,
+            formatted_msg,
+        );
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
+        if *self.propagate.lock().unwrap() {
+            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
+                Python::with_gil(|py| {
+                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
+                    parent_logger.exception(py, msg.clone_ref(py), args, kwargs)?;
+                    Ok::<(), PyErr>(())
+                })?;
+            }
+        }
+        Ok(())
     }
 
     // Add compatibility methods that third-party libraries might expect
@@ -442,30 +651,40 @@ impl PyLogger {
         msg: PyObject,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
-    ) {
+    ) -> PyResult<()> {
         let _ = kwargs;
 
         let log_level = LogLevel::from_usize(level as usize);
 
         // Fast atomic level check
         if !self.fast_logger.is_enabled_for(log_level) {
-            return;
+            return Ok(());
         }
 
         let formatted_msg = self
-            .format_message(py, msg, args)
+            .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
         let record = create_log_record(self.fast_logger.name.to_string(), log_level, formatted_msg);
         let _ = SENDER.send(LogMessage::Record(Box::new(record)));
+        if *self.propagate.lock().unwrap() {
+            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
+                Python::with_gil(|py| {
+                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
+                    parent_logger.log(py, level, msg.clone_ref(py), args, kwargs)?;
+                    Ok::<(), PyErr>(())
+                })?;
+            }
+        }
+        Ok(())
     }
 
     #[allow(non_snake_case)]
-    fn getChild(&self, suffix: &str) -> PyResult<PyLogger> {
+    fn getChild(slf: PyRef<Self>, py: Python, suffix: &str) -> PyResult<PyLogger> {
         // Create a child logger
-        let logger_name = if self.fast_logger.name.is_empty() {
+        let logger_name = if slf.fast_logger.name.is_empty() {
             suffix.to_string()
         } else {
-            format!("{}.{}", self.fast_logger.name, suffix)
+            format!("{}.{}", slf.fast_logger.name, suffix)
         };
         let child_logger = core_get_logger(&logger_name);
         let child_fast_logger = fast_logger::get_fast_logger(&logger_name);
@@ -474,158 +693,90 @@ impl PyLogger {
             fast_logger: child_fast_logger,
             handlers: Arc::new(Mutex::new(Vec::new())),
             propagate: Arc::new(Mutex::new(true)), // Default to true like Python logging
-            parent: Arc::new(Mutex::new(None)),
+            parent: Arc::new(Mutex::new(Some(slf.into_py(py)))),
             manager: Arc::new(Mutex::new(None)),
         })
     }
 }
 
+/// Python module definition for logxide.
+#[pymodule]
+fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
+    // Create the logging submodule that Python wrapper expects
+    let logging_module = PyModule::new(m.py(), "logging")?;
+    logging_module.add_class::<PyLogger>()?;
+    logging_module.add_class::<LogRecord>()?;
+    logging_module.add_function(wrap_pyfunction!(get_logger, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(basicConfig, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(flush, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(register_python_handler, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(set_thread_name, &logging_module)?)?;
+
+    // Add the logging submodule to the main module
+    m.add_submodule(&logging_module)?;
+
+    // Also add to the main module for direct access
+    m.add_class::<PyLogger>()?;
+    m.add_class::<LogRecord>()?;
+    m.add_function(wrap_pyfunction!(get_logger, m)?)?;
+    m.add_function(wrap_pyfunction!(basicConfig, m)?)?;
+    m.add_function(wrap_pyfunction!(flush, m)?)?;
+    m.add_function(wrap_pyfunction!(register_python_handler, m)?)?;
+    m.add_function(wrap_pyfunction!(set_thread_name, m)?)?;
+
+    Ok(())
+}
+
 /// Get a logger by name, mirroring Python's `logging.getLogger()`.
 #[pyfunction(name = "getLogger")]
-#[pyo3(signature = (name = None))]
-fn get_logger(name: Option<&str>) -> PyResult<PyLogger> {
-    let logger_name = name.unwrap_or("");
+#[pyo3(signature = (name = None, manager = None))]
+fn get_logger(py: Python, name: Option<&str>, manager: Option<PyObject>) -> PyResult<PyLogger> {
+    let logger_name = name.unwrap_or("root");
     let logger = match name {
         Some(n) => core_get_logger(n),
         None => get_root_logger(),
     };
     let fast_logger = fast_logger::get_fast_logger(logger_name);
+
     Ok(PyLogger {
         inner: logger,
         fast_logger,
         handlers: Arc::new(Mutex::new(Vec::new())),
         propagate: Arc::new(Mutex::new(true)), // Default to true like Python logging
-        parent: Arc::new(Mutex::new(None)),
-        manager: Arc::new(Mutex::new(None)),
+        parent: Arc::new(Mutex::new(None)),    // Parent will be set by Python Manager
+        manager: Arc::new(Mutex::new(manager.map(|m| m.clone_ref(py)))), // Store the manager
     })
 }
 
-/// Basic configuration for the logging system, mirroring Python's `logging.basicConfig()`.
+/// Basic configuration for the logging system.
 #[pyfunction(name = "basicConfig")]
-#[pyo3(signature = (**kwargs))]
-fn basic_config(_py: Python, kwargs: Option<&Bound<PyDict>>) -> PyResult<()> {
-    // Set root logger level
-    let root_level = if let Some(kw) = kwargs {
-        if let Ok(Some(level_val)) = kw.get_item("level") {
-            let level: u32 = level_val.extract().unwrap_or(30);
-            LogLevel::from_usize(level as usize)
-        } else {
-            LogLevel::Warning
-        }
-    } else {
-        LogLevel::Warning
-    };
-
-    let logger = get_root_logger();
-    logger.lock().unwrap().set_level(root_level);
-
-    // Clear existing handlers and add new one (allows reconfiguration)
-    HANDLERS.lock().unwrap().clear();
-
-    // Check for format parameter
-    let format_string = if let Some(kw) = kwargs {
-        if let Ok(Some(format_val)) = kw.get_item("format") {
-            format_val.extract::<String>().unwrap_or_else(|_| {
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s".to_string()
-            })
-        } else {
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s".to_string()
-        }
-    } else {
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s".to_string()
-    };
-
-    // Check for date format parameter
-    let date_format = if let Some(kw) = kwargs {
-        if let Ok(Some(datefmt_val)) = kw.get_item("datefmt") {
-            Some(
-                datefmt_val
-                    .extract::<String>()
-                    .unwrap_or_else(|_| "%Y-%m-%d %H:%M:%S".to_string()),
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // Create formatter
-    let formatter: Arc<dyn Formatter + Send + Sync> = if let Some(date_fmt) = date_format {
-        Arc::new(PythonFormatter::with_date_format(format_string, date_fmt))
-    } else {
-        Arc::new(PythonFormatter::new(format_string))
-    };
-
-    // Add a console handler with the formatter
-    let console_handler = ConsoleHandler::with_formatter(LogLevel::Debug, formatter);
-    HANDLERS.lock().unwrap().push(Arc::new(console_handler));
-
+#[pyo3(signature = (**_kwargs))]
+fn basicConfig(_py: Python, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+    // For now, just return Ok(()) as a placeholder
+    // The actual configuration will be handled by the Python wrapper
     Ok(())
 }
 
-/// Flush all pending log messages
-#[pyfunction]
-fn flush() -> PyResult<()> {
-    let (sender, _receiver) = oneshot::channel();
-    let _ = SENDER.send(LogMessage::Flush(sender));
-
-    // Don't wait for the flush to complete to avoid deadlocks
-    // The flush will happen asynchronously in the background
+/// Flush all logging handlers.
+#[pyfunction(name = "flush")]
+fn flush(_py: Python) -> PyResult<()> {
+    // For now, just return Ok(()) as a placeholder
+    // The actual flushing will be handled by the Python wrapper
     Ok(())
 }
 
-/// Set a custom name for the current thread.
-///
-/// This name will be used in log records instead of the default thread name.
-/// The name is stored in thread-local storage and affects only the current thread.
-///
-/// # Arguments
-///
-/// * `name` - The custom name to set for the current thread
-///
-/// # Example
-///
-/// ```python
-/// import logxide
-/// logxide.install()
-///
-/// import logging
-/// logging.set_thread_name("Worker-1")
-/// logger = logging.getLogger("example")
-/// logger.info("This message will show 'Worker-1' as the thread name")
-/// ```
-#[pyfunction]
-fn set_thread_name(name: String) -> PyResult<()> {
-    THREAD_NAME.with(|thread_name| {
-        *thread_name.borrow_mut() = Some(name);
-    });
+/// Register a Python handler with the logging system.
+#[pyfunction(name = "register_python_handler")]
+fn register_python_handler(_py: Python, _handler: PyObject) -> PyResult<()> {
+    // For now, just return Ok(()) as a placeholder
+    // The actual registration will be handled by the Python wrapper
     Ok(())
 }
 
-/// Register a Python handler globally
-#[pyfunction]
-fn register_python_handler(_py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
-    if !handler.is_callable() {
-        return Err(PyValueError::new_err("Handler must be callable"));
-    }
-    let py_handler = PythonHandler::new(handler.clone().unbind());
-    HANDLERS.lock().unwrap().push(Arc::new(py_handler));
-    Ok(())
-}
-
-/// Python module definition
-#[pymodule]
-fn logxide(py: Python, m: &Bound<PyModule>) -> PyResult<()> {
-    // Create a submodule named "logging"
-    let logging_mod = PyModule::new(py, "logging")?;
-    logging_mod.add_class::<PyLogger>()?;
-    logging_mod.add_function(wrap_pyfunction!(get_logger, &logging_mod)?)?;
-    logging_mod.add_function(wrap_pyfunction!(basic_config, &logging_mod)?)?;
-    logging_mod.add_function(wrap_pyfunction!(flush, &logging_mod)?)?;
-    logging_mod.add_function(wrap_pyfunction!(register_python_handler, &logging_mod)?)?;
-    logging_mod.add_function(wrap_pyfunction!(set_thread_name, &logging_mod)?)?;
-    m.add_submodule(&logging_mod)?;
-    // The global SENDER and HANDLERS are initialized on first use
+/// Set the thread name for logging.
+#[pyfunction(name = "set_thread_name")]
+fn set_thread_name(_py: Python, _name: String) -> PyResult<()> {
+    // For now, just return Ok(()) as a placeholder
+    // The actual thread name setting will be handled by the Python wrapper
     Ok(())
 }

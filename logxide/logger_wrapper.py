@@ -105,14 +105,23 @@ def getLogger(name=None):
     created loggers before LogXide was configured.
     """
     # Get the LogXide logger
-    logger = _rust_getLogger(name)
+    from .module_system import _manager
+    logger = _rust_getLogger(name, manager=_manager)
     
     # Ensure any retrieved logger propagates to the root and has no other handlers
-    logger.handlers.clear()
-    logger.propagate = True
+    # logger.handlers.clear() # Handlers are managed by the Rust side now
+    # logger.propagate = True # Propagate is handled by Rust side now
 
     # Apply the current configuration level if available
     if _current_config['level'] is not None:
         logger.setLevel(_current_config['level'])
+
+    # Set parent for non-root loggers
+    if name and '.' in name:
+        parent_name = name.rsplit('.', 1)[0]
+        parent_logger = getLogger(parent_name)
+        logger.parent = parent_logger
+    elif name and name != "root":
+        logger.parent = getLogger("root")
     
     return logger

@@ -5,6 +5,8 @@ This module provides handler classes that maintain compatibility with
 Python's standard logging module.
 """
 
+import sys
+
 # Define logging level constants
 NOTSET = 0
 DEBUG = 10
@@ -37,15 +39,17 @@ class Formatter:
     """Basic formatter class - compatible with logging.Formatter"""
 
     def __init__(self, fmt=None, datefmt=None, style='%', validate=True, **kwargs):
-        self.fmt = fmt
+        self.fmt = fmt if fmt else "%(message)s" # Default format if not provided
         self.datefmt = datefmt
         self.style = style
         self.validate = validate
-        # Accept and ignore any additional kwargs for compatibility
         self._kwargs = kwargs
 
     def format(self, record):
-        return str(record)
+        # Use record.__dict__ for string formatting
+        # This assumes LogRecord exposes attributes via __dict__
+        s = self.fmt % record.__dict__
+        return s
 
 
 class Handler:
@@ -56,10 +60,25 @@ class Handler:
         self.level = NOTSET
 
     def handle(self, record):
-        pass
+        self.emit(record)
 
     def emit(self, record):
+        # This method should be overridden by subclasses
         pass
+
+    def handleError(self, record):
+        # Default error handling - print to stderr
+        import traceback
+        if sys.stderr:
+            sys.stderr.write('--- Logging error ---\n')
+            traceback.print_exc(file=sys.stderr)
+            sys.stderr.write('Call stack:\n')
+            traceback.print_stack(file=sys.stderr)
+            sys.stderr.write('--- End of logging error ---\n')
+
+    @property
+    def terminator(self):
+        return '\n'
 
     def setFormatter(self, formatter):
         """Set the formatter for this handler"""
@@ -79,7 +98,39 @@ class StreamHandler(Handler):
 
     def __init__(self, stream=None):
         super().__init__()
+        if stream is None:
+            stream = sys.stderr
         self.stream = stream
+
+    def emit(self, record):
+        try:
+            if self.formatter:
+                msg = self.formatter.format(record)
+            else:
+                msg = str(record.msg) # Fallback if no formatter
+            stream = self.stream
+            stream.write(msg + self.terminator)
+            self.flush()
+        except RecursionError:
+            raise
+        except Exception:
+            self.handleError(record)
+
+    def flush(self):
+        if self.stream and hasattr(self.stream, "flush"):
+            self.stream.flush()
+
+
+class FileHandler(StreamHandler):
+    """File handler class - compatible with logging.FileHandler"""
+
+    def __init__(self, filename, mode='a', encoding=None, delay=False):
+        # Implement basic file handling
+        super().__init__(stream=open(filename, mode, encoding=encoding))
+        self.baseFilename = filename
+        self.mode = mode
+        self.encoding = encoding
+        self.delay = delay
 
 
 class LoggingManager:

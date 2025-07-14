@@ -74,7 +74,7 @@ pub struct FastLoggerManager {
 
 impl FastLoggerManager {
     pub fn new() -> Self {
-        let root = Arc::new(FastLogger::new(""));
+        let root = Arc::new(FastLogger::new("root"));
         root.set_level(LogLevel::Warning);
 
         Self {
