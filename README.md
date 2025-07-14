@@ -49,6 +49,7 @@ pip install logxide
 ## 📚 Documentation
 
 - **[Usage Guide](docs/usage.md)** - Complete usage examples and API guide
+- **[Integration Guide](docs/integration.md)** - Flask, Django, and FastAPI integration
 - **[Performance Benchmarks](docs/benchmarks.md)** - Comprehensive performance analysis
 - **[Architecture](docs/architecture.md)** - Technical architecture and design
 - **[Installation](docs/installation.md)** - Installation and setup guide
@@ -77,7 +78,7 @@ We welcome contributions! See our [development guide](docs/development.md) for d
 
 ```bash
 # Quick development setup
-git clone https://github.com/yourusername/logxide
+git clone https://github.com/Indosaram/logxide
 cd logxide
 pip install maturin
 maturin develop

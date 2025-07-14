@@ -18,7 +18,7 @@ __license__ = "MIT"
 __description__ = (
     "High-performance, Rust-powered drop-in replacement for Python's logging module"
 )
-__url__ = "https://github.com/yourusername/logxide"
+__url__ = "https://github.com/Indosaram/logxide"
 
 # Import from organized modules
 from .module_system import logging, install, uninstall, set_thread_name

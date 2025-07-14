@@ -154,7 +154,7 @@ LogXide follows semantic versioning:
 
 ### Support
 
-- GitHub Issues: https://github.com/yourusername/logxide/issues
+- GitHub Issues: https://github.com/Indosaram/logxide/issues
 - Documentation: https://logxide.readthedocs.io
 - Email: logxide@example.com
 

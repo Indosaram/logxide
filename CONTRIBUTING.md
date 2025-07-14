@@ -40,7 +40,7 @@ LogXide is a Rust-based Python extension that provides high-performance logging.
 1. Fork the repository on GitHub
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/yourusername/logxide.git
+   git clone https://github.com/Indosaram/logxide.git
    cd logxide
    ```
 
