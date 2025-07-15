@@ -8,7 +8,12 @@ This example demonstrates the fundamental features of logxide:
 - Message formatting
 """
 
-from logxide import logging
+import logxide
+
+# Install logxide as drop-in replacement
+logxide.install()
+
+import logging
 
 
 def main():

@@ -1,4 +1,9 @@
-from logxide import logging
+import logxide
+
+# Install logxide as drop-in replacement
+logxide.install()
+
+import logging
 
 print("=== Production Format ===")
 prod_format = "%(asctime)s [%(process)d:%(thread)d] %(levelname)s %(name)s: %(message)s"
@@ -21,3 +26,4 @@ for component in components:
         logger.warning("Connection pool at 80% capacity")
     elif component == "cache.redis":
         logger.error("Cache miss rate high")
+logging.flush()

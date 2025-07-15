@@ -1,7 +1,12 @@
 import threading
 import time
 
-from logxide import logging
+import logxide
+
+# Install logxide as drop-in replacement
+logxide.install()
+
+import logging
 
 print("=== Multi-threaded Logging ===")
 thread_format = (
@@ -41,3 +46,4 @@ for t in threads:
     t.join()
 
 main_logger.info("All worker threads completed")
+logging.flush()
