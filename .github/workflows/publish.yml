@@ -258,8 +258,9 @@ jobs:
             - name: Validate packages before publishing
               run: |
                   echo "Validating packages before publishing..."
-                  python -m pip install twine
-                  python -m twine check dist/*
+                  python -m pip install --upgrade uv
+                  uv pip install --system twine
+                  uv run twine check dist/*
                   echo "✅ All packages passed validation!"
 
             - name: Publish to PyPI
