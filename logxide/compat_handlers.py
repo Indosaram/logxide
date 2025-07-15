@@ -137,7 +137,8 @@ class FileHandler(StreamHandler):
         if hasattr(self, "_file") and self._file:
             self._file.close()
             self._file = None
-        super().close()
+        if hasattr(super(), "close"):
+            super().close()  # type: ignore[misc]
 
 
 class LoggingManager:

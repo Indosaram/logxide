@@ -8,7 +8,41 @@ its Rust backend.
 
 import sys
 from types import ModuleType
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+# Import logxide with fallback for type checking
+try:
+    from . import logxide
+except ImportError:
+    # Handle case where Rust extension is not available
+    if TYPE_CHECKING:
+        from typing import Any
+
+        # Type stubs for the Rust extension
+        class RustExtension:
+            logging: Any
+
+        logxide = RustExtension()
+    else:
+
+        class RustExtension:
+            class logging:
+                @staticmethod
+                def flush():
+                    pass
+
+                @staticmethod
+                def register_python_handler(handler):
+                    pass
+
+                @staticmethod
+                def set_thread_name(name):
+                    pass
+
+                PyLogger = object
+                LogRecord = object
+
+        logxide = RustExtension()
 
 # Package metadata
 __version__ = "0.1.0"
@@ -21,7 +55,6 @@ __description__ = (
 __url__ = "https://github.com/Indosaram/logxide"
 
 # Import from organized modules
-from . import logxide
 from .compat_functions import (
     addLevelName,
     disable,
@@ -56,6 +89,10 @@ flush = logxide.logging.flush
 register_python_handler = logxide.logging.register_python_handler
 set_thread_name = logxide.logging.set_thread_name
 PyLogger = logxide.logging.PyLogger
+Logger = PyLogger  # Alias for compatibility
+LogRecord = logxide.logging.LogRecord
+Filter = logging.Filter
+LoggerAdapter = logging.LoggerAdapter
 
 __all__ = [
     # Core functionality
@@ -101,11 +138,12 @@ __all__ = [
     "disable",
     "getLoggerClass",
     "setLoggerClass",
-    "captureWarnings",
-    "makeLogRecord",
-    "getLogRecordFactory",
-    "setLogRecordFactory",
-    "getLevelNamesMapping",
-    "getHandlerByName",
-    "getHandlerNames",
+    # TODO: Implement these functions for full compatibility
+    # "captureWarnings",
+    # "makeLogRecord",
+    # "getLogRecordFactory",
+    # "setLogRecordFactory",
+    # "getLevelNamesMapping",
+    # "getHandlerByName",
+    # "getHandlerNames",
 ]
