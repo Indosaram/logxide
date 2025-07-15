@@ -73,11 +73,10 @@ jobs:
               run: uv sync --dev
 
             - name: Build wheels
-              run: |
-                  echo "Building wheels for ${{ matrix.os }} Python ${{ matrix.python-version }}..."
-                  uv run maturin build --release --strip
-                  echo "Build completed successfully!"
-              shell: bash
+              uses: PyO3/maturin-action@v1
+              with:
+                command: build
+                args: --release --strip
 
             - name: List built wheels
               run: |
