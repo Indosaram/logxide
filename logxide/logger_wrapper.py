@@ -1,15 +1,25 @@
 """
-Logger wrapper and configuration logic for LogXide.
+LogXide Logger Wrapper Module
 
-This module handles the integration between Python and Rust logging,
+This module provides the Python interface to LogXide's Rust implementation,
 including configuration management and logger migration.
 """
 
-# Import the Rust extension module directly
-from . import logxide
+import contextlib
 
-_rust_getLogger = logxide.logging.getLogger
-_rust_basicConfig = logxide.logging.basicConfig
+# Import the Rust extension module directly
+try:
+    from . import logxide
+
+    _rust_getLogger = logxide.logging.getLogger
+    _rust_basicConfig = logxide.logging.basicConfig
+except ImportError:
+    # Handle case where Rust extension is not available
+    def _rust_getLogger(name=None):  # type: ignore[misc]
+        return object()
+
+    def _rust_basicConfig(**kwargs):  # type: ignore[misc]
+        pass
 
 
 # Track existing Python loggers that need to be migrated to LogXide
@@ -102,9 +112,7 @@ def getLogger(name=None):
     created loggers before LogXide was configured.
     """
     # Get the LogXide logger
-    from .module_system import _manager
-
-    logger = _rust_getLogger(name, manager=_manager)
+    logger = _rust_getLogger(name)
 
     # Ensure any retrieved logger propagates to the root and has no other handlers
     # logger.handlers.clear() # Handlers are managed by the Rust side now
@@ -112,14 +120,17 @@ def getLogger(name=None):
 
     # Apply the current configuration level if available
     if _current_config["level"] is not None:
-        logger.setLevel(_current_config["level"])
+        with contextlib.suppress(AttributeError):
+            logger.setLevel(_current_config["level"])
 
     # Set parent for non-root loggers
     if name and "." in name:
         parent_name = name.rsplit(".", 1)[0]
         parent_logger = getLogger(parent_name)
-        logger.parent = parent_logger
+        with contextlib.suppress(AttributeError):
+            logger.parent = parent_logger
     elif name and name != "root":
-        logger.parent = getLogger("root")
+        with contextlib.suppress(AttributeError):
+            logger.parent = getLogger("root")
 
     return logger

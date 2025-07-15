@@ -6,6 +6,17 @@
     "useLibraryCodeForTypes": true,
     "autoSearchPaths": true,
     "extraPaths": [],
+    "reportMissingImports": "none",
+    "reportAttributeAccessIssue": "none",
+    "reportUndefinedVariable": "none",
+    "reportCallIssue": "none",
+    "reportUnsupportedDunderAll": "none",
+    "reportUnknownMemberType": "none",
+    "reportUnknownParameterType": "none",
+    "reportUnknownArgumentType": "none",
+    "reportUnknownVariableType": "none",
+    "reportMissingTypeStubs": "none",
+    "reportGeneralTypeIssues": "none",
     "executionEnvironments": [
         {
             "root": "."

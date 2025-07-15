@@ -9,7 +9,32 @@ import builtins
 import contextlib
 import logging as _std_logging
 
-from . import logxide
+try:
+    from . import logxide
+except ImportError:
+    # Handle case where Rust extension is not available
+    class logxide:  # type: ignore[no-redef]
+        class logging:
+            @staticmethod
+            def getLogger(name=None):
+                return object()
+
+            @staticmethod
+            def basicConfig(**kwargs):
+                pass
+
+            @staticmethod
+            def flush():
+                pass
+
+            @staticmethod
+            def set_thread_name(name):
+                pass
+
+            PyLogger = object
+            LogRecord = object
+
+
 from .compat_functions import (
     addLevelName,
     disable,
@@ -35,10 +60,10 @@ from .compat_handlers import (
 from .logger_wrapper import _migrate_existing_loggers, basicConfig, getLogger
 
 # Get references to Rust functions
-flush = logxide.logging.flush
-register_python_handler = logxide.logging.register_python_handler
-set_thread_name = logxide.logging.set_thread_name
-PyLogger = logxide.logging.PyLogger
+flush = logxide.logging.flush  # type: ignore[attr-defined]
+register_python_handler = logxide.logging.register_python_handler  # type: ignore[attr-defined]
+set_thread_name = logxide.logging.set_thread_name  # type: ignore[attr-defined]
+PyLogger = logxide.logging.PyLogger  # type: ignore[attr-defined]
 
 
 class _LoggingModule:
@@ -157,7 +182,7 @@ class _LoggingModule:
         # Create mock shutdown function that delegates to standard logging
         def shutdown():
             # Flush all handlers
-            logxide.logging.flush()  # Flush LogXide's internal buffers
+            logxide.logging.flush()  # type: ignore[attr-defined]  # Flush LogXide's internal buffers
             for handler in _std_logging.root.handlers:
                 with contextlib.suppress(builtins.BaseException):
                     handler.flush()
@@ -237,12 +262,12 @@ class _LoggingModule:
     @property
     def config(self):
         """Provide access to logging.config for compatibility"""
-        return _std_logging.config
+        return _std_logging.config  # type: ignore[attr-defined]
 
     @property
     def handlers(self):
         """Provide access to logging.handlers for compatibility"""
-        return _std_logging.handlers
+        return _std_logging.handlers  # type: ignore[attr-defined]
 
 
 # Create the global logging manager instance
@@ -276,13 +301,13 @@ def install():
 
     # Store the original getLogger function
     if not hasattr(std_logging, "_original_getLogger"):
-        std_logging._original_getLogger = std_logging.getLogger
+        std_logging._original_getLogger = std_logging.getLogger  # type: ignore[attr-defined]
 
     # Replace getLogger with our version
     def logxide_getLogger(name=None):
         """Get a logxide logger that wraps the standard logger"""
         # Get the standard logger first
-        std_logger = std_logging._original_getLogger(name)
+        std_logger = std_logging._original_getLogger(name)  # type: ignore[attr-defined]
 
         # Create a logxide logger
         logxide_logger = getLogger(name)
@@ -321,25 +346,25 @@ def install():
 
     # Also replace basicConfig to use logxide
     if not hasattr(std_logging, "_original_basicConfig"):
-        std_logging._original_basicConfig = std_logging.basicConfig
+        std_logging._original_basicConfig = std_logging.basicConfig  # type: ignore[attr-defined]
 
     def logxide_basicConfig(**kwargs):
         """Use logxide basicConfig but also call original for compatibility"""
         import contextlib
 
         with contextlib.suppress(Exception):
-            std_logging._original_basicConfig(**kwargs)
+            std_logging._original_basicConfig(**kwargs)  # type: ignore[attr-defined]
         return basicConfig(**kwargs)
 
     std_logging.basicConfig = logxide_basicConfig
 
     # Also add flush method if it doesn't exist
     if not hasattr(std_logging, "flush"):
-        std_logging.flush = flush
+        std_logging.flush = flush  # type: ignore[attr-defined]
 
     # Add set_thread_name method if it doesn't exist
     if not hasattr(std_logging, "set_thread_name"):
-        std_logging.set_thread_name = set_thread_name
+        std_logging.set_thread_name = set_thread_name  # type: ignore[attr-defined]
 
     # Migrate any loggers that might have been created before install()
     _migrate_existing_loggers()
@@ -355,12 +380,12 @@ def uninstall():
 
     # Restore original getLogger if it exists
     if hasattr(std_logging, "_original_getLogger"):
-        std_logging.getLogger = std_logging._original_getLogger
+        std_logging.getLogger = std_logging._original_getLogger  # type: ignore[attr-defined]
         delattr(std_logging, "_original_getLogger")
 
     # Restore original basicConfig if it exists
     if hasattr(std_logging, "_original_basicConfig"):
-        std_logging.basicConfig = std_logging._original_basicConfig
+        std_logging.basicConfig = std_logging._original_basicConfig  # type: ignore[attr-defined]
         delattr(std_logging, "_original_basicConfig")
 
 

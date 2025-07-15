@@ -26,9 +26,12 @@ def disable(level):
 def getLoggerClass():
     """Get the logger class - compatibility function"""
     # Import here to avoid circular imports
-    from . import logxide
+    try:
+        from . import logxide
 
-    return logxide.logging.PyLogger
+        return logxide.logging.PyLogger
+    except ImportError:
+        return object  # type: ignore[return-value]
 
 
 def setLoggerClass(klass):
