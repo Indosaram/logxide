@@ -15,6 +15,7 @@ pub struct FastLogger {
     level: AtomicU32,
     effective_level: AtomicU32,
     disabled: AtomicBool,
+    #[allow(dead_code)]
     propagate: AtomicBool,
 }
 
@@ -44,10 +45,12 @@ impl FastLogger {
         LogLevel::from_usize(self.level.load(Ordering::Relaxed) as usize)
     }
 
+    #[allow(dead_code)]
     pub fn set_disabled(&self, disabled: bool) {
         self.disabled.store(disabled, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     pub fn is_disabled(&self) -> bool {
         self.disabled.load(Ordering::Relaxed)
     }
@@ -98,18 +101,20 @@ impl FastLoggerManager {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_root_logger(&self) -> Arc<FastLogger> {
         self.root_logger.clone()
     }
 }
 
 /// Global fast logger manager instance
-static FAST_LOGGER_MANAGER: Lazy<FastLoggerManager> = Lazy::new(|| FastLoggerManager::new());
+static FAST_LOGGER_MANAGER: Lazy<FastLoggerManager> = Lazy::new(FastLoggerManager::new);
 
 pub fn get_fast_logger(name: &str) -> Arc<FastLogger> {
     FAST_LOGGER_MANAGER.get_logger(name)
 }
 
+#[allow(dead_code)]
 pub fn get_fast_root_logger() -> Arc<FastLogger> {
     FAST_LOGGER_MANAGER.get_root_logger()
 }

@@ -66,6 +66,7 @@ impl StringInterner {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_stats(&self) -> (u64, u64, u64) {
         (
             self.stats.hits.load(std::sync::atomic::Ordering::Relaxed),
@@ -76,6 +77,7 @@ impl StringInterner {
         )
     }
 
+    #[allow(dead_code)]
     pub fn clear(&self) {
         self.cache.write().clear();
     }
@@ -136,6 +138,7 @@ impl LogStringCache {
             || message.len() < 50
     }
 
+    #[allow(dead_code)]
     pub fn get_stats(&self) -> ((u64, u64, u64), (u64, u64, u64)) {
         (
             self.common_loggers.get_stats(),
@@ -145,7 +148,7 @@ impl LogStringCache {
 }
 
 /// Global string cache instance
-static STRING_CACHE: Lazy<LogStringCache> = Lazy::new(|| LogStringCache::new());
+static STRING_CACHE: Lazy<LogStringCache> = Lazy::new(LogStringCache::new);
 
 pub fn get_level_name(level: LogLevel) -> Arc<str> {
     STRING_CACHE.get_level_name(level)
@@ -159,6 +162,7 @@ pub fn get_common_message(message: &str) -> Arc<str> {
     STRING_CACHE.get_common_message(message)
 }
 
+#[allow(dead_code)]
 pub fn get_cache_stats() -> ((u64, u64, u64), (u64, u64, u64)) {
     STRING_CACHE.get_stats()
 }

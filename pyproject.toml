@@ -154,7 +154,7 @@ line-ending = "auto"
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can use magic values, assertions, and relative imports
-"tests/**/*" = ["PLR2004", "S101", "TID252", "E501", "F841", "B007"]
+"tests/**/*" = ["PLR2004", "S101", "TID252", "E501", "F841", "B007", "E722"]
 # Examples can have magic values, assertions, and imports not at top (due to logxide.install())
 "examples/**/*" = ["PLR2004", "S101", "E402", "F401", "E501", "F841"]
 # Benchmark scripts can have long lines and unused variables
