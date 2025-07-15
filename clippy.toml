@@ -1,0 +1,33 @@
+# Clippy configuration for logxide
+# This ensures consistent clippy behavior across local and CI environments
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 30
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Too many arguments threshold
+too-many-arguments-threshold = 10
+
+# Too many lines threshold
+too-many-lines-threshold = 150
+
+# Enum variant name threshold
+enum-variant-name-threshold = 3
+
+# Single char binding names threshold
+single-char-binding-names-threshold = 4
+
+# Trivial copy pass by reference threshold
+trivial-copy-size-limit = 8
+
+# Avoid breaking changes for these lints
+avoid-breaking-exported-api = true
+
+# Allow certain patterns that are common in PyO3 bindings
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
+
+# Disable lints that are problematic for our use case
+disallowed-names = []
