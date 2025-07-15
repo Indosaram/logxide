@@ -77,7 +77,13 @@ jobs:
                   echo "Building wheels for ${{ matrix.os }} Python ${{ matrix.python-version }}..."
                   uv run maturin build --release --strip
                   echo "Build completed successfully!"
+              shell: bash
+
+            - name: List built wheels
+              run: |
+                  echo "Built wheels:"
                   ls -la target/wheels/
+              shell: bash
 
             - name: Upload wheels
               uses: actions/upload-artifact@v4
@@ -127,7 +133,13 @@ jobs:
                   echo "Building source distribution..."
                   uv run maturin sdist
                   echo "Source distribution built successfully!"
+              shell: bash
+
+            - name: List built sdist
+              run: |
+                  echo "Built source distribution:"
                   ls -la target/wheels/
+              shell: bash
 
             - name: Upload sdist
               uses: actions/upload-artifact@v4
