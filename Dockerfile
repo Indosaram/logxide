@@ -48,8 +48,9 @@ RUN python3 -m venv .venv && \
     .venv/bin/pip install --upgrade pip && \
     .venv/bin/pip install maturin
 
-# Build the package
+# Build the package for both venv and system
 RUN .venv/bin/maturin develop --release
+RUN maturin develop --release
 
 # Copy remaining files
 COPY tests/ ./tests/
