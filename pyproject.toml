@@ -38,14 +38,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 requires-python = ">=3.9"
-dependencies = [
-    "django>=4.2.23",
-    "fastapi>=0.116.1",
-    "flask>=3.1.1",
-    "flask-sqlalchemy>=3.1.1",
-    "httpx>=0.28.1",
-    "uvicorn>=0.35.0",
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/Indosaram/logxide"
@@ -74,6 +67,12 @@ dev = [
     "mkdocs-material",
     "mkdocstrings[python]",
     "pymdown-extensions",
+    "django>=4.2.23",
+    "fastapi>=0.116.1",
+    "flask>=3.1.1",
+    "flask-sqlalchemy>=3.1.1",
+    "httpx>=0.28.1",
+    "uvicorn>=0.35.0",
 ]
 
 # ===== Tool Configurations =====

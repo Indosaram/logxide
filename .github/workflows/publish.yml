@@ -24,35 +24,6 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            - name: Environment validation
-              run: |
-                  echo "🔍 Validating environment..."
-                  echo "Python version: ${{ matrix.python-version }}"
-                  echo "OS: ${{ runner.os }}"
-                  echo "Architecture: ${{ runner.arch }}"
-                  echo "Workspace: ${{ github.workspace }}"
-
-                  # Check if we have the necessary files
-                  echo "📂 Checking required files..."
-                  test -f "Cargo.toml" && echo "✅ Cargo.toml found" || (echo "❌ Cargo.toml missing" && exit 1)
-                  test -f "pyproject.toml" && echo "✅ pyproject.toml found" || (echo "❌ pyproject.toml missing" && exit 1)
-                  test -d "src" && echo "✅ src directory found" || (echo "❌ src directory missing" && exit 1)
-                  test -d "tests" && echo "✅ tests directory found" || (echo "❌ tests directory missing" && exit 1)
-
-                  # Check for version consistency
-                  echo "🔄 Checking version consistency..."
-                  CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
-                  PYTHON_VERSION=$(grep '^version = ' pyproject.toml | head -1 | cut -d'"' -f2)
-                  echo "Cargo version: $CARGO_VERSION"
-                  echo "Python version: $PYTHON_VERSION"
-
-                  if [ "$CARGO_VERSION" != "$PYTHON_VERSION" ]; then
-                      echo "⚠️  Warning: Version mismatch between Cargo.toml and pyproject.toml"
-                      echo "This may cause issues during build and publish"
-                  else
-                      echo "✅ Version consistency check passed"
-                  fi
-
             - name: Set up Python ${{ matrix.python-version }}
               uses: actions/setup-python@v5
               with:
@@ -81,8 +52,8 @@ jobs:
 
             - name: Install dependencies and build
               run: |
-                  uv pip install maturin pytest pytest-cov
-                  maturin develop
+                  uv sync --dev
+                  uv run maturin develop
 
             - name: Run tests
               run: uv run pytest tests/ -v
@@ -187,12 +158,12 @@ jobs:
                   python-version: ${{ matrix.python-version }}
 
             - name: Install maturin
-              run: uv pip install maturin
+              run: uv sync --dev
 
             - name: Build wheels
               run: |
                   echo "Building wheels for ${{ matrix.os }} Python ${{ matrix.python-version }}..."
-                  maturin build --release --strip
+                  uv run maturin build --release --strip
                   echo "Build completed successfully!"
                   ls -la target/wheels/
 
@@ -237,12 +208,12 @@ jobs:
               uses: astral-sh/setup-uv@v6
 
             - name: Install maturin
-              run: uv pip install maturin
+              run: uv sync --dev
 
             - name: Build sdist
               run: |
                   echo "Building source distribution..."
-                  maturin sdist
+                  uv run maturin sdist
                   echo "Source distribution built successfully!"
                   ls -la target/wheels/
 
