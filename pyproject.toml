@@ -63,6 +63,7 @@ dev = [
     "pyright",
     "ruff",
     "pre-commit",
+    "maturin>=1.0,<2.0",
     "mkdocs",
     "mkdocs-material",
     "mkdocstrings[python]",
@@ -232,3 +233,8 @@ reportUnknownArgumentType = "none"
 reportUnknownVariableType = "none"
 reportMissingTypeStubs = "none"
 pythonVersion = "3.9"
+
+[dependency-groups]
+dev = [
+    "maturin>=1.9.1",
+]
