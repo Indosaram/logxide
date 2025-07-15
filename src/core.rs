@@ -149,6 +149,7 @@ pub struct LogRecord {
 #[pymethods]
 impl LogRecord {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         name: String,
         levelno: i32,
@@ -161,14 +162,14 @@ impl LogRecord {
         stack_info: Option<String>,
     ) -> Self {
         LogRecord {
-            name: name.into(),
+            name,
             levelno,
             levelname: "".into(), // Will be set by Python
-            pathname: pathname.into(),
+            pathname,
             filename: "".into(), // Will be set by Python
             module: "".into(),   // Will be set by Python
             lineno,
-            func_name: func_name.into(),
+            func_name,
             created: 0.0,            // Will be set by Python
             msecs: 0.0,              // Will be set by Python
             relative_created: 0.0,   // Will be set by Python
@@ -176,7 +177,7 @@ impl LogRecord {
             thread_name: "".into(),  // Will be set by Python
             process_name: "".into(), // Will be set by Python
             process: 0,              // Will be set by Python
-            msg: msg.into(),
+            msg,
             args,
             exc_info,
             exc_text: None, // Will be set by Python
@@ -270,7 +271,7 @@ pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecor
         msecs,
         relative_created: 0.0,
         thread: thread_numeric_id,
-        thread_name: thread_name,
+        thread_name,
         process_name: "".to_string(),
         process: std::process::id(),
         msg: get_common_message(&msg).to_string(),

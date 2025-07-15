@@ -5,8 +5,6 @@ This module provides utility functions that maintain compatibility with
 Python's standard logging module.
 """
 
-from .compat_handlers import DEBUG, INFO, WARNING, ERROR, CRITICAL
-
 
 def addLevelName(level, levelName):
     """Add a level name - compatibility function"""
@@ -29,6 +27,7 @@ def getLoggerClass():
     """Get the logger class - compatibility function"""
     # Import here to avoid circular imports
     from . import logxide
+
     return logxide.logging.PyLogger
 
 

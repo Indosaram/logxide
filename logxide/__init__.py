@@ -21,14 +21,32 @@ __description__ = (
 __url__ = "https://github.com/Indosaram/logxide"
 
 # Import from organized modules
-from .module_system import logging, install, uninstall, set_thread_name
-from .compat_handlers import (
-    NullHandler, Formatter, Handler, StreamHandler, FileHandler, LoggingManager,
-    DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, FATAL, NOTSET
-)
-from .compat_functions import addLevelName, getLevelName, disable, getLoggerClass, setLoggerClass
-from .logger_wrapper import getLogger, basicConfig
 from . import logxide
+from .compat_functions import (
+    addLevelName,
+    disable,
+    getLevelName,
+    getLoggerClass,
+    setLoggerClass,
+)
+from .compat_handlers import (
+    CRITICAL,
+    DEBUG,
+    ERROR,
+    FATAL,
+    INFO,
+    NOTSET,
+    WARN,
+    WARNING,
+    FileHandler,
+    Formatter,
+    Handler,
+    LoggingManager,
+    NullHandler,
+    StreamHandler,
+)
+from .logger_wrapper import basicConfig, getLogger
+from .module_system import install, logging, uninstall
 
 # Make the logging module available as a submodule
 sys.modules[__name__ + ".logging"] = cast(ModuleType, logging)
@@ -42,7 +60,7 @@ PyLogger = logxide.logging.PyLogger
 __all__ = [
     # Core functionality
     "logging",
-    "install", 
+    "install",
     "uninstall",
     "LoggingManager",
     # Version and metadata
@@ -54,7 +72,7 @@ __all__ = [
     "__url__",
     # Logging levels (for convenience)
     "DEBUG",
-    "INFO", 
+    "INFO",
     "WARNING",
     "WARN",
     "ERROR",

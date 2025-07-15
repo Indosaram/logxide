@@ -195,12 +195,8 @@ impl Handler for PythonHandler {
             py_record
                 .set_item("levelname", record.levelname.clone())
                 .ok();
-            py_record
-                .set_item("pathname", record.pathname.clone())
-                .ok();
-            py_record
-                .set_item("filename", record.filename.clone())
-                .ok();
+            py_record.set_item("pathname", record.pathname.clone()).ok();
+            py_record.set_item("filename", record.filename.clone()).ok();
             py_record.set_item("module", record.module.clone()).ok();
             py_record.set_item("lineno", record.lineno).ok();
             py_record

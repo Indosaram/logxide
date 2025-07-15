@@ -38,8 +38,8 @@ class NullHandler:
 class Formatter:
     """Basic formatter class - compatible with logging.Formatter"""
 
-    def __init__(self, fmt=None, datefmt=None, style='%', validate=True, **kwargs):
-        self.fmt = fmt if fmt else "%(message)s" # Default format if not provided
+    def __init__(self, fmt=None, datefmt=None, style="%", validate=True, **kwargs):
+        self.fmt = fmt if fmt else "%(message)s"  # Default format if not provided
         self.datefmt = datefmt
         self.style = style
         self.validate = validate
@@ -69,16 +69,17 @@ class Handler:
     def handleError(self, record):
         # Default error handling - print to stderr
         import traceback
+
         if sys.stderr:
-            sys.stderr.write('--- Logging error ---\n')
+            sys.stderr.write("--- Logging error ---\n")
             traceback.print_exc(file=sys.stderr)
-            sys.stderr.write('Call stack:\n')
+            sys.stderr.write("Call stack:\n")
             traceback.print_stack(file=sys.stderr)
-            sys.stderr.write('--- End of logging error ---\n')
+            sys.stderr.write("--- End of logging error ---\n")
 
     @property
     def terminator(self):
-        return '\n'
+        return "\n"
 
     def setFormatter(self, formatter):
         """Set the formatter for this handler"""
@@ -104,10 +105,7 @@ class StreamHandler(Handler):
 
     def emit(self, record):
         try:
-            if self.formatter:
-                msg = self.formatter.format(record)
-            else:
-                msg = str(record.msg) # Fallback if no formatter
+            msg = self.formatter.format(record) if self.formatter else str(record.msg)
             stream = self.stream
             stream.write(msg + self.terminator)
             self.flush()
@@ -124,13 +122,22 @@ class StreamHandler(Handler):
 class FileHandler(StreamHandler):
     """File handler class - compatible with logging.FileHandler"""
 
-    def __init__(self, filename, mode='a', encoding=None, delay=False):
+    def __init__(self, filename, mode="a", encoding=None, delay=False):
         # Implement basic file handling
-        super().__init__(stream=open(filename, mode, encoding=encoding))
         self.baseFilename = filename
         self.mode = mode
         self.encoding = encoding
         self.delay = delay
+        # Open file and keep it open for the handler
+        self._file = open(filename, mode, encoding=encoding)  # noqa: SIM115
+        super().__init__(stream=self._file)
+
+    def close(self):
+        """Close the file."""
+        if hasattr(self, "_file") and self._file:
+            self._file.close()
+            self._file = None
+        super().close()
 
 
 class LoggingManager:

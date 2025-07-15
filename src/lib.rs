@@ -4,7 +4,10 @@
 //! LogXide provides a drop-in replacement for Python's standard logging module
 //! with asynchronous processing capabilities and enhanced performance.
 
+#![allow(non_snake_case)]
+
 use pyo3::exceptions::PyValueError;
+#[allow(deprecated)]
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule};
 use std::sync::{Arc, Mutex};
@@ -56,6 +59,7 @@ enum LogMessage {
     /// A log record to be processed by registered handlers
     Record(Box<LogRecord>),
     /// A flush request with a completion signal
+    #[allow(dead_code)]
     Flush(oneshot::Sender<()>),
 }
 
@@ -69,35 +73,30 @@ static SENDER: Lazy<CrossbeamSender<LogMessage>> = Lazy::new(|| {
 
     // Spawn background task for processing log messages
     RUNTIME.spawn(async move {
-        loop {
-            match receiver.recv() {
-                Ok(message) => {
-                    match message {
-                        LogMessage::Record(record) => {
-                            // Dispatch to all registered handlers
-                            let handlers = HANDLERS.lock().unwrap().clone();
-                            let mut tasks = Vec::new();
-                            for handler in handlers {
-                                // Each handler is async
-                                let record = record.clone();
-                                let handler = handler.clone();
-                                let task = RUNTIME.spawn(async move {
-                                    handler.emit(&record).await;
-                                });
-                                tasks.push(task);
-                            }
-                            // Wait for all handlers to complete
-                            for task in tasks {
-                                let _ = task.await;
-                            }
-                        }
-                        LogMessage::Flush(sender) => {
-                            // Send completion signal
-                            let _ = sender.send(());
-                        }
+        while let Ok(message) = receiver.recv() {
+            match message {
+                LogMessage::Record(record) => {
+                    // Dispatch to all registered handlers
+                    let handlers = HANDLERS.lock().unwrap().clone();
+                    let mut tasks = Vec::new();
+                    for handler in handlers {
+                        // Each handler is async
+                        let record = record.clone();
+                        let handler = handler.clone();
+                        let task = RUNTIME.spawn(async move {
+                            handler.emit(&record).await;
+                        });
+                        tasks.push(task);
+                    }
+                    // Wait for all handlers to complete
+                    for task in tasks {
+                        let _ = task.await;
                     }
                 }
-                Err(_) => break, // Channel closed
+                LogMessage::Flush(sender) => {
+                    // Send completion signal
+                    let _ = sender.send(());
+                }
             }
         }
     });
@@ -111,12 +110,8 @@ static SENDER: Lazy<CrossbeamSender<LogMessage>> = Lazy::new(|| {
 static HANDLERS: Lazy<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>> =
     Lazy::new(|| Mutex::new(Vec::new()));
 
-/// Thread-local storage for custom thread names.
-///
-/// This allows users to set custom thread names that will be used in log records
-/// instead of the default thread name.
 thread_local! {
-    static THREAD_NAME: RefCell<Option<String>> = RefCell::new(None);
+    static THREAD_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// Python-exposed Logger class that wraps the Rust Logger implementation.
@@ -314,6 +309,7 @@ impl PyLogger {
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
+    #[allow(deprecated)]
     fn debug(
         &self,
         py: Python,
@@ -351,6 +347,7 @@ impl PyLogger {
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
+    #[allow(deprecated)]
     fn info(
         &self,
         py: Python,
@@ -386,6 +383,7 @@ impl PyLogger {
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
+    #[allow(deprecated)]
     fn warning(
         &self,
         py: Python,
@@ -421,6 +419,7 @@ impl PyLogger {
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
+    #[allow(deprecated)]
     fn error(
         &self,
         py: Python,
@@ -528,13 +527,15 @@ impl PyLogger {
     }
 
     #[allow(non_snake_case)]
+    #[allow(deprecated)]
+    #[allow(clippy::too_many_arguments)]
     fn makeRecord(
         &self,
         py: Python,
         name: String,
-        level: u32,
+        level: i32,
         fn_: String,
-        lno: u32,
+        lno: i32,
         msg: PyObject,
         args: PyObject,
         exc_info: Option<PyObject>,
@@ -679,6 +680,7 @@ impl PyLogger {
     }
 
     #[allow(non_snake_case)]
+    #[allow(deprecated)]
     fn getChild(slf: PyRef<Self>, py: Python, suffix: &str) -> PyResult<PyLogger> {
         // Create a child logger
         let logger_name = if slf.fast_logger.name.is_empty() {
@@ -751,6 +753,8 @@ fn get_logger(py: Python, name: Option<&str>, manager: Option<PyObject>) -> PyRe
 /// Basic configuration for the logging system.
 #[pyfunction(name = "basicConfig")]
 #[pyo3(signature = (**_kwargs))]
+#[allow(deprecated)]
+#[allow(non_snake_case)]
 fn basicConfig(_py: Python, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
     // For now, just return Ok(()) as a placeholder
     // The actual configuration will be handled by the Python wrapper

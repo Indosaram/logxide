@@ -13,11 +13,11 @@ import logxide
 
 logxide.install()
 
+import logging  # Now this is LogXide
+
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-import logging  # Now this is LogXide
-
 
 # Create FastAPI app
 app = FastAPI(title="LogXide Drop-in Replacement Demo")
