@@ -17,6 +17,7 @@
     "reportUnknownVariableType": "none",
     "reportMissingTypeStubs": "none",
     "reportGeneralTypeIssues": "none",
+    "exclude": ["benchmark", "examples"],
     "executionEnvironments": [
         {
             "root": "."

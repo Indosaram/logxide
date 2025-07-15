@@ -44,13 +44,13 @@ impl Formatter for PythonFormatter {
         let datetime = std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(record.created);
         let asctime = if let Some(ref _date_fmt) = self.date_format {
             // For testing, just use a simple format
-            format!("{:?}", datetime)
+            format!("{datetime:?}")
                 .split('.')
                 .next()
                 .unwrap_or("")
                 .to_string()
         } else {
-            format!("{:?}", datetime)
+            format!("{datetime:?}")
                 .split('.')
                 .next()
                 .unwrap_or("")

@@ -19,7 +19,7 @@ mod concurrency_tests {
             let counter_clone = counter.clone();
             let manager_clone = manager.clone();
             let handle = thread::spawn(move || {
-                let logger_name = format!("thread_test_{}", i);
+                let logger_name = format!("thread_test_{i}");
                 let logger = manager_clone.get_logger(&logger_name);
 
                 // Verify logger properties
@@ -51,9 +51,9 @@ mod concurrency_tests {
             let manager_clone = manager.clone();
             let handle = thread::spawn(move || {
                 let _parent = manager_clone.get_logger("concurrent_app");
-                let child = manager_clone.get_logger(&format!("concurrent_app.module_{}", i));
+                let child = manager_clone.get_logger(&format!("concurrent_app.module_{i}"));
                 let grandchild =
-                    manager_clone.get_logger(&format!("concurrent_app.module_{}.component", i));
+                    manager_clone.get_logger(&format!("concurrent_app.module_{i}.component"));
 
                 // Verify hierarchy
                 assert!(child.lock().unwrap().parent.is_some());
@@ -83,13 +83,13 @@ mod concurrency_tests {
                 // Create multiple records from this thread
                 for msg_id in 0..50 {
                     let record = create_log_record(
-                        format!("concurrent_log_{}", thread_id),
+                        format!("concurrent_log_{thread_id}"),
                         LogLevel::Info,
-                        format!("Thread {} message {}", thread_id, msg_id),
+                        format!("Thread {thread_id} message {msg_id}"),
                     );
 
                     // Verify record properties
-                    assert_eq!(record.name, format!("concurrent_log_{}", thread_id));
+                    assert_eq!(record.name, format!("concurrent_log_{thread_id}"));
                     assert_eq!(record.levelno, LogLevel::Info as i32);
                     count_clone.fetch_add(1, Ordering::SeqCst);
                 }
@@ -161,7 +161,7 @@ mod concurrency_tests {
             let handle = thread::spawn(move || {
                 // Each thread creates many loggers rapidly
                 for i in 0..100 {
-                    let logger_name = format!("high_volume_{}_{}", thread_id, i);
+                    let logger_name = format!("high_volume_{thread_id}_{i}");
                     let logger = manager_clone.get_logger(&logger_name);
 
                     // Verify logger was created correctly
@@ -183,10 +183,7 @@ mod concurrency_tests {
         assert_eq!(total_created, 1600); // 16 threads * 100 loggers each
         assert!(elapsed < Duration::from_secs(5)); // Should complete quickly
 
-        println!(
-            "High volume test: {} loggers created in {:?}",
-            total_created, elapsed
-        );
+        println!("High volume test: {total_created} loggers created in {elapsed:?}");
     }
 
     #[test]
@@ -245,8 +242,7 @@ mod concurrency_tests {
             let handle = thread::spawn(move || {
                 let mut op_count = 0;
                 while !stop_flag.load(Ordering::Relaxed) && op_count < 100 {
-                    let logger =
-                        manager_clone.get_logger(&format!("stress_logger_{}_{}", i, op_count));
+                    let logger = manager_clone.get_logger(&format!("stress_logger_{i}_{op_count}"));
                     logger.lock().unwrap().set_level(LogLevel::Info);
                     op_count += 1;
                     counter.fetch_add(1, Ordering::SeqCst);
@@ -263,9 +259,9 @@ mod concurrency_tests {
                 let mut op_count = 0;
                 while !stop_flag.load(Ordering::Relaxed) && op_count < 100 {
                     let record = create_log_record(
-                        format!("stress_msg_{}", i),
+                        format!("stress_msg_{i}"),
                         LogLevel::Error,
-                        format!("Stress message {} from worker {}", op_count, i),
+                        format!("Stress message {op_count} from worker {i}"),
                     );
                     // Verify record creation
                     assert_eq!(record.levelno, LogLevel::Error as i32);
@@ -284,8 +280,7 @@ mod concurrency_tests {
             let handle = thread::spawn(move || {
                 let mut op_count = 0;
                 while !stop_flag.load(Ordering::Relaxed) && op_count < 50 {
-                    let logger =
-                        manager_clone.get_logger(&format!("stress_level_{}_{}", i, op_count));
+                    let logger = manager_clone.get_logger(&format!("stress_level_{i}_{op_count}"));
                     logger.lock().unwrap().set_level(LogLevel::Info);
                     op_count += 1;
                     counter.fetch_add(1, Ordering::SeqCst);
@@ -304,7 +299,7 @@ mod concurrency_tests {
         }
 
         let total_ops = operations_completed.load(Ordering::SeqCst);
-        println!("Stress test completed {} operations", total_ops);
+        println!("Stress test completed {total_ops} operations");
 
         // Should have completed significant work without panicking
         assert!(total_ops > 100);

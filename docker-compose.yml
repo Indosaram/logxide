@@ -1,0 +1,95 @@
+services:
+    # Development environment
+    dev:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: dev
+        volumes:
+            - .:/app
+            - cargo-cache:/usr/local/cargo/registry
+            - target-cache:/app/target
+        environment:
+            - RUST_LOG=debug
+            - RUST_BACKTRACE=1
+            - PYTHONPATH=/app
+        working_dir: /app
+        stdin_open: true
+        tty: true
+        command: bash
+
+    # Test runner
+    test:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: test
+        volumes:
+            - .:/app
+            - cargo-cache:/usr/local/cargo/registry
+            - target-cache:/app/target
+        environment:
+            - RUST_LOG=info
+            - RUST_BACKTRACE=1
+            - PYTHONPATH=/app
+        command: >
+            bash -c "
+            echo 'Running Rust tests...' &&
+            cargo test --release &&
+            echo 'Running Rust clippy...' &&
+            cargo clippy --all-targets --all-features -- -D warnings &&
+            echo 'Running Python tests...' &&
+            python3 -m pytest -v --cov=logxide --cov-report=term-missing &&
+            echo 'Running code quality checks...' &&
+            python3 -m ruff check . &&
+            python3 -m ruff format --check . &&
+            echo 'All tests passed!'
+            "
+
+    # Package builder
+    build:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: build
+        volumes:
+            - ./dist:/app/dist
+            - cargo-cache:/usr/local/cargo/registry
+            - target-cache:/app/target
+        environment:
+            - RUST_LOG=info
+
+    # Production image
+    prod:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: production
+        environment:
+            - PYTHONPATH=/home/logxide
+
+    # Benchmark runner with .venv312
+    benchmark:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: dev
+        volumes:
+            - .:/app
+            - cargo-cache:/usr/local/cargo/registry
+            - target-cache:/app/target
+        environment:
+            - RUST_LOG=info
+            - PYTHONPATH=/app
+        working_dir: /app
+        command: >
+            bash -c "
+            python3.12 -m venv .venv312 &&
+            source .venv312/bin/activate &&
+            pip install -e . &&
+            python benchmark/run_benchmarks.py
+            "
+
+volumes:
+    cargo-cache:
+    target-cache:

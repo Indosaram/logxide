@@ -1,0 +1,126 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv312/
+
+# Testing
+.tox/
+.nox/
+.coverage
+.pytest_cache/
+htmlcov/
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# Rust
+target/
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Documentation
+docs/_build/
+.readthedocs.yml
+mkdocs.yml
+.mkdocs.yml
+
+# CI/CD
+.github/
+.travis.yml
+.appveyor.yml
+.circleci/
+
+# Logs
+*.log
+django_logxide.log
+python.log
+
+# Cache
+.ruff_cache/
+.mypy_cache/
+.pytype/
+
+# Local development
+.pre-commit-config.yaml
+.pre-commit-hooks.yaml
+
+# Benchmark results
+benchmark/results/
+benchmark/*.json
+
+# Instance folder
+instance/
+
+# Flask
+.flaskenv
+
+# Test files
+test_*.py
+test_examples.py
+test_integration_examples.py
+
+# Development scripts
+scripts/
+main.py
+
+# Lock files (we'll copy them explicitly)
+poetry.lock
+Pipfile.lock

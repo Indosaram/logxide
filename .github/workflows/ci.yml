@@ -41,8 +41,8 @@ jobs:
 
             - name: Install Python dependencies
               run: |
-                  python -m pip install --upgrade pip
-                  pip install maturin pytest pytest-cov pytest-xdist
+                  python -m pip install --upgrade uv
+                  uv pip install maturin pytest pytest-cov pytest-xdist
 
             - name: Rust format check
               run: cargo fmt --all -- --check
@@ -83,8 +83,8 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  python -m pip install --upgrade pip
-                  pip install ruff pyright
+                  python -m pip install --upgrade uv
+                  uv pip install ruff pyright
 
             - name: Run ruff
               run: ruff check .
@@ -118,8 +118,8 @@ jobs:
 
             - name: Install maturin
               run: |
-                  python -m pip install --upgrade pip
-                  pip install maturin
+                  python -m pip install --upgrade uv
+                  uv pip install maturin
 
             - name: Build wheels
               run: maturin build --release
