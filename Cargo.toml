@@ -21,3 +21,17 @@ regex = "1.5"
 parking_lot = "0.12"
 crossbeam = "0.8"
 dashmap = "6.0"
+
+[lints.clippy]
+# Allow certain patterns that are common in PyO3 bindings
+too_many_arguments = "allow"
+module_name_repetitions = "allow"
+redundant_closure = "allow"
+missing_const_for_thread_local = "allow"
+while_let_loop = "allow"
+useless_conversion = "allow"
+redundant_field_names = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+# We already handle these with #[allow] attributes in the code
