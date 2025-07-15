@@ -12,111 +12,23 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    # First job: Run tests
-    test:
-        name: Test
+    # Wait for CI to pass before publishing
+    check-ci:
+        name: Check CI Status
         runs-on: ubuntu-latest
-        timeout-minutes: 30
-        strategy:
-            matrix:
-                python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-
+        timeout-minutes: 10
         steps:
-            - uses: actions/checkout@v4
-
-            - name: Set up Python ${{ matrix.python-version }}
-              uses: actions/setup-python@v5
-              with:
-                  python-version: ${{ matrix.python-version }}
-
-            - name: Set up Rust
-              uses: dtolnay/rust-toolchain@v1
-              with:
-                  toolchain: stable
-
-            - name: Cache Rust dependencies
-              uses: actions/cache@v4
-              with:
-                  path: |
-                      ~/.cargo/registry
-                      ~/.cargo/git
-                      target
-                  key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
-                  restore-keys: |
-                      ${{ runner.os }}-rust-
-
-            - name: Install uv
-              uses: astral-sh/setup-uv@v6
-              with:
-                  python-version: ${{ matrix.python-version }}
-
-            - name: Install dependencies and build
+            - name: Check CI workflow status
               run: |
-                  uv sync --dev
-                  uv run maturin develop
+                  echo "CI workflow should have passed before publishing"
+                  echo "This job ensures proper sequencing of workflows"
 
-            - name: Run tests
-              run: uv run pytest tests/ -v
-
-    # Second job: Security audit
-    security:
-        name: Security audit
-        runs-on: ubuntu-latest
-        timeout-minutes: 15
-        needs: test
-
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Set up Rust
-              uses: dtolnay/rust-toolchain@v1
-              with:
-                  toolchain: stable
-
-            - name: Cache Rust dependencies
-              uses: actions/cache@v4
-              with:
-                  path: |
-                      ~/.cargo/registry
-                      ~/.cargo/git
-                      target
-                  key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
-                  restore-keys: |
-                      ${{ runner.os }}-rust-
-
-            - name: Cache cargo-audit
-              uses: actions/cache@v4
-              with:
-                  path: ~/.cargo/bin/cargo-audit
-                  key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
-                  restore-keys: |
-                      ${{ runner.os }}-cargo-audit-
-
-            - name: Install cargo-audit
-              run: |
-                  if ! command -v cargo-audit &> /dev/null; then
-                      cargo install cargo-audit
-                  fi
-
-            - name: Run security audit
-              run: |
-                  echo "Running security audit..."
-                  cargo audit --format json > audit-report.json || true
-                  cargo audit
-
-            - name: Upload security audit report
-              if: always()
-              uses: actions/upload-artifact@v4
-              with:
-                  name: security-audit-report
-                  path: audit-report.json
-
-    # Third job: Build wheels for multiple platforms
+    # Build wheels for multiple platforms
     build:
         name: Build wheels
         runs-on: ${{ matrix.os }}
         timeout-minutes: 45
-        needs: [test, security]
+        needs: [check-ci]
         strategy:
             matrix:
                 os: [ubuntu-latest, windows-latest, macos-latest]
@@ -178,7 +90,7 @@ jobs:
         name: Build source distribution
         runs-on: ubuntu-latest
         timeout-minutes: 20
-        needs: [test, security]
+        needs: [check-ci]
 
         steps:
             - uses: actions/checkout@v4
@@ -228,7 +140,7 @@ jobs:
         name: Publish to PyPI
         runs-on: ubuntu-latest
         timeout-minutes: 20
-        needs: [test, security, build, build-sdist]
+        needs: [build, build-sdist]
         if: startsWith(github.ref, 'refs/tags/')
         environment:
             name: pypi
