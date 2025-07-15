@@ -183,7 +183,8 @@ jobs:
               run: |
                   echo "Validating packages before publishing..."
                   python -m pip install --upgrade uv
-                  uv pip install --system twine
+                  uv venv
+                  uv pip install twine
                   uv run twine check dist/*
                   echo "✅ All packages passed validation!"
 
