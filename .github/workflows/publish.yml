@@ -6,17 +6,52 @@ on:
             - "v*.*.*" # Trigger on version tags like v1.0.0
     workflow_dispatch: # Allow manual trigger
 
+# Cancel in-progress runs when a new run is triggered
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
 jobs:
     # First job: Run tests
     test:
         name: Test
         runs-on: ubuntu-latest
+        timeout-minutes: 30
         strategy:
             matrix:
-                python-version: ["3.10", "3.11", "3.12", "3.13"]
+                python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
         steps:
             - uses: actions/checkout@v4
+
+            - name: Environment validation
+              run: |
+                  echo "🔍 Validating environment..."
+                  echo "Python version: ${{ matrix.python-version }}"
+                  echo "OS: ${{ runner.os }}"
+                  echo "Architecture: ${{ runner.arch }}"
+                  echo "Workspace: ${{ github.workspace }}"
+
+                  # Check if we have the necessary files
+                  echo "📂 Checking required files..."
+                  test -f "Cargo.toml" && echo "✅ Cargo.toml found" || (echo "❌ Cargo.toml missing" && exit 1)
+                  test -f "pyproject.toml" && echo "✅ pyproject.toml found" || (echo "❌ pyproject.toml missing" && exit 1)
+                  test -d "src" && echo "✅ src directory found" || (echo "❌ src directory missing" && exit 1)
+                  test -d "tests" && echo "✅ tests directory found" || (echo "❌ tests directory missing" && exit 1)
+
+                  # Check for version consistency
+                  echo "🔄 Checking version consistency..."
+                  CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+                  PYTHON_VERSION=$(grep '^version = ' pyproject.toml | head -1 | cut -d'"' -f2)
+                  echo "Cargo version: $CARGO_VERSION"
+                  echo "Python version: $PYTHON_VERSION"
+
+                  if [ "$CARGO_VERSION" != "$PYTHON_VERSION" ]; then
+                      echo "⚠️  Warning: Version mismatch between Cargo.toml and pyproject.toml"
+                      echo "This may cause issues during build and publish"
+                  else
+                      echo "✅ Version consistency check passed"
+                  fi
 
             - name: Set up Python ${{ matrix.python-version }}
               uses: actions/setup-python@v5
@@ -24,43 +59,103 @@ jobs:
                   python-version: ${{ matrix.python-version }}
 
             - name: Set up Rust
-              uses: actions-rs/toolchain@v1
+              uses: dtolnay/rust-toolchain@v1
               with:
                   toolchain: stable
-                  override: true
+
+            - name: Cache Rust dependencies
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-rust-
 
             - name: Install uv
               uses: astral-sh/setup-uv@v6
               with:
                   python-version: ${{ matrix.python-version }}
 
-            - name: Create virtual environment
-              run: uv venv .venv
-
-            - name: Install dependencies
+            - name: Install dependencies and build
               run: |
-                  source .venv/bin/activate
                   uv pip install maturin pytest pytest-cov
-
-            - name: Build and install
-              run: |
-                  source .venv/bin/activate
                   maturin develop
 
             - name: Run tests
-              run: |
-                  source .venv/bin/activate
-                  pytest tests/ -v
+              run: uv run pytest tests/ -v
 
-    # Second job: Build wheels for multiple platforms
+    # Second job: Security audit
+    security:
+        name: Security audit
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        needs: test
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Rust
+              uses: dtolnay/rust-toolchain@v1
+              with:
+                  toolchain: stable
+
+            - name: Cache Rust dependencies
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-rust-
+
+            - name: Cache cargo-audit
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/cargo-audit
+                  key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-audit-
+
+            - name: Install cargo-audit
+              run: |
+                  if ! command -v cargo-audit &> /dev/null; then
+                      cargo install cargo-audit
+                  fi
+
+            - name: Run security audit
+              run: |
+                  echo "Running security audit..."
+                  cargo audit --format json > audit-report.json || true
+                  cargo audit
+
+            - name: Upload security audit report
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: security-audit-report
+                  path: audit-report.json
+
+    # Third job: Build wheels for multiple platforms
     build:
         name: Build wheels
         runs-on: ${{ matrix.os }}
-        needs: test
+        timeout-minutes: 45
+        needs: [test, security]
         strategy:
             matrix:
                 os: [ubuntu-latest, windows-latest, macos-latest]
                 python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+                exclude:
+                    # Exclude some combinations to reduce build time
+                    - os: windows-latest
+                      python-version: "3.9"
+                    - os: macos-latest
+                      python-version: "3.9"
 
         steps:
             - uses: actions/checkout@v4
@@ -71,10 +166,20 @@ jobs:
                   python-version: ${{ matrix.python-version }}
 
             - name: Set up Rust
-              uses: actions-rs/toolchain@v1
+              uses: dtolnay/rust-toolchain@v1
               with:
                   toolchain: stable
-                  override: true
+
+            - name: Cache Rust dependencies
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-rust-
 
             - name: Install uv
               uses: astral-sh/setup-uv@v6
@@ -85,7 +190,11 @@ jobs:
               run: uv pip install maturin
 
             - name: Build wheels
-              run: maturin build --release --strip
+              run: |
+                  echo "Building wheels for ${{ matrix.os }} Python ${{ matrix.python-version }}..."
+                  maturin build --release --strip
+                  echo "Build completed successfully!"
+                  ls -la target/wheels/
 
             - name: Upload wheels
               uses: actions/upload-artifact@v4
@@ -93,11 +202,62 @@ jobs:
                   name: wheels-${{ matrix.os }}-${{ matrix.python-version }}
                   path: target/wheels/*.whl
 
-    # Third job: Publish to PyPI
+    # Fourth job: Build source distribution
+    build-sdist:
+        name: Build source distribution
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        needs: [test, security]
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+
+            - name: Set up Rust
+              uses: dtolnay/rust-toolchain@v1
+              with:
+                  toolchain: stable
+
+            - name: Cache Rust dependencies
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-rust-
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@v6
+
+            - name: Install maturin
+              run: uv pip install maturin
+
+            - name: Build sdist
+              run: |
+                  echo "Building source distribution..."
+                  maturin sdist
+                  echo "Source distribution built successfully!"
+                  ls -la target/wheels/
+
+            - name: Upload sdist
+              uses: actions/upload-artifact@v4
+              with:
+                  name: sdist
+                  path: target/wheels/*.tar.gz
+
+    # Fifth job: Publish to PyPI
     publish:
         name: Publish to PyPI
         runs-on: ubuntu-latest
-        needs: [test, build]
+        timeout-minutes: 20
+        needs: [test, security, build, build-sdist]
         if: startsWith(github.ref, 'refs/tags/')
         environment:
             name: pypi
@@ -112,8 +272,24 @@ jobs:
                   path: dist/
                   merge-multiple: true
 
+            - name: Prepare release assets
+              run: |
+                  echo "Preparing release assets..."
+                  find dist/ -name "*.whl" -o -name "*.tar.gz" | sort
+                  echo "Total assets: $(find dist/ -type f \( -name "*.whl" -o -name "*.tar.gz" \) | wc -l)"
+
             - name: List artifacts
-              run: ls -la dist/
+              run: |
+                  echo "Downloaded artifacts:"
+                  find dist/ -type f -name "*.whl" -o -name "*.tar.gz" | sort
+                  echo "Total files: $(find dist/ -type f \( -name "*.whl" -o -name "*.tar.gz" \) | wc -l)"
+
+            - name: Validate packages before publishing
+              run: |
+                  echo "Validating packages before publishing..."
+                  python -m pip install twine
+                  python -m twine check dist/*
+                  echo "✅ All packages passed validation!"
 
             - name: Publish to PyPI
               uses: pypa/gh-action-pypi-publish@release/v1
@@ -121,11 +297,40 @@ jobs:
                   packages-dir: dist/
                   verbose: true
                   print-hash: true
+                  skip-existing: false
 
-    # Fifth job: Create GitHub release
+            - name: Create job summary
+              run: |
+                  echo "## 🚀 Publication Summary" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### 📦 Published Packages" >> $GITHUB_STEP_SUMMARY
+                  echo "| Package | Version | Type |" >> $GITHUB_STEP_SUMMARY
+                  echo "|---------|---------|------|" >> $GITHUB_STEP_SUMMARY
+                  VERSION=${GITHUB_REF#refs/tags/v}
+                  echo "| logxide | $VERSION | PyPI Package |" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### 🔗 Links" >> $GITHUB_STEP_SUMMARY
+                  echo "- [PyPI Package](https://pypi.org/project/logxide/$VERSION/)" >> $GITHUB_STEP_SUMMARY
+                  echo "- [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### 📊 Build Stats" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Wheels built**: $(find dist/ -name "*.whl" | wc -l)" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Source distribution**: $(find dist/ -name "*.tar.gz" | wc -l)" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Total files**: $(find dist/ -type f | wc -l)" >> $GITHUB_STEP_SUMMARY
+
+            - name: Verify PyPI publication
+              run: |
+                  echo "Waiting for PyPI to update..."
+                  sleep 30
+                  VERSION=${GITHUB_REF#refs/tags/v}
+                  echo "Checking if logxide version $VERSION is available on PyPI..."
+                  python -c "import requests; r = requests.get('https://pypi.org/pypi/logxide/$VERSION/json'); print('✅ Published successfully!' if r.status_code == 200 else '❌ Not found on PyPI yet')"
+
+    # Sixth job: Create GitHub release
     release:
         name: Create GitHub Release
         runs-on: ubuntu-latest
+        timeout-minutes: 15
         needs: [publish]
         if: startsWith(github.ref, 'refs/tags/')
         permissions:
@@ -177,5 +382,73 @@ jobs:
                       ```
 
                       See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for detailed release notes.
+
+                      ### Build Information
+                      - **Platforms**: Ubuntu, Windows, macOS
+                      - **Python versions**: 3.9, 3.10, 3.11, 3.12, 3.13
+                      - **Security audit**: ✅ Passed
+                      - **Tests**: ✅ All tests passed
+                      - **Package validation**: ✅ All packages validated with twine
+
+            - name: Create release summary
+              run: |
+                  echo "## 🎉 Release Summary" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### 📋 Release Details" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Version**: ${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Tag**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+                  echo "- [📦 PyPI Package](https://pypi.org/project/logxide/${{ steps.get_version.outputs.VERSION }}/)" >> $GITHUB_STEP_SUMMARY
+                  echo "- [📋 GitHub Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})" >> $GITHUB_STEP_SUMMARY
+                  echo "- [📚 Documentation](https://Indosaram.readthedocs.io/logxide)" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### ✅ Quality Checks" >> $GITHUB_STEP_SUMMARY
+                  echo "- Security audit: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+                  echo "- All tests: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+                  echo "- Package validation: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+                  echo "- Build verification: ✅ Passed" >> $GITHUB_STEP_SUMMARY
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # Final job: Send notification
+    notify:
+        name: Send Notification
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        needs: [release]
+        if: always() && startsWith(github.ref, 'refs/tags/')
+
+        steps:
+            - name: Get version from tag
+              id: get_version
+              run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+            - name: Create final notification
+              run: |
+                  echo "## 🚀 LogXide v${{ steps.get_version.outputs.VERSION }} Release Complete!" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### 📊 Workflow Status" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Security**: ${{ needs.release.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Tests**: ${{ needs.release.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Build**: ${{ needs.release.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Publish**: ${{ needs.release.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Release**: ${{ needs.release.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### 🔗 Installation" >> $GITHUB_STEP_SUMMARY
+                  echo '```bash' >> $GITHUB_STEP_SUMMARY
+                  echo "pip install logxide==${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+                  echo '```' >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "### 📚 Next Steps" >> $GITHUB_STEP_SUMMARY
+                  echo "- Check [PyPI](https://pypi.org/project/logxide/${{ steps.get_version.outputs.VERSION }}/) for package availability" >> $GITHUB_STEP_SUMMARY
+                  echo "- View [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}) for detailed notes" >> $GITHUB_STEP_SUMMARY
+                  echo "- Update documentation if needed" >> $GITHUB_STEP_SUMMARY
+
+                  if [ "${{ needs.release.result }}" == "success" ]; then
+                      echo "✅ All systems go! LogXide v${{ steps.get_version.outputs.VERSION }} is now available!"
+                  else
+                      echo "❌ Release encountered issues. Please check the logs above."
+                      exit 1
+                  fi
