@@ -113,7 +113,7 @@ pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecor
     LogRecord {
         name,
         levelno: level as i32,
-        levelname: format!("{:?}", level).to_uppercase(),
+        levelname: format!("{level:?}").to_uppercase(),
         pathname: "".to_string(),
         filename: "".to_string(),
         module: "".to_string(),

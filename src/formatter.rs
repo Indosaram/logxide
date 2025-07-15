@@ -280,7 +280,7 @@ impl Formatter for PythonFormatter {
                 let msecs_val = record.msecs as i32;
 
                 if width > 0 {
-                    format!("{:0width$}", msecs_val, width = width)
+                    format!("{msecs_val:0width$}")
                 } else {
                     msecs_val.to_string()
                 }

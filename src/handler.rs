@@ -375,7 +375,7 @@ impl Handler for ConsoleHandler {
 
         // Use sync println to avoid async ordering issues
         use std::io::{self, Write};
-        println!("{}", output);
+        println!("{output}");
         io::stdout().flush().unwrap();
     }
 
@@ -600,14 +600,14 @@ impl Handler for RotatingFileHandler {
         // Check if we need to rotate
         if self.should_rollover(output_bytes.len()) {
             if let Err(e) = self.do_rollover() {
-                eprintln!("Error rotating log file: {}", e);
+                eprintln!("Error rotating log file: {e}");
                 return;
             }
         }
 
         // Ensure we have a writer
         if let Err(e) = self.ensure_writer() {
-            eprintln!("Error opening log file: {}", e);
+            eprintln!("Error opening log file: {e}");
             return;
         }
 
