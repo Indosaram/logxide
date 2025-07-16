@@ -15,7 +15,7 @@ permissions:
     contents: read
 
 jobs:
-    linux:
+    manylinux:
         runs-on: ${{ matrix.platform.runner }}
         strategy:
             matrix:
