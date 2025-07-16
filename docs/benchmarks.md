@@ -97,7 +97,7 @@ These benchmarks test pure logging performance without I/O overhead, focusing on
 | 5위 | Logbook | 145,410 | 0.07배 | 0.9배 |
 | 6위 | Loguru | 132,228 | 0.06배 | 0.8배 |
 
-#### StreamHandler Performance  
+#### StreamHandler Performance
 | Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
 |------|---------|-------------|---------------------|---------------------|
 | 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 | 기준 대비 속도 향상 |

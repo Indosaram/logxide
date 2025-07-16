@@ -22,23 +22,23 @@ impl OptimizedLogger {
             name,
         }
     }
-    
+
     /// Ultra-fast level check using only one atomic operation
     #[inline(always)]
     pub fn is_debug_enabled(&self) -> bool {
         (LogLevel::Debug as u32) >= self.effective_level.load(Ordering::Relaxed)
     }
-    
-    #[inline(always)] 
+
+    #[inline(always)]
     pub fn is_info_enabled(&self) -> bool {
         (LogLevel::Info as u32) >= self.effective_level.load(Ordering::Relaxed)
     }
-    
+
     #[inline(always)]
     pub fn is_warning_enabled(&self) -> bool {
         (LogLevel::Warning as u32) >= self.effective_level.load(Ordering::Relaxed)
     }
-    
+
     /// Set level with immediate effective level update
     pub fn set_level(&self, level: LogLevel) {
         self.effective_level.store(level as u32, Ordering::Relaxed);
@@ -82,19 +82,19 @@ impl PyOptimizedLogger {
             self.send_message(LogLevel::Debug, msg);
         }
     }
-    
+
     fn info_fast(&self, msg: &str) {
         if self.inner.is_info_enabled() {
             self.send_message(LogLevel::Info, msg);
         }
     }
-    
+
     fn warning_fast(&self, msg: &str) {
         if self.inner.is_warning_enabled() {
             self.send_message(LogLevel::Warning, msg);
         }
     }
-    
+
     /// Check if level is enabled without any message processing
     fn is_enabled_for(&self, level: u32) -> bool {
         level >= self.inner.effective_level.load(Ordering::Relaxed)

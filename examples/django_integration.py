@@ -20,11 +20,7 @@ from django.conf import settings
 from django.core.management import execute_from_command_line
 
 # Install LogXide before any Django imports
-import logxide
-
-logxide.install()
-
-import logging
+from logxide import logging
 
 # Django settings configuration
 if not settings.configured:

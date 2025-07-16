@@ -8,7 +8,7 @@ LogXide is a high-performance, Rust-powered, drop-in replacement for Python's st
 - **[Installation Guide](installation.md)** - Installation and setup instructions
 - **[Usage Guide](usage.md)** - Complete usage examples and API guide
 
-### Performance & Architecture  
+### Performance & Architecture
 - **[Performance Benchmarks](benchmarks.md)** - Comprehensive performance analysis and comparisons
 - **[Architecture](architecture.md)** - Technical architecture and design details
 
@@ -36,12 +36,12 @@ pip install logxide
 
 ## Quick Start
 
-Using Logxide is as simple as replacing `import logging` with `from logxide import logging`.
+Using Logxide is as simple as replacing `import logging` with `from logxide import logging`. **No manual installation required** - LogXide automatically integrates when imported!
 
 Here's a basic example to get you started:
 
 ```python
-from logxide import logging
+from logxide import logging  # Auto-installs LogXide - no setup needed!
 
 def main():
     # Configure logxide with basic settings

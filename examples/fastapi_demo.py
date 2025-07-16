@@ -8,16 +8,11 @@ Simply replace 'import logging' with LogXide import and everything works identic
 
 import time
 
-# Install LogXide as complete logging replacement BEFORE importing uvicorn
-import logxide
-
-logxide.install()
-
-import logging  # Now this is LogXide
-
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+from logxide import logging
 
 # Create FastAPI app
 app = FastAPI(title="LogXide Drop-in Replacement Demo")

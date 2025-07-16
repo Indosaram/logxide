@@ -1,9 +1,4 @@
-import logxide
-
-# Install logxide as drop-in replacement
-logxide.install()
-
-import logging
+from logxide import logging
 
 print("=== JSON-like Structured Format ===")
 json_format = '{"timestamp":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","thread":%(thread)d,"process":%(process)d,"message":"%(message)s"}'

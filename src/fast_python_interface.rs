@@ -24,7 +24,7 @@ unsafe impl Sync for FastPyLogger {}
 impl FastPyLogger {
     const DISABLED_FLAG: u32 = 0x8000_0000;
     const LEVEL_MASK: u32 = 0x7FFF_FFFF;
-    
+
     pub fn new(name: &str) -> Self {
         // Store name as raw bytes to avoid allocation on each check
         let name_bytes = name.as_bytes();
@@ -34,13 +34,13 @@ impl FastPyLogger {
             name_len: name_bytes.len(),
         }
     }
-    
+
     /// Ultra-fast single atomic operation check
     #[inline(always)]
     fn is_enabled_for_fast(&self, level: LogLevel) -> bool {
         let level_and_flags = self.level_and_flags.load(Ordering::Relaxed);
         // Check disabled flag and level in one operation
-        (level_and_flags & Self::DISABLED_FLAG) == 0 
+        (level_and_flags & Self::DISABLED_FLAG) == 0
             && (level as u32) >= (level_and_flags & Self::LEVEL_MASK)
     }
 }
@@ -54,19 +54,19 @@ impl FastPyLogger {
             self.send_if_enabled(LogLevel::Debug, msg);
         }
     }
-    
+
     /// Branch prediction hint for disabled case
     fn info_minimal(&self, msg: &str) {
         if likely(self.is_enabled_for_fast(LogLevel::Info)) {
             self.send_if_enabled(LogLevel::Info, msg);
         }
     }
-    
+
     /// Pre-check version - allows caller to avoid expensive operations
     fn debug_enabled(&self) -> bool {
         self.is_enabled_for_fast(LogLevel::Debug)
     }
-    
+
     fn info_enabled(&self) -> bool {
         self.is_enabled_for_fast(LogLevel::Info)
     }
@@ -75,14 +75,14 @@ impl FastPyLogger {
 impl FastPyLogger {
     fn send_if_enabled(&self, level: LogLevel, msg: &str) {
         use crate::{create_log_record, SENDER, LogMessage};
-        
+
         // Reconstruct name from raw pointer (zero-copy)
         let name = unsafe {
             std::str::from_utf8_unchecked(
                 std::slice::from_raw_parts(self.name_ptr, self.name_len)
             )
         };
-        
+
         let record = create_log_record(
             name.to_string(),
             level,

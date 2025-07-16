@@ -7,12 +7,7 @@ This demo shows basic usage of LogXide as a drop-in replacement for Python's log
 
 import time
 
-import logxide
-
-# Install LogXide as logging replacement
-logxide.install()
-
-import logging
+from logxide import logging
 
 # Configure logging
 logging.basicConfig(

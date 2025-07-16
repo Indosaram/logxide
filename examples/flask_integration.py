@@ -7,17 +7,14 @@ showcasing request logging, error handling, database operations, and
 performance monitoring.
 """
 
-import logxide
-
-logxide.install()
-
-import logging
 import os
 import time
 from functools import wraps
 
 from flask import Flask, g, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
+
+from logxide import logging
 
 # Create Flask app
 app = Flask(__name__)

@@ -26,7 +26,7 @@ logxide/
 ### Prerequisites
 
 - **Rust**: 1.70+ (install via [rustup](https://rustup.rs/))
-- **Python**: 3.12+ 
+- **Python**: 3.12+
 - **maturin**: For building Python extensions
 
 ### Initial Setup
@@ -108,10 +108,10 @@ def test_basic_logging():
     """Test basic logging functionality."""
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("test")
-    
+
     # Your test code here
     logger.info("Test message")
-    
+
     # Ensure all messages are processed
     logging.flush()
 

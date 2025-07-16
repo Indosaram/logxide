@@ -1,12 +1,7 @@
 import threading
 import time
 
-import logxide
-
-# Install logxide as drop-in replacement
-logxide.install()
-
-import logging
+from logxide import logging
 
 print("=== Multi-threaded Logging ===")
 thread_format = (
