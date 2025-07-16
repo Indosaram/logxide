@@ -1,7 +1,7 @@
 //! Generic optimization strategy for universal fast disabled logging
 //!
 //! This module implements a comprehensive approach to make ALL log levels
-//! perform optimally when disabled, using generic programming and 
+//! perform optimally when disabled, using generic programming and
 //! compile-time optimizations.
 
 use crate::core::LogLevel;
@@ -20,28 +20,28 @@ impl OptimizedLogState {
     const DISABLED_BIT: u32 = 31;
     const LEVEL_SHIFT: u32 = 16;
     const LEVEL_MASK: u32 = 0x00FF0000;
-    
+
     pub fn new(level: LogLevel) -> Self {
         Self {
             packed_state: AtomicU32::new((level as u32) << Self::LEVEL_SHIFT),
         }
     }
-    
+
     /// Universal fast check - works for ANY log level with single atomic load
     #[inline(always)]
     pub fn is_enabled_for(&self, level: LogLevel) -> bool {
         let state = self.packed_state.load(Ordering::Relaxed);
         // Single branch: check disabled bit and level threshold
-        (state >> Self::DISABLED_BIT) == 0 
+        (state >> Self::DISABLED_BIT) == 0
             && (level as u32) >= ((state & Self::LEVEL_MASK) >> Self::LEVEL_SHIFT)
     }
-    
+
     pub fn set_level(&self, level: LogLevel) {
         let current = self.packed_state.load(Ordering::Relaxed);
         let new_state = (current & !Self::LEVEL_MASK) | ((level as u32) << Self::LEVEL_SHIFT);
         self.packed_state.store(new_state, Ordering::Relaxed);
     }
-    
+
     pub fn set_disabled(&self, disabled: bool) {
         if disabled {
             // Set the disabled bit
@@ -69,7 +69,7 @@ impl GenericFastLogger {
             name,
         }
     }
-    
+
     /// Universal logging method - same performance for ALL levels
     fn log(&self, level: u32, msg: &str) {
         let log_level = LogLevel::from_usize(level as usize);
@@ -77,55 +77,55 @@ impl GenericFastLogger {
             self.emit_log(log_level, msg);
         }
     }
-    
+
     /// All level-specific methods use identical optimization pattern
     fn debug(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Debug) {
             self.emit_log(LogLevel::Debug, msg);
         }
     }
-    
+
     fn info(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Info) {
             self.emit_log(LogLevel::Info, msg);
         }
     }
-    
+
     fn warning(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Warning) {
             self.emit_log(LogLevel::Warning, msg);
         }
     }
-    
+
     fn error(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Error) {
             self.emit_log(LogLevel::Error, msg);
         }
     }
-    
+
     fn critical(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Critical) {
             self.emit_log(LogLevel::Critical, msg);
         }
     }
-    
+
     /// Level checking methods for conditional logging
     fn is_debug_enabled(&self) -> bool { self.state.is_enabled_for(LogLevel::Debug) }
     fn is_info_enabled(&self) -> bool { self.state.is_enabled_for(LogLevel::Info) }
     fn is_warning_enabled(&self) -> bool { self.state.is_enabled_for(LogLevel::Warning) }
     fn is_error_enabled(&self) -> bool { self.state.is_enabled_for(LogLevel::Error) }
     fn is_critical_enabled(&self) -> bool { self.state.is_enabled_for(LogLevel::Critical) }
-    
+
     /// Generic level check
     fn is_enabled_for(&self, level: u32) -> bool {
         self.state.is_enabled_for(LogLevel::from_usize(level as usize))
     }
-    
+
     /// Configuration methods
     fn set_level(&mut self, level: u32) {
         self.state.set_level(LogLevel::from_usize(level as usize));
     }
-    
+
     fn set_disabled(&mut self, disabled: bool) {
         self.state.set_disabled(disabled);
     }
@@ -198,12 +198,12 @@ pub fn fast_critical(logger: &GenericFastLogger, msg: &str) {
 #[pyfunction]
 pub fn bulk_check_levels(logger: &GenericFastLogger, levels: Vec<u32>) -> Vec<bool> {
     let state = logger.state.packed_state.load(Ordering::Relaxed);
-    
+
     // Early return if logger is disabled
     if (state >> OptimizedLogState::DISABLED_BIT) == 1 {
         return vec![false; levels.len()];
     }
-    
+
     let current_level = (state & OptimizedLogState::LEVEL_MASK) >> OptimizedLogState::LEVEL_SHIFT;
     levels.into_iter()
           .map(|level| level >= current_level)
@@ -215,7 +215,7 @@ use std::collections::HashMap;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
-static NAME_INTERNER: Lazy<Mutex<HashMap<String, &'static str>>> = 
+static NAME_INTERNER: Lazy<Mutex<HashMap<String, &'static str>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub fn intern_name(name: String) -> &'static str {
@@ -223,7 +223,7 @@ pub fn intern_name(name: String) -> &'static str {
     if let Some(&interned) = interner.get(&name) {
         return interned;
     }
-    
+
     let leaked: &'static str = Box::leak(name.clone().into_boxed_str());
     interner.insert(name, leaked);
     leaked
@@ -245,32 +245,32 @@ impl InternedFastLogger {
             name: intern_name(name),
         }
     }
-    
+
     // Same methods as GenericFastLogger but with zero-allocation name handling
     fn debug(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Debug) {
             self.emit_log_interned(LogLevel::Debug, msg);
         }
     }
-    
+
     fn info(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Info) {
             self.emit_log_interned(LogLevel::Info, msg);
         }
     }
-    
+
     fn warning(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Warning) {
             self.emit_log_interned(LogLevel::Warning, msg);
         }
     }
-    
+
     fn error(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Error) {
             self.emit_log_interned(LogLevel::Error, msg);
         }
     }
-    
+
     fn critical(&self, msg: &str) {
         if self.state.is_enabled_for(LogLevel::Critical) {
             self.emit_log_interned(LogLevel::Critical, msg);

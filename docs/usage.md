@@ -3,11 +3,10 @@
 ## Quick Start
 
 ```python
-import logxide
-logxide.install()  # Make logxide the default logging module
+# Simple - no setup required!
+from logxide import logging
 
-# Now use logging as normal
-import logging
+# LogXide is automatically installed - use logging as normal
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.info("Hello from LogXide!")

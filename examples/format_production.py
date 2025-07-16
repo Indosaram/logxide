@@ -1,9 +1,4 @@
-import logxide
-
-# Install logxide as drop-in replacement
-logxide.install()
-
-import logging
+from logxide import logging
 
 print("=== Production Format ===")
 prod_format = "%(asctime)s [%(process)d:%(thread)d] %(levelname)s %(name)s: %(message)s"

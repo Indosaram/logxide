@@ -69,7 +69,18 @@ PyLogger = logxide.logging.PyLogger  # type: ignore[attr-defined]
 class _LoggingModule:
     """Mock logging module that provides compatibility interface"""
 
-    getLogger = staticmethod(getLogger)
+    @staticmethod
+    def getLogger(name=None):
+        """Return logger compatible with caplog using monkey-patched standard logger"""
+        # Ensure install() has been called
+        import logging as std_logging
+
+        if not hasattr(std_logging, "_original_getLogger"):
+            install()
+
+        # Return the monkey-patched standard logger (which works with caplog)
+        return std_logging.getLogger(name)
+
     basicConfig = staticmethod(basicConfig)
     flush = staticmethod(flush)
     register_python_handler = staticmethod(register_python_handler)
@@ -313,7 +324,7 @@ def install():
         logxide_logger = getLogger(name)
 
         # Replace the standard logger's methods with logxide versions
-        # Only replace methods that exist in both loggers
+        # But also ensure they still work with caplog by calling the original methods
         methods_to_replace = [
             "debug",
             "info",
@@ -328,7 +339,26 @@ def install():
 
         for method in methods_to_replace:
             if hasattr(logxide_logger, method):
-                setattr(std_logger, method, getattr(logxide_logger, method))
+                # Create a wrapper that calls both LogXide and original logging
+                original_method = getattr(std_logger, method)
+                logxide_method = getattr(logxide_logger, method)
+
+                def create_wrapper(orig_method, logxide_method):
+                    def wrapper(*args, **kwargs):
+                        # Call the original method first (for caplog compatibility)
+                        import contextlib
+
+                        with contextlib.suppress(Exception):
+                            orig_method(*args, **kwargs)
+                        # Then call LogXide method (for performance)
+                        with contextlib.suppress(Exception):
+                            logxide_method(*args, **kwargs)
+
+                    return wrapper
+
+                setattr(
+                    std_logger, method, create_wrapper(original_method, logxide_method)
+                )
 
         # Handle exception method specially - it's error + traceback
         if hasattr(std_logger, "exception"):
@@ -338,6 +368,19 @@ def install():
                 logxide_logger.exception(msg, *args, **kwargs)
 
             std_logger.exception = exception_wrapper
+
+        # Copy handlers from std_logger to logxide_logger
+        # This ensures handlers added to Python logger work with LogXide
+        # Only copy callable handlers as LogXide requires handlers to be callable
+        if hasattr(logxide_logger, "addHandler"):
+            for handler in std_logger.handlers:
+                if callable(handler) and handler not in getattr(
+                    logxide_logger, "handlers", []
+                ):
+                    import contextlib
+
+                    with contextlib.suppress(ValueError):
+                        logxide_logger.addHandler(handler)
 
         return std_logger
 
@@ -368,6 +411,26 @@ def install():
 
     # Migrate any loggers that might have been created before install()
     _migrate_existing_loggers()
+
+    # Set up default StreamHandler for the root logger
+    # Get the LogXide root logger directly
+    logxide_root = getLogger()
+
+    # Check if LogXide root has handlers, if not add StreamHandler
+    if hasattr(logxide_root, "handlers") and not logxide_root.handlers:
+        from .compat_handlers import StreamHandler
+
+        handler = StreamHandler()
+        if hasattr(logxide_root, "addHandler"):
+            logxide_root.addHandler(handler)
+
+    # Also set up the standard root logger
+    std_root = std_logging.root
+    if not std_root.handlers:
+        from .compat_handlers import StreamHandler
+
+        handler = StreamHandler()
+        std_root.addHandler(handler)
 
 
 def uninstall():

@@ -7,13 +7,8 @@ showcasing async logging, database operations, background tasks, WebSocket
 logging, dependency injection, and comprehensive error handling.
 """
 
-import logxide
-
-logxide.install()
-
 import asyncio
 import json
-import logging
 import os
 import time
 import uuid
@@ -35,6 +30,8 @@ from pydantic import BaseModel
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
+
+from logxide import logging
 
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./fastapi_logxide_demo.db")

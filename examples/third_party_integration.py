@@ -5,13 +5,9 @@ This example demonstrates real integration with popular Python libraries
 showing how logxide captures their actual log output.
 """
 
-import logxide
-
-# Install logxide BEFORE importing any third-party libraries
-logxide.install()
-
-import logging
 import sys
+
+from logxide import logging
 
 
 def main():

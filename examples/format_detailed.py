@@ -1,9 +1,4 @@
-import logxide
-
-# Install logxide as drop-in replacement
-logxide.install()
-
-import logging
+from logxide import logging
 
 print("=== Detailed Format with Thread Info ===")
 detailed_format = (

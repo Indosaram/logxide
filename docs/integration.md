@@ -14,18 +14,17 @@ This guide covers integrating LogXide with popular Python web frameworks: Flask,
 
 ## Quick Start
 
-For all frameworks, the integration pattern is identical:
+For all frameworks, the integration pattern is identical and **ultra-simple**:
 
-1. Install LogXide as a drop-in replacement **before** importing the framework
+1. Replace `import logging` with `from logxide import logging`
 2. Configure logging as you normally would
 3. Use standard logging throughout your application
 
 ```python
-import logxide
-logxide.install()  # Must be called before framework imports
+from logxide import logging  # Auto-installs LogXide - no setup needed!
 
 # Now import your framework and use logging normally
-import logging
+# LogXide is already integrated!
 ```
 
 ## Flask Integration
@@ -33,11 +32,9 @@ import logging
 ### Basic Setup
 
 ```python
-import logxide
-logxide.install()
+from logxide import logging  # Auto-installs LogXide
 
 from flask import Flask, request, jsonify
-import logging
 
 app = Flask(__name__)
 
@@ -63,11 +60,9 @@ if __name__ == '__main__':
 Create middleware to log all incoming requests:
 
 ```python
-import logxide
-logxide.install()
+from logxide import logging  # Auto-installs LogXide
 
 from flask import Flask, request, g
-import logging
 import time
 
 app = Flask(__name__)
@@ -111,12 +106,12 @@ def handle_exception(e):
 def get_user(user_id):
     logger = logging.getLogger('api.users')
     logger.info(f'Fetching user {user_id}')
-    
+
     # Simulate some processing
     if user_id == 404:
         logger.warning(f'User {user_id} not found')
         return jsonify({'error': 'User not found'}), 404
-    
+
     logger.info(f'Successfully retrieved user {user_id}')
     return jsonify({'user_id': user_id, 'name': f'User {user_id}'})
 ```
@@ -124,12 +119,10 @@ def get_user(user_id):
 ### Flask-SQLAlchemy Integration
 
 ```python
-import logxide
-logxide.install()
+from logxide import logging  # Auto-installs LogXide
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-import logging
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
@@ -156,11 +149,11 @@ class User(db.Model):
 @app.route('/users', methods=['POST'])
 def create_user():
     app_logger.info('Creating new user')
-    
+
     user = User(username='testuser')
     db.session.add(user)
     db.session.commit()
-    
+
     app_logger.info(f'User created with ID: {user.id}')
     return {'user_id': user.id, 'username': user.username}
 
@@ -178,8 +171,7 @@ Add LogXide configuration to your Django settings:
 
 ```python
 # settings.py
-import logxide
-logxide.install()
+from logxide import logging  # Auto-installs LogXide
 
 # ... other Django settings ...
 
@@ -288,22 +280,22 @@ def user_list(request):
         logger.info('Fetching user list')
         users = User.objects.all()
         logger.info(f'Found {users.count()} users')
-        
+
         return JsonResponse({
             'users': [{'id': u.id, 'username': u.username} for u in users]
         })
-    
+
     elif request.method == 'POST':
         logger.info('Creating new user')
-        
+
         try:
             import json
             data = json.loads(request.body)
             user = User.objects.create(username=data['username'])
-            
+
             logger.info(f'User created: {user.username} (ID: {user.id})')
             return JsonResponse({'user_id': user.id, 'username': user.username})
-            
+
         except Exception as e:
             logger.error(f'Error creating user: {str(e)}')
             return JsonResponse({'error': 'Failed to create user'}, status=400)
@@ -319,7 +311,7 @@ logger = logging.getLogger('myapp.models')
 class User(models.Model):
     username = models.CharField(max_length=150, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     def __str__(self):
         return self.username
 
@@ -345,16 +337,16 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         logger = logging.getLogger('django.management')
-        
+
         count = options['count']
         logger.info(f'Starting log demo with {count} messages')
-        
+
         for i in range(count):
             logger.info(f'Demo message {i + 1}/{count}')
-        
+
         # Ensure all logs are processed
         logging.flush()
-        
+
         self.stdout.write(
             self.style.SUCCESS(f'Successfully logged {count} messages')
         )
@@ -365,13 +357,11 @@ class Command(BaseCommand):
 ### Basic Setup
 
 ```python
-import logxide
-logxide.install()
+from logxide import logging  # Auto-installs LogXide
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import logging
 import time
 
 app = FastAPI(title="LogXide FastAPI Integration")
@@ -391,18 +381,18 @@ class UserCreate(BaseModel):
 async def log_requests(request: Request, call_next):
     """Log all HTTP requests."""
     start_time = time.time()
-    
+
     logger.info(f'{request.method} {request.url.path} - Client: {request.client.host}')
-    
+
     response = await call_next(request)
-    
+
     duration = time.time() - start_time
     logger.info(
         f'{request.method} {request.url.path} - '
         f'Status: {response.status_code} - '
         f'Duration: {duration:.3f}s'
     )
-    
+
     return response
 
 @app.exception_handler(Exception)
@@ -424,11 +414,11 @@ async def root():
 async def get_user(user_id: int):
     """Get user by ID."""
     logger.info(f'Fetching user {user_id}')
-    
+
     if user_id == 404:
         logger.warning(f'User {user_id} not found')
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     logger.info(f'Successfully retrieved user {user_id}')
     return {"user_id": user_id, "username": f"user_{user_id}"}
 
@@ -436,10 +426,10 @@ async def get_user(user_id: int):
 async def create_user(user: UserCreate):
     """Create a new user."""
     logger.info(f'Creating user: {user.username}')
-    
+
     # Simulate processing
     user_id = hash(user.username) % 10000
-    
+
     logger.info(f'User created: {user.username} (ID: {user_id})')
     return {"user_id": user_id, "username": user.username}
 ```
@@ -447,11 +437,9 @@ async def create_user(user: UserCreate):
 ### Background Tasks with Logging
 
 ```python
-import logxide
-logxide.install()
+from logxide import logging  # Auto-installs LogXide
 
 from fastapi import FastAPI, BackgroundTasks
-import logging
 import asyncio
 
 app = FastAPI()
@@ -466,20 +454,20 @@ task_logger = logging.getLogger('background_tasks')
 async def process_data(task_id: str, data: dict):
     """Background task with logging."""
     task_logger.info(f'Starting background task {task_id}')
-    
+
     try:
         # Simulate processing
         await asyncio.sleep(2)
-        
+
         task_logger.info(f'Processing data for task {task_id}: {len(data)} items')
-        
+
         # Simulate some work
         for i in range(10):
             task_logger.debug(f'Task {task_id} - Processing item {i}')
             await asyncio.sleep(0.1)
-        
+
         task_logger.info(f'Task {task_id} completed successfully')
-        
+
     except Exception as e:
         task_logger.error(f'Task {task_id} failed: {str(e)}')
         raise
@@ -489,9 +477,9 @@ async def start_processing(background_tasks: BackgroundTasks):
     """Start background processing."""
     task_id = "task_123"
     data = {"items": list(range(100))}
-    
+
     background_tasks.add_task(process_data, task_id, data)
-    
+
     logger.info(f'Queued background task {task_id}')
     return {"task_id": task_id, "status": "queued"}
 ```
@@ -499,14 +487,12 @@ async def start_processing(background_tasks: BackgroundTasks):
 ### Database Integration (SQLAlchemy)
 
 ```python
-import logxide
-logxide.install()
+from logxide import logging  # Auto-installs LogXide
 
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-import logging
 
 # Database setup
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
@@ -528,7 +514,7 @@ app_logger = logging.getLogger('fastapi.app')
 
 class User(Base):
     __tablename__ = "users"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
 
@@ -547,12 +533,12 @@ def get_db():
 async def create_user(username: str, db: Session = Depends(get_db)):
     """Create user with database logging."""
     app_logger.info(f'Creating user: {username}')
-    
+
     db_user = User(username=username)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    
+
     app_logger.info(f'User created: {username} (ID: {db_user.id})')
     return {"user_id": db_user.id, "username": db_user.username}
 
@@ -560,12 +546,12 @@ async def create_user(username: str, db: Session = Depends(get_db)):
 async def get_user(user_id: int, db: Session = Depends(get_db)):
     """Get user with database logging."""
     app_logger.info(f'Fetching user {user_id}')
-    
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         app_logger.warning(f'User {user_id} not found')
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     app_logger.info(f'Successfully retrieved user {user_id}')
     return {"user_id": user.id, "username": user.username}
 ```
@@ -577,10 +563,7 @@ async def get_user(user_id: int, db: Session = Depends(get_db)):
 LogXide's async architecture provides significant performance benefits for web applications:
 
 ```python
-import logxide
-logxide.install()
-
-import logging
+from logxide import logging  # Auto-installs LogXide
 import time
 import asyncio
 
@@ -593,21 +576,21 @@ logging.basicConfig(
 async def performance_test():
     """Demonstrate high-performance logging."""
     logger = logging.getLogger('performance')
-    
+
     # Log many messages without blocking
     start_time = time.time()
-    
+
     for i in range(10000):
         logger.info(f'High-volume message {i}')
-    
+
     # Async logging doesn't block here
     immediate_time = time.time()
-    
+
     # Wait for all logs to be processed
     logging.flush()
-    
+
     final_time = time.time()
-    
+
     print(f"Time to queue 10,000 messages: {immediate_time - start_time:.3f}s")
     print(f"Time to process all messages: {final_time - start_time:.3f}s")
     print(f"Messages per second: {10000 / (final_time - start_time):.0f}")
@@ -621,36 +604,33 @@ if __name__ == "__main__":
 LogXide manages memory efficiently in high-load scenarios:
 
 ```python
-import logxide
-logxide.install()
-
-import logging
+from logxide import logging  # Auto-installs LogXide
 import psutil
 import os
 
 def memory_usage_test():
     """Test memory usage with high-volume logging."""
     logger = logging.getLogger('memory_test')
-    
+
     process = psutil.Process(os.getpid())
-    
+
     # Baseline memory
     baseline_mb = process.memory_info().rss / 1024 / 1024
     print(f"Baseline memory: {baseline_mb:.1f} MB")
-    
+
     # Log many messages
     for i in range(100000):
         logger.info(f'Memory test message {i} - ' + 'x' * 100)
-    
+
     # Memory after logging
     after_logging_mb = process.memory_info().rss / 1024 / 1024
     print(f"Memory after logging: {after_logging_mb:.1f} MB")
-    
+
     # Flush and check final memory
     logging.flush()
     final_mb = process.memory_info().rss / 1024 / 1024
     print(f"Final memory: {final_mb:.1f} MB")
-    
+
     print(f"Memory increase: {final_mb - baseline_mb:.1f} MB")
 
 if __name__ == "__main__":
@@ -659,14 +639,13 @@ if __name__ == "__main__":
 
 ## Best Practices
 
-### 1. Early Installation
+### 1. Simple Import Pattern
 
-Always install LogXide before importing web frameworks:
+Always use the LogXide import pattern - it's automatic:
 
 ```python
-# ✅ Correct
-import logxide
-logxide.install()
+# ✅ Correct - Simple and automatic
+from logxide import logging
 
 from flask import Flask
 # or
@@ -674,8 +653,7 @@ from django.conf import settings
 # or
 from fastapi import FastAPI
 
-# ❌ Incorrect - framework imported before LogXide
-from flask import Flask
+# ❌ Old pattern - no longer needed
 import logxide
 logxide.install()
 ```
@@ -751,7 +729,7 @@ except Exception as e:
 ### Common Issues
 
 1. **LogXide not capturing framework logs**
-   - Ensure `logxide.install()` is called before importing the framework
+   - Ensure you use `from logxide import logging` (auto-installs LogXide)
    - Check that the framework's logging configuration isn't overriding LogXide
 
 2. **Performance not as expected**
@@ -769,10 +747,7 @@ except Exception as e:
 Enable debug logging to troubleshoot issues:
 
 ```python
-import logxide
-logxide.install()
-
-import logging
+from logxide import logging  # Auto-installs LogXide
 
 # Enable debug logging for LogXide itself
 logging.basicConfig(
@@ -802,7 +777,7 @@ def log_performance(func):
     def wrapper(*args, **kwargs):
         logger = logging.getLogger('performance')
         start_time = time.time()
-        
+
         try:
             result = func(*args, **kwargs)
             duration = time.time() - start_time
@@ -812,7 +787,7 @@ def log_performance(func):
             duration = time.time() - start_time
             logger.error(f'{func.__name__} failed after {duration:.3f}s: {str(e)}')
             raise
-    
+
     return wrapper
 
 # Usage
@@ -827,7 +802,7 @@ def database_query():
 LogXide provides seamless integration with Flask, Django, and FastAPI while delivering superior performance through its Rust-powered async architecture. By following the patterns and best practices outlined in this guide, you can leverage LogXide's capabilities to build high-performance web applications with comprehensive logging.
 
 Key takeaways:
-- Use `logxide.install()` before importing frameworks
+- Use `from logxide import logging` (auto-installs LogXide)
 - Leverage structured logging for better observability
 - Take advantage of async logging for high-performance applications
 - Use proper logger hierarchies and context information

@@ -3,6 +3,7 @@ Drop-in Replacement Example
 
 This example demonstrates how to use logxide as a complete drop-in
 replacement for Python's standard logging module using logxide.install().
+This is one of two ways to use logxide - the other being the auto-install pattern.
 """
 
 import sys
@@ -85,12 +86,18 @@ def main():
     logging.flush()
 
     print("\n=== USAGE INSTRUCTIONS ===")
-    print("To use logxide in your project:")
-    print("1. Call logxide.install() before importing any other modules")
-    print("2. Use 'import logging' normally - it will be logxide")
-    print("3. All existing logging code works without modification")
-    print("4. Third-party libraries automatically use logxide")
-    print("\nExample:")
+    print("To use logxide in your project, you have two options:")
+    print("")
+    print("OPTION 1: Auto-install pattern (recommended):")
+    print("```python")
+    print("from logxide import logging")
+    print("")
+    print("logging.basicConfig(level=logging.INFO)")
+    print("logger = logging.getLogger(__name__)")
+    print("logger.info('Hello from logxide!')")
+    print("```")
+    print("")
+    print("OPTION 2: Manual install pattern:")
     print("```python")
     print("import logxide")
     print("logxide.install()  # Do this first!")
@@ -103,6 +110,8 @@ def main():
     print("logger = logging.getLogger(__name__)")
     print("logger.info('Hello from logxide!')")
     print("```")
+    print("")
+    print("Both approaches work identically - choose what fits your needs!")
 
 
 if __name__ == "__main__":

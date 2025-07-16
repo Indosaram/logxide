@@ -20,28 +20,28 @@ pub struct ImprovedFastLogger {
 impl ImprovedFastLogger {
     const DISABLED_MASK: u32 = 0x8000_0000;
     const LEVEL_MASK: u32 = 0x7FFF_FFFF;
-    
+
     pub fn new_static(name: &'static str) -> Self {
         Self {
             level_state: AtomicU32::new(LogLevel::Warning as u32),
             name,
         }
     }
-    
+
     /// Single atomic operation for level check
     #[inline(always)]
     pub fn is_enabled_for(&self, level: LogLevel) -> bool {
         let state = self.level_state.load(Ordering::Relaxed);
         // Check both disabled and level in one operation
-        (state & Self::DISABLED_MASK) == 0 
+        (state & Self::DISABLED_MASK) == 0
             && (level as u32) >= (state & Self::LEVEL_MASK)
     }
-    
+
     /// Separate debug check for maximum optimization
     #[inline(always)]
     pub fn debug_enabled(&self) -> bool {
         let state = self.level_state.load(Ordering::Relaxed);
-        (state & Self::DISABLED_MASK) == 0 
+        (state & Self::DISABLED_MASK) == 0
             && (LogLevel::Debug as u32) >= (state & Self::LEVEL_MASK)
     }
 }
@@ -54,7 +54,7 @@ impl crate::PyLogger {
         if !self.fast_logger.is_enabled_for(LogLevel::Debug) {
             return Ok(());
         }
-        
+
         // Only do expensive operations if enabled
         let record = crate::create_log_record(
             self.fast_logger.name.to_string(),
@@ -82,8 +82,8 @@ impl crate::PyLogger {
             let _ = crate::SENDER.send(crate::LogMessage::Record(Box::new(record)));
         }
     }
-    
-    /// Info method optimized for disabled case  
+
+    /// Info method optimized for disabled case
     #[pyo3(signature = (msg))]
     fn info_fast(&self, msg: &str) {
         if self.fast_logger.is_enabled_for(LogLevel::Info) {
@@ -123,12 +123,12 @@ impl crate::fast_logger::FastLogger {
     #[inline(always)]
     pub fn is_enabled_for_optimized(&self, level: LogLevel) -> bool {
         let disabled = self.disabled.load(Ordering::Relaxed);
-        
+
         // Hint that logging is usually disabled in production
         if hint::unlikely(disabled) {
             return false;
         }
-        
+
         let effective_level = self.effective_level.load(Ordering::Relaxed);
         level as u32 >= effective_level
     }
@@ -138,7 +138,7 @@ impl crate::fast_logger::FastLogger {
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
 
-static INTERNED_NAMES: Lazy<std::sync::Mutex<HashMap<String, &'static str>>> = 
+static INTERNED_NAMES: Lazy<std::sync::Mutex<HashMap<String, &'static str>>> =
     Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
 
 pub fn intern_logger_name(name: String) -> &'static str {
@@ -154,7 +154,7 @@ pub fn intern_logger_name(name: String) -> &'static str {
 }
 
 /// Optimization 5: Pre-computed logger instances
-static BENCHMARK_LOGGER: Lazy<crate::fast_logger::FastLogger> = 
+static BENCHMARK_LOGGER: Lazy<crate::fast_logger::FastLogger> =
     Lazy::new(|| crate::fast_logger::FastLogger::new("benchmark"));
 
 pub fn get_benchmark_logger() -> &'static crate::fast_logger::FastLogger {

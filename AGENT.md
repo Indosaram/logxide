@@ -1,5 +1,5 @@
 - Performance first
-- logxide must be a drop-in replacement for the standard library logging module 
+- logxide must be a drop-in replacement for the standard library logging module
 - use `uv` for python management
 - Always check if `cargo test` and `pytest` both succeed after changes
 - For picologging benchmark, create or use `.venv312`

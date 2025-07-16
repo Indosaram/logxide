@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub struct UniversalFastLogger {
     /// Single atomic containing all state information
     /// Bits 0-7: current level (0-255)
-    /// Bit 8: disabled flag  
+    /// Bit 8: disabled flag
     /// Bits 9-31: reserved for future use
     state: AtomicU32,
     /// Logger name stored as static reference when possible
@@ -24,14 +24,14 @@ impl UniversalFastLogger {
     // Bit masks for state field
     const LEVEL_MASK: u32 = 0x000000FF;  // Bits 0-7
     const DISABLED_MASK: u32 = 0x00000100;  // Bit 8
-    
+
     pub fn new_static(name: &'static str) -> Self {
         Self {
             state: AtomicU32::new(LogLevel::Warning as u32),
             name,
         }
     }
-    
+
     /// Universal fast check - works for ANY log level
     #[inline(always)]
     pub fn is_enabled_for(&self, level: LogLevel) -> bool {
@@ -39,14 +39,14 @@ impl UniversalFastLogger {
         // Single comparison: not disabled AND level is high enough
         (state & Self::DISABLED_MASK) == 0 && (level as u32) >= (state & Self::LEVEL_MASK)
     }
-    
+
     /// Set level and update state atomically
     pub fn set_level(&self, level: LogLevel) {
         let current = self.state.load(Ordering::Relaxed);
         let new_state = (current & !Self::LEVEL_MASK) | (level as u32);
         self.state.store(new_state, Ordering::Relaxed);
     }
-    
+
     /// Set disabled state
     pub fn set_disabled(&self, disabled: bool) {
         let current = self.state.load(Ordering::Relaxed);
@@ -68,38 +68,38 @@ impl UniversalFastLogger {
             self.send_message(log_level, msg);
         }
     }
-    
+
     /// All specific level methods use the same optimized pattern
     fn debug(&self, msg: &str) {
         if self.is_enabled_for(LogLevel::Debug) {
             self.send_message(LogLevel::Debug, msg);
         }
     }
-    
+
     fn info(&self, msg: &str) {
         if self.is_enabled_for(LogLevel::Info) {
             self.send_message(LogLevel::Info, msg);
         }
     }
-    
+
     fn warning(&self, msg: &str) {
         if self.is_enabled_for(LogLevel::Warning) {
             self.send_message(LogLevel::Warning, msg);
         }
     }
-    
+
     fn error(&self, msg: &str) {
         if self.is_enabled_for(LogLevel::Error) {
             self.send_message(LogLevel::Error, msg);
         }
     }
-    
+
     fn critical(&self, msg: &str) {
         if self.is_enabled_for(LogLevel::Critical) {
             self.send_message(LogLevel::Critical, msg);
         }
     }
-    
+
     /// Fast level checking without any message processing
     fn is_enabled_for_level(&self, level: u32) -> bool {
         let log_level = LogLevel::from_usize(level as usize);
@@ -127,7 +127,7 @@ macro_rules! generate_universal_log_method {
             // Compiler can optimize this constant at compile time
             const LEVEL: LogLevel = $level;
             const LEVEL_U32: u32 = LEVEL as u32;
-            
+
             let state = self.state.load(Ordering::Relaxed);
             if (state & Self::DISABLED_MASK) == 0 && LEVEL_U32 >= (state & Self::LEVEL_MASK) {
                 self.send_message(LEVEL, msg);
@@ -139,7 +139,7 @@ macro_rules! generate_universal_log_method {
 /// Alternative implementation using trait for compile-time optimization
 pub trait FastLoggable {
     const LEVEL: LogLevel;
-    
+
     #[inline(always)]
     fn log_if_enabled(&self, logger: &UniversalFastLogger, msg: &str) {
         if logger.is_enabled_for(Self::LEVEL) {
@@ -214,16 +214,16 @@ pub fn get_enabled_levels(logger: &UniversalFastLogger) -> Vec<u32> {
     if (state & UniversalFastLogger::DISABLED_MASK) != 0 {
         return Vec::new(); // All disabled
     }
-    
+
     let current_level = state & UniversalFastLogger::LEVEL_MASK;
     let mut enabled = Vec::new();
-    
+
     if LogLevel::Debug as u32 >= current_level { enabled.push(LogLevel::Debug as u32); }
     if LogLevel::Info as u32 >= current_level { enabled.push(LogLevel::Info as u32); }
     if LogLevel::Warning as u32 >= current_level { enabled.push(LogLevel::Warning as u32); }
     if LogLevel::Error as u32 >= current_level { enabled.push(LogLevel::Error as u32); }
     if LogLevel::Critical as u32 >= current_level { enabled.push(LogLevel::Critical as u32); }
-    
+
     enabled
 }
 
@@ -240,7 +240,7 @@ impl<L: FastLoggable> SpecializedLogger<L> {
             _phantom: std::marker::PhantomData,
         }
     }
-    
+
     #[inline(always)]
     pub fn log(&self, msg: &str) {
         L::log_if_enabled(&self.inner, msg);

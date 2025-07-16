@@ -32,7 +32,7 @@ class NullHandler:
 
     def __call__(self, record):
         """Make it callable for logxide compatibility"""
-        pass
+        self.handle(record)
 
 
 class Formatter:
@@ -91,7 +91,7 @@ class Handler:
 
     def __call__(self, record):
         """Make it callable for logxide compatibility"""
-        pass
+        self.handle(record)
 
 
 class StreamHandler(Handler):
@@ -105,7 +105,23 @@ class StreamHandler(Handler):
 
     def emit(self, record):
         try:
-            msg = self.formatter.format(record) if self.formatter else str(record.msg)
+            # Handle different record types from LogXide
+            if isinstance(record, dict):
+                msg = record.get("msg", str(record))
+            elif hasattr(record, "msg"):
+                msg = str(record.msg)
+            elif hasattr(record, "message"):
+                msg = str(record.message)
+            else:
+                msg = str(record)
+
+            # Apply formatter if available
+            if self.formatter:
+                import contextlib
+
+                with contextlib.suppress(AttributeError, KeyError, TypeError):
+                    msg = self.formatter.format(record)
+
             stream = self.stream
             stream.write(msg + self.terminator)
             self.flush()

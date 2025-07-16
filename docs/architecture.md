@@ -22,7 +22,7 @@ LogXide leverages Rust's performance and safety with Python's ease of use throug
 
 ## Message Processing Flow
 
-1. **Python Call** → LogXide PyLogger methods  
+1. **Python Call** → LogXide PyLogger methods
 2. **Record Creation** → Rust LogRecord with full metadata
 3. **Async Channel** → Non-blocking message passing to Tokio runtime
 4. **Concurrent Processing** → Multiple handlers execute in parallel

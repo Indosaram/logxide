@@ -8,7 +8,7 @@ its Rust backend.
 
 import sys
 from types import ModuleType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 # Import logxide with fallback for type checking
 try:
@@ -81,8 +81,39 @@ from .compat_handlers import (
 from .logger_wrapper import basicConfig, getLogger
 from .module_system import install, logging, uninstall
 
+
+class _LoggingModule(ModuleType):
+    """
+    Wrapper for the logging module that automatically calls install() when imported.
+    """
+
+    def __init__(self, wrapped):
+        self._wrapped = wrapped
+        self._installed = False
+        super().__init__("logxide.logging")
+
+    def __getattr__(self, name):
+        # Automatically install logxide when logging module is accessed
+        if not self._installed:
+            install()
+            self._installed = True
+        return getattr(self._wrapped, name)
+
+    def __dir__(self):
+        return dir(self._wrapped)
+
+
+# Create wrapped logging module
+_logging_module = _LoggingModule(logging)
+
 # Make the logging module available as a submodule
-sys.modules[__name__ + ".logging"] = cast(ModuleType, logging)
+sys.modules[__name__ + ".logging"] = _logging_module
+
+# Replace the logging reference with the wrapped module
+logging = _logging_module
+
+# Note: Auto-install is available when logging module is accessed
+# This maintains caplog compatibility while providing LogXide enhancement on demand
 
 # Re-export important functions and classes from Rust extension
 flush = logxide.logging.flush
