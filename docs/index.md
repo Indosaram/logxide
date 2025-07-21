@@ -8,6 +8,10 @@ LogXide is a high-performance, Rust-powered, drop-in replacement for Python's st
 - **[Installation Guide](installation.md)** - Installation and setup instructions
 - **[Usage Guide](usage.md)** - Complete usage examples and API guide
 
+### Integrations
+- **[Framework Integration](integration.md)** - Flask, Django, and FastAPI integration
+- **[Sentry Integration](sentry.md)** - Automatic error tracking with Sentry
+
 ### Performance & Architecture
 - **[Performance Benchmarks](benchmarks.md)** - Comprehensive performance analysis and comparisons
 - **[Architecture](architecture.md)** - Technical architecture and design details

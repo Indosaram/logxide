@@ -1,6 +1,6 @@
 [project]
 name = "logxide"
-version = "0.1.0"
+version = "0.1.1"
 description = "High-performance, Rust-powered drop-in replacement for Python's logging module"
 readme = "README.md"
 license = {text = "MIT"}
@@ -74,6 +74,9 @@ dev = [
     "flask-sqlalchemy>=3.1.1",
     "httpx>=0.28.1",
     "uvicorn>=0.35.0",
+]
+sentry = [
+    "sentry-sdk>=1.40.0",
 ]
 
 # ===== Tool Configurations =====

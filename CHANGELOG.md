@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Handler System**: Pluggable handlers for different output destinations
 - **Filter System**: Extensible filtering capabilities
 - **Memory Efficient**: Minimal allocation overhead
-- **Easy Integration**: Simple drop-in replacement via `logxide.install()`
+- **Easy Integration**: Simple drop-in replacement with automatic installation
 
 ### Supported Python Versions
 - Python 3.9+
@@ -135,14 +135,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    pip install logxide
    ```
 
-2. Add the drop-in replacement at the start of your application:
+2. Use LogXide with automatic installation:
    ```python
-   import logxide
-   logxide.install()
+   # Simple and automatic - no setup needed!
+   from logxide import logging
 
-   # Now all logging imports will use LogXide
-   import logging
-   logging.info("Now using LogXide!")
+   # LogXide is automatically installed - use logging as normal
+   logging.basicConfig(level=logging.INFO)
+   logger = logging.getLogger(__name__)
+   logger.info("Now using LogXide!")
    ```
 
 #### Version Migration

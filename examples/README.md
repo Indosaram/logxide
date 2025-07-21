@@ -10,7 +10,7 @@ This directory contains examples demonstrating various features of logxide.
 - Logger hierarchy
 
 ### 2. Drop-in Replacement (`drop_in_replacement.py`)
-- How to use `logxide.install()`
+- Auto-install demonstration
 - Replacing Python's standard logging module
 - Third-party library compatibility
 

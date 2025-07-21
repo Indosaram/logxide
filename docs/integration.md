@@ -8,6 +8,7 @@ This guide covers integrating LogXide with popular Python web frameworks: Flask,
 - [Flask Integration](#flask-integration)
 - [Django Integration](#django-integration)
 - [FastAPI Integration](#fastapi-integration)
+- [Sentry Integration](#sentry-integration)
 - [Performance Considerations](#performance-considerations)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -555,6 +556,100 @@ async def get_user(user_id: int, db: Session = Depends(get_db)):
     app_logger.info(f'Successfully retrieved user {user_id}')
     return {"user_id": user.id, "username": user.username}
 ```
+
+## Sentry Integration
+
+LogXide provides automatic integration with Sentry for error tracking and monitoring. When Sentry is configured in your application, LogXide automatically detects it and sends WARNING, ERROR, and CRITICAL level logs to Sentry.
+
+### Quick Setup
+
+```python
+# 1. Configure Sentry (once in your app)
+import sentry_sdk
+sentry_sdk.init(
+    dsn="https://your-dsn@sentry.io/project-id",
+    environment="production",
+)
+
+# 2. Use LogXide normally - Sentry integration is automatic!
+from logxide import logging
+
+logger = logging.getLogger(__name__)
+
+# These automatically go to Sentry
+logger.warning("This warning appears in Sentry")
+logger.error("This error is tracked in Sentry")
+```
+
+### Framework-Specific Examples
+
+**Flask with Sentry:**
+```python
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
+
+sentry_sdk.init(
+    dsn="your-dsn",
+    integrations=[FlaskIntegration()]
+)
+
+from flask import Flask
+from logxide import logging
+
+app = Flask(__name__)
+logger = logging.getLogger(__name__)
+
+@app.errorhandler(500)
+def handle_error(error):
+    logger.exception("Internal server error", exc_info=error)
+    return "Internal Server Error", 500
+```
+
+**Django with Sentry:**
+```python
+# settings.py
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
+
+sentry_sdk.init(
+    dsn="your-dsn",
+    integrations=[DjangoIntegration()]
+)
+
+# In your views
+from logxide import logging
+logger = logging.getLogger(__name__)
+
+def my_view(request):
+    try:
+        process_request(request)
+    except Exception as e:
+        logger.exception("Request processing failed")
+        raise
+```
+
+**FastAPI with Sentry:**
+```python
+import sentry_sdk
+from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
+
+sentry_sdk.init(dsn="your-dsn")
+
+from fastapi import FastAPI
+from logxide import logging
+
+app = FastAPI()
+app.add_middleware(SentryAsgiMiddleware)
+
+logger = logging.getLogger(__name__)
+
+@app.exception_handler(Exception)
+async def exception_handler(request, exc):
+    logger.exception("Unhandled exception", exc_info=exc)
+    return {"error": "Internal server error"}
+```
+
+For complete Sentry integration documentation, see the [Sentry Integration Guide](sentry.md).
 
 ## Performance Considerations
 

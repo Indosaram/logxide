@@ -1,0 +1,65 @@
+version: '3.8'
+
+# Docker Compose for running a local Sentry instance for integration testing
+# Usage: docker-compose -f tests/docker-compose.sentry.yml up -d
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: sentry
+      POSTGRES_PASSWORD: sentry
+      POSTGRES_DB: sentry
+    ports:
+      - "5432:5432"
+    volumes:
+      - sentry-postgres:/var/lib/postgresql/data
+
+  sentry:
+    image: getsentry/sentry:latest
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      SENTRY_SECRET_KEY: 'your-secret-key-for-testing'
+      SENTRY_REDIS_HOST: redis
+      SENTRY_POSTGRES_HOST: postgres
+      SENTRY_DB_USER: sentry
+      SENTRY_DB_PASSWORD: sentry
+    ports:
+      - "9000:9000"
+    command: run web
+
+  sentry-worker:
+    image: getsentry/sentry:latest
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      SENTRY_SECRET_KEY: 'your-secret-key-for-testing'
+      SENTRY_REDIS_HOST: redis
+      SENTRY_POSTGRES_HOST: postgres
+      SENTRY_DB_USER: sentry
+      SENTRY_DB_PASSWORD: sentry
+    command: run worker
+
+  sentry-cron:
+    image: getsentry/sentry:latest
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      SENTRY_SECRET_KEY: 'your-secret-key-for-testing'
+      SENTRY_REDIS_HOST: redis
+      SENTRY_POSTGRES_HOST: postgres
+      SENTRY_DB_USER: sentry
+      SENTRY_DB_PASSWORD: sentry
+    command: run cron
+
+volumes:
+  sentry-postgres:
