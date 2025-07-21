@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-def test_example_import(example_name, example_path):
+def _test_example_import(example_name, example_path):
     """Test that an example can be imported successfully."""
     print(f"Testing {example_name}...")
 
@@ -312,7 +312,7 @@ def main():
     # Run example import tests
     for example_name, example_path in example_files:
         if example_path.exists():
-            if test_example_import(example_name, example_path):
+            if _test_example_import(example_name, example_path):
                 passed += 1
             else:
                 failed += 1
