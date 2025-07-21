@@ -74,8 +74,6 @@ dev = [
     "flask-sqlalchemy>=3.1.1",
     "httpx>=0.28.1",
     "uvicorn>=0.35.0",
-]
-sentry = [
     "sentry-sdk>=1.40.0",
 ]
 
