@@ -1,0 +1,51 @@
+name: Sentry Integration Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-sentry-integration:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install maturin pytest pytest-cov
+        pip install -e ".[sentry,dev]"
+
+    - name: Run Sentry integration tests
+      run: |
+        pytest tests/test_sentry_integration_real.py -v -m integration
+      env:
+        PYTEST_TIMEOUT: 300
+
+    # Optional: Test with real Sentry project
+    - name: Test with Sentry.io (if secrets available)
+      if: ${{ secrets.SENTRY_TEST_DSN }}
+      run: |
+        pytest tests/test_sentry_integration_real.py -v -m integration
+      env:
+        SENTRY_TEST_DSN: ${{ secrets.SENTRY_TEST_DSN }}
+        SENTRY_TEST_ORG: ${{ secrets.SENTRY_TEST_ORG }}
+        SENTRY_TEST_PROJECT: ${{ secrets.SENTRY_TEST_PROJECT }}

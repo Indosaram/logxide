@@ -288,7 +288,7 @@ _manager = LoggingManager()
 logging = _LoggingModule()
 
 
-def install():
+def install(sentry: bool = None):
     """
     Install logxide as a drop-in replacement for the standard logging module.
 
@@ -296,6 +296,9 @@ def install():
     return logxide loggers while keeping all other logging functionality intact.
     This preserves compatibility with uvicorn and other libraries that rely on
     the standard logging module's internal structure.
+
+    Args:
+        sentry: Enable/disable Sentry integration (None for auto-detect)
 
     Call this function early in your application, before importing any
     third-party libraries that use logging.
@@ -307,6 +310,10 @@ def install():
         # Now all libraries will use logxide for logging
         import requests  # requests will use logxide for logging
         import sqlalchemy  # sqlalchemy will use logxide for logging
+
+        # With explicit Sentry control:
+        logxide.install(sentry=True)  # Force enable Sentry
+        logxide.install(sentry=False)  # Disable Sentry
     """
     import logging as std_logging
 
@@ -432,6 +439,9 @@ def install():
         handler = StreamHandler()
         std_root.addHandler(handler)
 
+    # Auto-configure Sentry integration if available
+    _auto_configure_sentry(sentry)
+
 
 def uninstall():
     """
@@ -450,6 +460,39 @@ def uninstall():
     if hasattr(std_logging, "_original_basicConfig"):
         std_logging.basicConfig = std_logging._original_basicConfig  # type: ignore[attr-defined]
         delattr(std_logging, "_original_basicConfig")
+
+
+def _auto_configure_sentry(enable: bool = None) -> None:
+    """
+    Automatically configure Sentry integration if available.
+
+    Args:
+        enable: Explicitly enable/disable Sentry (None for auto-detect)
+    """
+    try:
+        from .sentry_integration import auto_configure_sentry
+
+        # Try to configure Sentry handler
+        sentry_handler = auto_configure_sentry(enable)
+
+        if sentry_handler is not None:
+            # Add to root logger
+            root_logger = getLogger()
+            if hasattr(root_logger, "addHandler"):
+                root_logger.addHandler(sentry_handler)
+
+            # Also add to standard root logger for compatibility
+            import logging as std_logging
+
+            std_logging.root.addHandler(sentry_handler)
+
+    except ImportError:
+        # Sentry integration module not available (should not happen)
+        pass
+    except Exception:
+        # Any other error in Sentry configuration - fail silently
+        # to avoid breaking the application
+        pass
 
 
 ""

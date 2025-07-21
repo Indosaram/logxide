@@ -45,9 +45,9 @@ except ImportError:
         logxide = RustExtension()
 
 # Package metadata
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "LogXide Team"
-__email__ = "logxide@example.com"
+__email__ = "freedomzero91@gmail.com"
 __license__ = "MIT"
 __description__ = (
     "High-performance, Rust-powered drop-in replacement for Python's logging module"
@@ -80,6 +80,16 @@ from .compat_handlers import (
 )
 from .logger_wrapper import basicConfig, getLogger
 from .module_system import install, logging, uninstall
+
+# Optional Sentry integration (imported lazily to avoid dependency issues)
+try:
+    from .sentry_integration import SentryHandler, auto_configure_sentry
+
+    _sentry_available = True
+except ImportError:
+    _sentry_available = False
+    SentryHandler = None
+    auto_configure_sentry = None
 
 
 class _LoggingModule(ModuleType):
@@ -169,6 +179,9 @@ __all__ = [
     "disable",
     "getLoggerClass",
     "setLoggerClass",
+    # Sentry integration (optional)
+    "SentryHandler",
+    "auto_configure_sentry",
     # TODO: Implement these functions for full compatibility
     # "captureWarnings",
     # "makeLogRecord",
