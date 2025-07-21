@@ -288,7 +288,7 @@ _manager = LoggingManager()
 logging = _LoggingModule()
 
 
-def install(sentry: bool = None):
+def install(sentry=None):
     """
     Install logxide as a drop-in replacement for the standard logging module.
 
@@ -437,7 +437,7 @@ def install(sentry: bool = None):
         from .compat_handlers import StreamHandler
 
         handler = StreamHandler()
-        std_root.addHandler(handler)
+        std_root.addHandler(handler)  # type: ignore[arg-type]
 
     # Auto-configure Sentry integration if available
     _auto_configure_sentry(sentry)
@@ -462,7 +462,7 @@ def uninstall():
         delattr(std_logging, "_original_basicConfig")
 
 
-def _auto_configure_sentry(enable: bool = None) -> None:
+def _auto_configure_sentry(enable=None) -> None:
     """
     Automatically configure Sentry integration if available.
 
@@ -484,7 +484,7 @@ def _auto_configure_sentry(enable: bool = None) -> None:
             # Also add to standard root logger for compatibility
             import logging as std_logging
 
-            std_logging.root.addHandler(sentry_handler)
+            std_logging.root.addHandler(sentry_handler)  # type: ignore[arg-type]
 
     except ImportError:
         # Sentry integration module not available (should not happen)
