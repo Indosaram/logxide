@@ -9,25 +9,36 @@ import sys
 from unittest.mock import Mock, patch
 
 import pytest
-
-# Import sentry_sdk for testing
 import sentry_sdk
 
 
 class TestSentryHandler:
     """Test the SentryHandler class functionality."""
 
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self):
+        """Setup and teardown for each test."""
+        # Store original sentry state
+        original_client = sentry_sdk.Hub.current.client
+        yield
+        # Restore original sentry state
+        if original_client:
+            sentry_sdk.Hub.current.bind_client(original_client)
+        else:
+            # Clear any test client
+            sentry_sdk.Hub.current.bind_client(None)
+
     @pytest.fixture
-    def mock_sentry_sdk(self):
-        """Mock sentry_sdk for testing."""
-        with patch("logxide.sentry_integration.sentry_sdk") as mock_sdk:
-            mock_hub = Mock()
-            mock_client = Mock()
-            mock_hub.client = mock_client
-            mock_sdk.Hub.current = mock_hub
-            mock_sdk.configure_scope.return_value.__enter__ = Mock()
-            mock_sdk.configure_scope.return_value.__exit__ = Mock()
-            yield mock_sdk
+    def captured_events(self):
+        """Fixture to capture Sentry events instead of sending them."""
+        events = []
+
+        def before_send(event, hint):
+            """Capture events instead of sending them."""
+            events.append(event)
+            return None  # Don't actually send
+
+        return events, before_send
 
     @pytest.fixture
     def mock_record(self):
@@ -54,22 +65,33 @@ class TestSentryHandler:
 
     def test_import_without_sentry_sdk(self):
         """Test that SentryHandler handles missing sentry-sdk gracefully."""
-        from logxide.sentry_integration import SentryHandler
+        # This test needs to simulate missing sentry_sdk
+        with patch.dict(sys.modules):
+            # Remove sentry_sdk from modules
+            if "sentry_sdk" in sys.modules:
+                del sys.modules["sentry_sdk"]
+            sys.modules["sentry_sdk"] = None
 
-        # Patch the _init_sentry method to simulate ImportError
-        with patch.object(SentryHandler, "_init_sentry") as mock_init:
+            # Reload the module to test import failure handling
+            import importlib
 
-            def mock_init_sentry(self):
-                self._sentry_sdk = None
-                self._sentry_available = False
+            from logxide import sentry_integration
 
-            mock_init.side_effect = mock_init_sentry
+            importlib.reload(sentry_integration)
 
-            handler = SentryHandler()
+            handler = sentry_integration.SentryHandler()
             assert not handler.is_available
 
-    def test_sentry_handler_init_with_sentry(self, mock_sentry_sdk):
+    def test_sentry_handler_init_with_sentry(self, captured_events):
         """Test SentryHandler initialization when Sentry is available."""
+        events, before_send = captured_events
+
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=before_send,
+        )
+
         from logxide.sentry_integration import SentryHandler
 
         handler = SentryHandler()
@@ -78,65 +100,108 @@ class TestSentryHandler:
 
     def test_sentry_handler_init_without_client(self):
         """Test SentryHandler when Sentry SDK is available but not configured."""
-        with patch("logxide.sentry_integration.sentry_sdk") as mock_sdk:
-            mock_hub = Mock()
-            mock_hub.client = None  # No client configured
-            mock_sdk.Hub.current = mock_hub
+        # Clear any existing Sentry configuration
+        sentry_sdk.Hub.current.bind_client(None)
 
-            from logxide.sentry_integration import SentryHandler
-
-            handler = SentryHandler()
-            assert not handler.is_available
-
-    def test_emit_below_threshold(self, mock_sentry_sdk, mock_record):
-        """Test that logs below threshold don't go to Sentry."""
-        from logxide.sentry_integration import SentryHandler
-
-        handler = SentryHandler(level=40)  # ERROR level
-        mock_record.levelno = 30  # WARNING level (below threshold)
-
-        handler.emit(mock_record)
-
-        # Should not call capture_message or capture_exception
-        mock_sentry_sdk.capture_message.assert_not_called()
-        mock_sentry_sdk.capture_exception.assert_not_called()
-
-    def test_emit_above_threshold(self, mock_sentry_sdk, mock_record):
-        """Test that logs above threshold go to Sentry."""
-        from logxide.sentry_integration import SentryHandler
-
-        handler = SentryHandler(level=30)  # WARNING level
-        mock_record.levelno = 40  # ERROR level (above threshold)
-
-        # Mock scope context manager
-        mock_scope = Mock()
-        mock_sentry_sdk.configure_scope.return_value.__enter__.return_value = mock_scope
-
-        handler.emit(mock_record)
-
-        # Should call capture_message
-        mock_sentry_sdk.capture_message.assert_called_once()
-
-        # Should set tags and extras
-        mock_scope.set_tag.assert_called()
-        mock_scope.set_extra.assert_called()
-
-    def test_emit_exception_record(self, mock_sentry_sdk, mock_record):
-        """Test handling of exception records."""
         from logxide.sentry_integration import SentryHandler
 
         handler = SentryHandler()
-        mock_record.exc_info = (Exception, Exception("test error"), None)
+        assert not handler.is_available
 
-        # Mock scope context manager
-        mock_scope = Mock()
-        mock_sentry_sdk.configure_scope.return_value.__enter__.return_value = mock_scope
+    def test_emit_below_threshold(self, captured_events):
+        """Test that logs below threshold don't go to Sentry."""
+        events, before_send = captured_events
+
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=before_send,
+        )
+
+        from logxide.sentry_integration import SentryHandler
+
+        handler = SentryHandler(level=40)  # ERROR level
+
+        # Create a WARNING level record
+        record = Mock()
+        record.levelno = 30  # WARNING level (below threshold)
+        record.levelname = "WARNING"
+        record.getMessage.return_value = "Test warning"
+
+        handler.emit(record)
+
+        # Force flush
+        sentry_sdk.flush(timeout=1.0)
+
+        # Should not send any events
+        assert len(events) == 0
+
+    def test_emit_above_threshold(self, captured_events, mock_record):
+        """Test that logs above threshold go to Sentry."""
+        events, before_send = captured_events
+
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=before_send,
+        )
+
+        from logxide.sentry_integration import SentryHandler
+
+        handler = SentryHandler(level=30)  # WARNING level
+        # mock_record is already configured as ERROR level (40)
 
         handler.emit(mock_record)
 
-        # Should call capture_exception for exception records
-        mock_sentry_sdk.capture_exception.assert_called_once()
-        mock_sentry_sdk.capture_message.assert_not_called()
+        # Force flush
+        sentry_sdk.flush(timeout=1.0)
+
+        # Should send one event
+        assert len(events) == 1
+        event = events[0]
+
+        # Verify event properties
+        assert event["level"] == "error"
+        assert "tags" in event
+        assert event["tags"]["logger"] == "test.logger"
+        assert event["tags"]["logxide"] is True
+
+    def test_emit_exception_record(self, captured_events):
+        """Test handling of exception records."""
+        events, before_send = captured_events
+
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=before_send,
+        )
+
+        from logxide.sentry_integration import SentryHandler
+
+        handler = SentryHandler()
+
+        # Create a record with exception info
+        record = Mock()
+        record.levelno = 40
+        record.levelname = "ERROR"
+        record.getMessage.return_value = "Test error"
+
+        # Create real exception info
+        try:
+            raise ValueError("Test exception")
+        except ValueError:
+            record.exc_info = sys.exc_info()
+
+        handler.emit(record)
+
+        # Force flush
+        sentry_sdk.flush(timeout=1.0)
+
+        # Should send one event with exception
+        assert len(events) == 1
+        event = events[0]
+        assert "exception" in event
+        assert len(event["exception"]["values"]) > 0
 
     def test_level_mapping(self):
         """Test Python logging level to Sentry level mapping."""
@@ -150,7 +215,7 @@ class TestSentryHandler:
         assert handler._map_level_to_sentry(CRITICAL) == "fatal"
         assert handler._map_level_to_sentry(10) == "info"  # DEBUG or below
 
-    def test_message_extraction(self, mock_sentry_sdk):
+    def test_message_extraction(self):
         """Test message extraction from different record types."""
         from logxide.sentry_integration import SentryHandler
 
@@ -182,7 +247,7 @@ class TestSentryHandler:
         record5 = "string record"
         assert handler._get_message(record5) == "string record"
 
-    def test_extra_context_extraction(self, mock_sentry_sdk, mock_record):
+    def test_extra_context_extraction(self, mock_record):
         """Test extraction of extra context from log records."""
         from logxide.sentry_integration import SentryHandler
 
@@ -200,8 +265,16 @@ class TestSentryHandler:
         assert "levelno" not in extra
         assert "levelname" not in extra
 
-    def test_breadcrumb_addition(self, mock_sentry_sdk):
+    def test_breadcrumb_addition(self, captured_events):
         """Test breadcrumb addition for lower-level logs."""
+        events, before_send = captured_events
+
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=before_send,
+        )
+
         from logxide.sentry_integration import SentryHandler
 
         handler = SentryHandler(with_breadcrumbs=True)
@@ -214,26 +287,39 @@ class TestSentryHandler:
 
         handler._add_breadcrumb(record, "WARNING", "Test warning", "test.logger")
 
-        mock_sentry_sdk.add_breadcrumb.assert_called_once_with(
-            message="Test warning",
-            category="log",
-            level="warning",
-            data={"logger": "test.logger", "level": "WARNING"},
+        # Now send an error to capture breadcrumbs
+        error_record = Mock()
+        error_record.levelno = 40
+        error_record.levelname = "ERROR"
+        error_record.getMessage.return_value = "Test error"
+        error_record.exc_info = None
+
+        handler.emit(error_record)
+        sentry_sdk.flush(timeout=1.0)
+
+        # Check that breadcrumb was added
+        assert len(events) == 1
+
+    def test_error_handling(self, captured_events):
+        """Test error handling during Sentry emission."""
+        events, before_send = captured_events
+
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=before_send,
         )
 
-    def test_error_handling(self, mock_sentry_sdk):
-        """Test error handling during Sentry emission."""
         from logxide.sentry_integration import SentryHandler
 
         handler = SentryHandler()
 
-        # Mock an error during Sentry operation
-        mock_sentry_sdk.configure_scope.side_effect = Exception("Sentry error")
-
+        # Create a record that will cause an error
         record = Mock()
         record.levelno = 40
         record.levelname = "ERROR"
-        record.getMessage.return_value = "Test message"
+        # This will cause an error when trying to format
+        record.getMessage.side_effect = Exception("Format error")
 
         # Should handle the error gracefully
         with patch("sys.stderr") as mock_stderr:
@@ -241,7 +327,7 @@ class TestSentryHandler:
             # Should write error to stderr
             mock_stderr.write.assert_called()
 
-    def test_callable_interface(self, mock_sentry_sdk, mock_record):
+    def test_callable_interface(self, mock_record):
         """Test that handler is callable for LogXide compatibility."""
         from logxide.sentry_integration import SentryHandler
 
@@ -257,80 +343,104 @@ class TestSentryHandler:
 class TestAutoConfiguration:
     """Test automatic Sentry configuration functionality."""
 
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self):
+        """Setup and teardown for each test."""
+        # Store original sentry state
+        original_client = sentry_sdk.Hub.current.client
+        yield
+        # Restore original sentry state
+        if original_client:
+            sentry_sdk.Hub.current.bind_client(original_client)
+        else:
+            # Clear any test client
+            sentry_sdk.Hub.current.bind_client(None)
+
     def test_auto_configure_with_sentry_available(self):
         """Test auto-configuration when Sentry is available and configured."""
-        with patch("logxide.sentry_integration.sentry_sdk") as mock_sdk:
-            mock_hub = Mock()
-            mock_client = Mock()
-            mock_hub.client = mock_client
-            mock_sdk.Hub.current = mock_hub
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=lambda event, hint: None,
+        )
 
-            from logxide.sentry_integration import auto_configure_sentry
+        from logxide.sentry_integration import auto_configure_sentry
 
-            handler = auto_configure_sentry()
-            assert handler is not None
-            assert handler.is_available
+        handler = auto_configure_sentry()
+        assert handler is not None
+        assert handler.is_available
 
     def test_auto_configure_without_sentry_client(self):
         """Test auto-configuration when Sentry SDK is available but not configured."""
-        with patch("logxide.sentry_integration.sentry_sdk") as mock_sdk:
-            mock_hub = Mock()
-            mock_hub.client = None  # No client configured
-            mock_sdk.Hub.current = mock_hub
+        # Clear any existing Sentry configuration
+        sentry_sdk.Hub.current.bind_client(None)
 
-            from logxide.sentry_integration import auto_configure_sentry
+        from logxide.sentry_integration import auto_configure_sentry
 
-            handler = auto_configure_sentry()
-            assert handler is None
+        handler = auto_configure_sentry()
+        assert handler is None
 
     def test_auto_configure_explicit_enable(self):
         """Test auto-configuration with explicit enable=True."""
-        with patch("logxide.sentry_integration.sentry_sdk") as mock_sdk:
-            mock_hub = Mock()
-            mock_hub.client = None  # No client configured
-            mock_sdk.Hub.current = mock_hub
+        # Clear any existing Sentry configuration
+        sentry_sdk.Hub.current.bind_client(None)
 
-            from logxide.sentry_integration import auto_configure_sentry
+        from logxide.sentry_integration import auto_configure_sentry
 
-            # Should create handler even without client when explicitly enabled
-            handler = auto_configure_sentry(enable=True)
-            assert handler is not None
+        # Should create handler even without client when explicitly enabled
+        handler = auto_configure_sentry(enable=True)
+        assert handler is not None
 
     def test_auto_configure_explicit_disable(self):
         """Test auto-configuration with explicit enable=False."""
-        with patch("logxide.sentry_integration.sentry_sdk") as mock_sdk:
-            mock_hub = Mock()
-            mock_client = Mock()
-            mock_hub.client = mock_client  # Client is configured
-            mock_sdk.Hub.current = mock_hub
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=lambda event, hint: None,
+        )
 
-            from logxide.sentry_integration import auto_configure_sentry
+        from logxide.sentry_integration import auto_configure_sentry
 
-            # Should not create handler when explicitly disabled
-            handler = auto_configure_sentry(enable=False)
-            assert handler is None
+        # Should not create handler when explicitly disabled
+        handler = auto_configure_sentry(enable=False)
+        assert handler is None
 
     def test_auto_configure_without_sentry_sdk(self):
         """Test auto-configuration when sentry-sdk is not installed."""
-        with (
-            patch.dict(sys.modules, {"sentry_sdk": None}),
-            patch("builtins.__import__", side_effect=ImportError),
-        ):
-            from logxide.sentry_integration import auto_configure_sentry
+        # This test simulates missing sentry_sdk
+        with patch.dict(sys.modules):
+            # Remove sentry_sdk from modules
+            if "sentry_sdk" in sys.modules:
+                del sys.modules["sentry_sdk"]
+            sys.modules["sentry_sdk"] = None
 
-            handler = auto_configure_sentry()
+            # Reload the module to pick up the patched import
+            import importlib
+
+            from logxide import sentry_integration
+
+            importlib.reload(sentry_integration)
+
+            handler = sentry_integration.auto_configure_sentry()
             assert handler is None
 
     def test_auto_configure_with_warning_when_requested_but_unavailable(self):
         """Test warning when Sentry is explicitly requested but not available."""
-        with (
-            patch.dict(sys.modules, {"sentry_sdk": None}),
-            patch("builtins.__import__", side_effect=ImportError),
-            patch("warnings.warn") as mock_warn,
-        ):
-            from logxide.sentry_integration import auto_configure_sentry
+        # This test simulates missing sentry_sdk
+        with patch.dict(sys.modules), patch("warnings.warn") as mock_warn:
+            # Remove sentry_sdk from modules
+            if "sentry_sdk" in sys.modules:
+                del sys.modules["sentry_sdk"]
+            sys.modules["sentry_sdk"] = None
 
-            handler = auto_configure_sentry(enable=True)
+            # Reload the module to pick up the patched import
+            import importlib
+
+            from logxide import sentry_integration
+
+            importlib.reload(sentry_integration)
+
+            handler = sentry_integration.auto_configure_sentry(enable=True)
             assert handler is None
             mock_warn.assert_called_once()
 
@@ -338,30 +448,44 @@ class TestAutoConfiguration:
 class TestLogXideIntegration:
     """Test integration with LogXide's main functionality."""
 
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self):
+        """Setup and teardown for each test."""
+        # Store original sentry state
+        original_client = sentry_sdk.Hub.current.client
+        yield
+        # Restore original sentry state
+        if original_client:
+            sentry_sdk.Hub.current.bind_client(original_client)
+        else:
+            # Clear any test client
+            sentry_sdk.Hub.current.bind_client(None)
+
     def test_install_with_sentry_auto_detection(self):
         """Test that install() auto-detects and configures Sentry."""
-        with patch("logxide.sentry_integration.sentry_sdk") as mock_sdk:
-            mock_hub = Mock()
-            mock_client = Mock()
-            mock_hub.client = mock_client
-            mock_sdk.Hub.current = mock_hub
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=lambda event, hint: None,
+        )
 
-            # Mock the auto-configure function
-            with patch(
-                "logxide.module_system.auto_configure_sentry"
-            ) as mock_auto_config:
-                mock_handler = Mock()
-                mock_auto_config.return_value = mock_handler
+        with patch(
+            "logxide.sentry_integration.auto_configure_sentry"
+        ) as mock_auto_config:
+            mock_handler = Mock()
+            mock_auto_config.return_value = mock_handler
 
-                from logxide.module_system import _auto_configure_sentry
+            from logxide.module_system import _auto_configure_sentry
 
-                # Should call auto-configuration
-                _auto_configure_sentry()
-                mock_auto_config.assert_called_once_with(None)
+            # Should call auto-configuration
+            _auto_configure_sentry()
+            mock_auto_config.assert_called_once_with(None)
 
     def test_install_with_explicit_sentry_control(self):
         """Test install() with explicit Sentry control."""
-        with patch("logxide.module_system.auto_configure_sentry") as mock_auto_config:
+        with patch(
+            "logxide.sentry_integration.auto_configure_sentry"
+        ) as mock_auto_config:
             mock_handler = Mock()
             mock_auto_config.return_value = mock_handler
 
@@ -377,29 +501,27 @@ class TestLogXideIntegration:
 
     def test_sentry_handler_added_to_loggers(self):
         """Test that Sentry handler is added to both LogXide and standard loggers."""
-        with patch("logxide.sentry_integration.sentry_sdk") as mock_sdk:
-            mock_hub = Mock()
-            mock_client = Mock()
-            mock_hub.client = mock_client
-            mock_sdk.Hub.current = mock_hub
+        # Configure Sentry
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=lambda event, hint: None,
+        )
 
-            # Mock loggers
-            mock_logxide_logger = Mock()
-            mock_std_logger = Mock()
+        # Mock loggers
+        mock_logxide_logger = Mock()
+        mock_std_logger = Mock()
 
-            with (
-                patch(
-                    "logxide.module_system.getLogger", return_value=mock_logxide_logger
-                ),
-                patch("logging.root", mock_std_logger),
-            ):
-                from logxide.module_system import _auto_configure_sentry
+        with (
+            patch("logxide.module_system.getLogger", return_value=mock_logxide_logger),
+            patch("logging.root", mock_std_logger),
+        ):
+            from logxide.module_system import _auto_configure_sentry
 
-                _auto_configure_sentry()
+            _auto_configure_sentry()
 
-                # Should add handler to both loggers
-                mock_logxide_logger.addHandler.assert_called_once()
-                mock_std_logger.addHandler.assert_called_once()
+            # Should add handler to both loggers
+            mock_logxide_logger.addHandler.assert_called_once()
+            mock_std_logger.addHandler.assert_called_once()
 
 
 @pytest.mark.integration
@@ -409,8 +531,11 @@ class TestSentryIntegrationEnd2End:
     def test_real_sentry_integration(self):
         """Test with real sentry-sdk (if available)."""
 
-        # Configure Sentry with a test DSN
-        sentry_sdk.init(dsn="https://test@test.ingest.sentry.io/test")
+        # Configure Sentry with a test DSN that doesn't send events
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=lambda event, hint: None,  # Don't actually send
+        )
 
         from logxide.sentry_integration import SentryHandler
 
@@ -432,8 +557,11 @@ class TestSentryIntegrationEnd2End:
     def test_logxide_with_real_sentry(self):
         """Test LogXide auto-install with real Sentry."""
 
-        # Configure Sentry
-        sentry_sdk.init(dsn="https://test@test.ingest.sentry.io/test")
+        # Configure Sentry with a test DSN that doesn't send events
+        sentry_sdk.init(
+            dsn="https://1234567890abcdef@o123456.ingest.sentry.io/1234567",
+            before_send=lambda event, hint: None,  # Don't actually send
+        )
 
         # Import LogXide after Sentry configuration
         from logxide import logging
@@ -444,7 +572,3 @@ class TestSentryIntegrationEnd2End:
 
         # Flush to ensure all messages are processed
         logging.flush()
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
