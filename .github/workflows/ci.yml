@@ -43,7 +43,13 @@ jobs:
               run: |
                   python -m pip install --upgrade uv
                   uv venv
-                  uv pip install maturin pytest pytest-cov pytest-xdist
+                  # Install maturin first to build the package
+                  uv pip install maturin
+
+            - name: Build and install Python package with dev dependencies
+              run: |
+                  # Build and install the package with all dev dependencies
+                  uv run maturin develop --extras=dev
 
             - name: Rust format check
               run: cargo fmt --all -- --check
@@ -53,9 +59,6 @@ jobs:
 
             - name: Run Rust tests
               run: cargo test --verbose
-
-            - name: Build and install Python package
-              run: uv run maturin develop
 
             - name: Run Python tests
               run: uv run pytest tests/ -v --cov=logxide --cov-report=xml

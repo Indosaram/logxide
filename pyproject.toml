@@ -57,6 +57,9 @@ features = ["pyo3/extension-module"]
 module-name = "logxide"
 
 [project.optional-dependencies]
+sentry = [
+    "sentry-sdk>=1.40.0",
+]
 dev = [
     "pytest",
     "pytest-cov",

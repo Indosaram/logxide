@@ -24,9 +24,18 @@ import sys
 import time
 from typing import Any
 
-# Configure Sentry BEFORE importing LogXide
-import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration
+# Check if Sentry SDK is available
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.logging import LoggingIntegration
+
+    HAS_SENTRY_SDK = True
+except ImportError:
+    HAS_SENTRY_SDK = False
+    print("⚠️  sentry-sdk is not installed.")
+    print("   Install it with: pip install logxide[sentry]")
+    print("   Exiting example.")
+    sys.exit(1)
 
 # Get Sentry DSN from environment or use a demo DSN
 SENTRY_DSN = os.getenv("SENTRY_DSN")
