@@ -602,6 +602,9 @@ dev = [
     { name = "sentry-sdk" },
     { name = "uvicorn" },
 ]
+sentry = [
+    { name = "sentry-sdk" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -626,9 +629,10 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "sentry-sdk", marker = "extra == 'dev'", specifier = ">=1.40.0" },
+    { name = "sentry-sdk", marker = "extra == 'sentry'", specifier = ">=1.40.0" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.35.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["sentry", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "maturin", specifier = ">=1.9.1" }]
