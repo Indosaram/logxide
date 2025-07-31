@@ -2,6 +2,7 @@
 Test configuration and fixtures for logxide tests.
 """
 
+import contextlib
 import io
 import sys
 import threading
@@ -11,6 +12,41 @@ from contextlib import contextmanager
 import pytest
 
 from logxide import logging
+
+
+@pytest.fixture(autouse=True)
+def cleanup_logxide():
+    """Ensure proper cleanup of logxide handlers after each test."""
+    yield
+
+    import gc
+
+    from logxide import logging
+    from logxide.compat_handlers import StreamHandler
+
+    # First just flush
+    with contextlib.suppress(BaseException):
+        logging.flush()
+
+    # Small delay to let any active operations complete
+    time.sleep(0.05)
+
+    # Now try to shutdown handlers
+    with contextlib.suppress(BaseException):
+        StreamHandler._at_exit_shutdown()
+
+    # Clear handlers from root logger
+    try:
+        root = logging.getLogger()
+        if hasattr(root, "handlers"):
+            # Don't close handlers, just clear the list
+            # Closing can interfere with active contexts
+            root.handlers.clear()
+    except:
+        pass
+
+    # Force garbage collection
+    gc.collect()
 
 
 @pytest.fixture

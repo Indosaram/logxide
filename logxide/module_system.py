@@ -369,7 +369,13 @@ def _install(sentry=None):
     def logxide_getLogger(name=None):
         """Get a logxide logger that wraps the standard logger"""
         # Get the standard logger first
-        std_logger = std_logging._original_getLogger(name)  # type: ignore[attr-defined]
+        if hasattr(std_logging, "_original_getLogger"):
+            std_logger = std_logging._original_getLogger(name)  # type: ignore[attr-defined]
+        else:
+            # Fallback if _original_getLogger doesn't exist
+            std_logger = (
+                std_logging.Logger.manager.getLogger(name) if name else std_logging.root
+            )
 
         # Create a logxide logger
         logxide_logger = getLogger(name)

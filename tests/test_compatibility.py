@@ -1,8 +1,5 @@
-import logging
-
-from logxide.module_system import install
-
-install()
+# Use auto-install pattern by importing from logxide
+from logxide import logging
 
 
 def test_module_level_logging():

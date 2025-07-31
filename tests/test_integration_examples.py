@@ -19,13 +19,10 @@ def test_flask_integration():
 
     try:
         # Import and test basic functionality
-        import logxide
-
-        logxide.install()
-
-        import logging
-
+        # Use auto-install pattern
         from flask import Flask
+
+        from logxide import logging
 
         app = Flask(__name__)
 
@@ -60,14 +57,11 @@ def test_django_integration():
 
     try:
         # Import and test basic functionality
-        import logxide
-
-        logxide.install()
-
-        import logging
-
+        # Use auto-install pattern
         import django
         from django.conf import settings
+
+        from logxide import logging
 
         # Configure Django settings
         if not settings.configured:
@@ -108,13 +102,10 @@ def test_fastapi_integration():
 
     try:
         # Import and test basic functionality
-        import logxide
-
-        logxide.install()
-
-        import logging
-
+        # Use auto-install pattern
         from fastapi import FastAPI
+
+        from logxide import logging
 
         app = FastAPI()
 
@@ -148,12 +139,10 @@ def test_logging_performance():
     print("Testing logging performance...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
+        # Use auto-install pattern
         import time
+
+        from logxide import logging
 
         # Configure logging
         logging.basicConfig(
@@ -179,6 +168,17 @@ def test_logging_performance():
         print(f"   Total processing time: {total_time:.3f}s")
         print(f"   Messages per second: {1000 / total_time:.0f}")
 
+        # Clean up handlers to prevent leftover messages
+        root = logging.getLogger()
+        if hasattr(root, "handlers"):
+            for handler in list(root.handlers):
+                try:
+                    if hasattr(handler, "close"):
+                        handler.close()
+                except:
+                    pass
+            root.handlers.clear()
+
         print("✓ Performance test passed")
         return True
 
@@ -192,12 +192,10 @@ def test_thread_safety():
     print("Testing thread safety...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
+        # Use auto-install pattern
         import threading
+
+        from logxide import logging
 
         # Configure logging
         logging.basicConfig(
@@ -238,11 +236,8 @@ def test_error_handling():
     print("Testing error handling...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
+        # Use auto-install pattern
+        from logxide import logging
 
         # Configure logging
         logging.basicConfig(
@@ -279,11 +274,8 @@ def test_compatibility():
     print("Testing compatibility...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
+        # Use auto-install pattern
+        from logxide import logging
 
         # Test that we can use standard logging patterns
         logging.basicConfig(
