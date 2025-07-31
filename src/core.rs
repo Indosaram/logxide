@@ -144,6 +144,9 @@ pub struct LogRecord {
     /// Async task name (if in asyncio context)
     #[pyo3(get, set)]
     pub task_name: Option<String>,
+    /// Extra fields from the 'extra' parameter
+    #[pyo3(get, set)]
+    pub extra: Option<std::collections::HashMap<String, String>>,
 }
 
 #[pymethods]
@@ -183,6 +186,7 @@ impl LogRecord {
             exc_text: None, // Will be set by Python
             stack_info,
             task_name: None, // Will be set by Python
+            extra: None,     // Will be set by Python if needed
         }
     }
 }
@@ -236,6 +240,15 @@ pub struct Logger {
 /// assert_eq!(record.levelno, 20);
 /// ```
 pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecord {
+    create_log_record_with_extra(name, level, msg, None)
+}
+
+pub fn create_log_record_with_extra(
+    name: String,
+    level: LogLevel,
+    msg: String,
+    extra: Option<std::collections::HashMap<String, String>>,
+) -> LogRecord {
     use crate::string_cache::{get_common_message, get_level_name, get_logger_name};
 
     let now = chrono::Local::now();
@@ -280,6 +293,7 @@ pub fn create_log_record(name: String, level: LogLevel, msg: String) -> LogRecor
         exc_text: None,
         stack_info: None,
         task_name: None,
+        extra,
     }
 }
 
@@ -340,6 +354,7 @@ impl Logger {
             exc_text: None,
             stack_info: None,
             task_name: None,
+            extra: None,
         }
     }
 

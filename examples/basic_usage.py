@@ -6,6 +6,11 @@ This example demonstrates the fundamental features of logxide:
 - Different log levels
 - Logger hierarchy
 - Message formatting
+
+Expected Output:
+The example will show structured logging output with timestamps, logger names,
+levels, and formatted messages. All messages above DEBUG level will be displayed
+with proper string formatting.
 """
 
 from logxide import logging
@@ -56,9 +61,9 @@ def main():
 
     # 5. String formatting
     print("\n5. String Formatting:")
-    logger.info("User %s logged in from %s", "alice", "192.168.1.100")
-    logger.warning("High memory usage: %d%% (%d MB)", 85, 1024)
-    logger.error("Connection timeout after %d seconds", 30)
+    logger.info(f"User {'alice'} logged in from {'192.168.1.100'}")
+    logger.warning(f"High memory usage: {85}% ({1024} MB)")
+    logger.error(f"Connection timeout after {30} seconds")
 
     print("\n6. Cleanup:")
     root_logger.info("Example completed successfully")

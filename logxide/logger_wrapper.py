@@ -38,6 +38,7 @@ def basicConfig(**kwargs):
     - format: Format string for log messages
     - datefmt: Date format string
     """
+
     # Store configuration for applying to new loggers
     _current_config["level"] = kwargs.get("level")
     _current_config["format"] = kwargs.get("format")
@@ -64,14 +65,26 @@ def basicConfig(**kwargs):
 
     # Ensure the root logger has a handler with the specified format
     root_logger = getLogger()  # Get the root logger
-    if not root_logger.handlers:
-        from .compat_handlers import Formatter, StreamHandler
 
+    # Import formatter classes
+    from .compat_handlers import Formatter, StreamHandler
+
+    if not root_logger.handlers:
+        # No handlers exist, create a new one
         handler = StreamHandler()
-        if format_str:
-            formatter = Formatter(format_str, datefmt)
-            handler.setFormatter(formatter)
         root_logger.addHandler(handler)
+    else:
+        # Use existing handler
+        handler = root_logger.handlers[0]
+
+    # Always set/update the formatter if format_str is provided
+    if format_str:
+        formatter = Formatter(format_str, datefmt)
+        handler.setFormatter(formatter)
+    elif not getattr(handler, "formatter", None):
+        # Set default formatter if none exists
+        formatter = Formatter()
+        handler.setFormatter(formatter)
 
     # Explicitly reconfigure uvicorn loggers to ensure they propagate to LogXide's root
     # This is a targeted fix for uvicorn's aggressive logging setup.

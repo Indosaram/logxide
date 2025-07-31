@@ -237,9 +237,6 @@ def getHandlerByName(name: str) -> Any: ...
 def getHandlerNames() -> list: ...
 
 # Installation functions
-def install() -> None:
-    """Install logxide as a drop-in replacement for the standard logging module."""
-    ...
 
 def uninstall() -> None:
     """Restore the standard logging module."""

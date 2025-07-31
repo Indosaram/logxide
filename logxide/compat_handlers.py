@@ -6,6 +6,8 @@ Python's standard logging module.
 """
 
 import sys
+import time
+import traceback
 
 # Define logging level constants
 NOTSET = 0
@@ -36,7 +38,7 @@ class NullHandler:
 
 
 class Formatter:
-    """Basic formatter class - compatible with logging.Formatter"""
+    """Enhanced formatter - compatible with logging.Formatter, supports extra fields"""
 
     def __init__(self, fmt=None, datefmt=None, style="%", validate=True, **kwargs):
         self.fmt = fmt if fmt else "%(message)s"  # Default format if not provided
@@ -46,10 +48,83 @@ class Formatter:
         self._kwargs = kwargs
 
     def format(self, record):
-        # Use record.__dict__ for string formatting
-        # This assumes LogRecord exposes attributes via __dict__
-        s = self.fmt % record.__dict__
+        """
+        NO-OP formatter - ALL formatting is now handled in Rust.
+
+        This method should never be called if you're using the pure Rust pipeline.
+        For maximum performance, use logxide.register_console_handler() or
+        logxide.register_file_handler() instead of Python handlers.
+
+        If this method is called, it means you're using Python handlers for
+        compatibility. The real formatting should have been done in Rust already.
+        """
+        # True NO-OP: Return empty string or just the basic message
+        # All real formatting is done in Rust
+        if isinstance(record, dict):
+            return record.get("msg", "")
+        else:
+            return getattr(record, "msg", "")  # Just the raw message, no formatting
+
+    def formatTime(self, record, datefmt=None):
+        """
+        Format the time for a record.
+
+        Args:
+            record: LogRecord instance
+            datefmt: Date format string (if None, uses default format)
+
+        Returns:
+            Formatted time string
+        """
+        if isinstance(record, dict):
+            ct = record.get("created", time.time())
+        else:
+            ct = getattr(record, "created", time.time())
+
+        if datefmt:
+            s = time.strftime(datefmt, time.localtime(ct))
+        else:
+            t = time.localtime(ct)
+            s = time.strftime("%Y-%m-%d %H:%M:%S", t)
+            if isinstance(record, dict):
+                msecs = record.get("msecs", 0)
+            else:
+                msecs = getattr(record, "msecs", 0)
+            s = f"{s},{int(msecs)}"
         return s
+
+    def formatException(self, ei):
+        """
+        Format exception information.
+
+        Args:
+            ei: Exception info tuple (type, value, traceback)
+
+        Returns:
+            Formatted exception string
+        """
+        import io
+
+        sio = io.StringIO()
+        tb = ei[2]
+        traceback.print_exception(ei[0], ei[1], tb, None, sio)
+        s = sio.getvalue()
+        sio.close()
+        if s[-1:] == "\n":
+            s = s[:-1]
+        return s
+
+    def formatStack(self, stack_info):
+        """
+        Format stack information.
+
+        Args:
+            stack_info: Stack info string
+
+        Returns:
+            Formatted stack string
+        """
+        return stack_info
 
 
 class Handler:
@@ -88,6 +163,26 @@ class Handler:
     def setLevel(self, level):
         """Set the effective level for this handler"""
         self.level = level
+
+    def format(self, record):
+        """Format the specified record."""
+        if self.formatter:
+            return self.formatter.format(record)
+        else:
+            # Default formatting
+            if isinstance(record, dict):
+                return record.get("msg", str(record))
+            else:
+                return getattr(record, "msg", str(record))
+
+    def close(self):
+        """
+        Tidy up any resources used by the handler.
+
+        This version does nothing - it's up to subclasses to implement
+        any cleanup operations.
+        """
+        pass
 
     def __call__(self, record):
         """Make it callable for logxide compatibility"""
@@ -133,6 +228,15 @@ class StreamHandler(Handler):
     def flush(self):
         if self.stream and hasattr(self.stream, "flush"):
             self.stream.flush()
+
+    def close(self):
+        """
+        Close the stream.
+        """
+        self.flush()
+        if hasattr(self.stream, "close"):
+            self.stream.close()
+        Handler.close(self)
 
 
 class FileHandler(StreamHandler):

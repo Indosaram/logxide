@@ -6,6 +6,15 @@ This example demonstrates logxide's performance characteristics:
 - Multi-threaded scenarios
 - Async processing benefits
 - Memory efficiency
+
+Expected Output:
+The example will show performance metrics for various logging scenarios:
+- High-volume test: ~10,000+ messages/second
+- Multi-threaded test: Concurrent logging from multiple threads
+- Level filtering: Fast rejection of disabled log levels
+- String formatting: Efficient parameter substitution
+- Memory efficiency: Hierarchical logger caching
+- Burst handling: Processing sudden traffic spikes
 """
 
 import threading
@@ -35,7 +44,7 @@ def main():
     # Log 10,000 messages
     volume_logger = logging.getLogger("volume_test")
     for i in range(10000):
-        volume_logger.info("High-volume log message %d with data: %s", i, f"data_{i}")
+        volume_logger.info(f"High-volume log message {i} with data: data_{i}")
 
     # Flush to ensure all messages are processed
     logging.flush()
@@ -59,10 +68,7 @@ def main():
 
         for i in range(message_count):
             thread_logger.info(
-                "Thread %d message %d: processing item %s",
-                thread_id,
-                i,
-                f"item_{thread_id}_{i}",
+                f"Thread {thread_id} message {i}: processing item item_{thread_id}_{i}"
             )
 
     start_time = time.time()
@@ -100,7 +106,7 @@ def main():
     start_time = time.time()
 
     for i in range(50000):
-        debug_logger.debug("This debug message should be filtered out: %d", i)
+        debug_logger.debug(f"This debug message should be filtered out: {i}")
 
     elapsed = time.time() - start_time
     perf_logger.info(f"50,000 filtered debug messages: {elapsed:.3f} seconds")
@@ -115,17 +121,10 @@ def main():
     # Test various formatting patterns
     for i in range(5000):
         format_logger.info(
-            "User %s performed action %s at %s with result %s",
-            f"user_{i}",
-            "login",
-            "2025-01-10",
-            "success",
+            f"User user_{i} performed action login at 2025-01-10 with result success"
         )
         format_logger.warning(
-            "Memory usage: %d%% (%d MB) for process %s",
-            75 + (i % 25),
-            1024 + i,
-            f"proc_{i}",
+            f"Memory usage: {75 + (i % 25)}% ({1024 + i} MB) for process proc_{i}"
         )
 
     logging.flush()
@@ -143,7 +142,7 @@ def main():
         logger_name = f"app.module_{i}.component_{i % 10}"
         logger = logging.getLogger(logger_name)
         loggers.append(logger)
-        logger.info("Logger %s initialized", logger_name)
+        logger.info(f"Logger {logger_name} initialized")
 
     perf_logger.info("Created 1000 loggers with hierarchical names")
     print("   ✓ 1000 loggers created (hierarchical caching)")
@@ -159,9 +158,7 @@ def main():
 
         # Quick burst of 2000 messages
         for i in range(2000):
-            burst_logger.error(
-                "Burst %d: Critical error %d occurred in system", burst, i
-            )
+            burst_logger.error(f"Burst {burst}: Critical error {i} occurred in system")
 
         elapsed = time.time() - start_time
         perf_logger.info(f"Burst {burst}: 2000 messages in {elapsed:.3f}s")
