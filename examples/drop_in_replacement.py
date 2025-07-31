@@ -1,9 +1,8 @@
 """
 Drop-in Replacement Example
 
-This example demonstrates how to use logxide as a complete drop-in
-replacement for Python's standard logging module using logxide.install().
-This is one of two ways to use logxide - the other being the auto-install pattern.
+This example demonstrates how logxide works as a complete drop-in
+replacement for Python's standard logging module through the auto-install pattern.
 """
 
 import sys
@@ -14,22 +13,19 @@ import logxide
 def main():
     print("=== LogXide Drop-in Replacement Example ===\n")
 
-    # Show the state before installation
-    print("1. Before logxide.install():")
+    # Show the state before using logxide
+    print("1. Before importing from logxide:")
     print(f"   sys.modules has 'logging': {'logging' in sys.modules}")
     if "logging" in sys.modules:
         print(f"   logging module type: {type(sys.modules['logging'])}")
 
-    # Install logxide as drop-in replacement for standard logging
-    print("\n2. Installing logxide as drop-in replacement...")
-    logxide.install()
+    # Import from logxide - this automatically installs it as drop-in replacement
+    print("\n2. Importing from logxide (auto-install)...")
+    from logxide import logging
 
-    # Show the state after installation
-    print("   ✓ logxide.install() completed")
-    print(f"   sys.modules['logging'] type: {type(sys.modules['logging'])}")
-
-    # Now import logging - this will be logxide!
-    import logging
+    # Show the state after auto-installation
+    print("   ✓ logxide auto-installed")
+    print(f"   logging module type: {type(logging)}")
 
     # Configure logging (this is actually logxide now)
     logging.basicConfig(
@@ -66,10 +62,10 @@ def main():
     test_logger.setLevel(logging.DEBUG)
 
     # Test various logging patterns
-    test_logger.debug("Debug level: %s", "enabled")
-    test_logger.info("User login: %s from %s", "user123", "192.168.1.1")
-    test_logger.warning("Memory usage at %d%% threshold", 85)
-    test_logger.error("Connection failed after %d retries", 3)
+    test_logger.debug(f"Debug level: {'enabled'}")
+    test_logger.info(f"User login: {'user123'} from {'192.168.1.1'}")
+    test_logger.warning(f"Memory usage at {85}% threshold")
+    test_logger.error(f"Connection failed after {3} retries")
     test_logger.critical("System shutdown initiated")
 
     # Test logger attributes that third-party libraries might check
@@ -86,32 +82,21 @@ def main():
     logging.flush()
 
     print("\n=== USAGE INSTRUCTIONS ===")
-    print("To use logxide in your project, you have two options:")
+    print("To use logxide in your project, simply import from logxide:")
     print("")
-    print("OPTION 1: Auto-install pattern (recommended):")
     print("```python")
     print("from logxide import logging")
     print("")
     print("logging.basicConfig(level=logging.INFO)")
     print("logger = logging.getLogger(__name__)")
     print("logger.info('Hello from logxide!')")
-    print("```")
     print("")
-    print("OPTION 2: Manual install pattern:")
-    print("```python")
-    print("import logxide")
-    print("logxide.install()  # Do this first!")
-    print("")
-    print("import logging")
+    print("# All libraries imported after this will use logxide")
     print("import requests  # Will use logxide for logging")
     print("import sqlalchemy  # Will use logxide for logging")
-    print("")
-    print("logging.basicConfig(level=logging.INFO)")
-    print("logger = logging.getLogger(__name__)")
-    print("logger.info('Hello from logxide!')")
     print("```")
     print("")
-    print("Both approaches work identically - choose what fits your needs!")
+    print("That's it! LogXide automatically installs itself as a drop-in replacement.")
 
 
 if __name__ == "__main__":

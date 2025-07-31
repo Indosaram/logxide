@@ -303,6 +303,14 @@ impl Formatter for PythonFormatter {
         result = result.replace("%(message)s", &record.msg);
         result = result.replace("%(asctime)s", &asctime);
 
+        // Handle extra fields from the 'extra' parameter
+        if let Some(ref extra_fields) = record.extra {
+            for (key, value) in extra_fields {
+                let placeholder = format!("%({})s", key);
+                result = result.replace(&placeholder, value);
+            }
+        }
+
         result
     }
 }

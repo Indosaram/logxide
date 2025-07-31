@@ -72,11 +72,11 @@ class _LoggingModule:
     @staticmethod
     def getLogger(name=None):
         """Return logger compatible with caplog using monkey-patched standard logger"""
-        # Ensure install() has been called
+        # Ensure _install() has been called
         import logging as std_logging
 
         if not hasattr(std_logging, "_original_getLogger"):
-            install()
+            _install()
 
         # Return the monkey-patched standard logger (which works with caplog)
         return std_logging.getLogger(name)
@@ -138,25 +138,39 @@ class _LoggingModule:
             return msg, kwargs
 
         def debug(self, msg, *args, **kwargs):
-            self.logger.debug(msg, *args, **kwargs)
+            return self._log_with_extra("debug", msg, *args, **kwargs)
 
         def info(self, msg, *args, **kwargs):
-            self.logger.info(msg, *args, **kwargs)
+            return self._log_with_extra("info", msg, *args, **kwargs)
 
         def warning(self, msg, *args, **kwargs):
-            self.logger.warning(msg, *args, **kwargs)
+            return self._log_with_extra("warning", msg, *args, **kwargs)
 
         def error(self, msg, *args, **kwargs):
-            self.logger.error(msg, *args, **kwargs)
+            return self._log_with_extra("error", msg, *args, **kwargs)
 
         def critical(self, msg, *args, **kwargs):
-            self.logger.critical(msg, *args, **kwargs)
+            return self._log_with_extra("critical", msg, *args, **kwargs)
 
         def exception(self, msg, *args, **kwargs):
-            self.logger.exception(msg, *args, **kwargs)
+            return self._log_with_extra("exception", msg, *args, **kwargs)
 
         def log(self, level, msg, *args, **kwargs):
-            self.logger.log(level, msg, *args, **kwargs)
+            return self._log_with_extra_level("log", level, msg, *args, **kwargs)
+
+        def _log_with_extra(self, method_name, msg, *args, **kwargs):
+            """Handle logging with extra parameter support"""
+            # Extra parameter processing is now handled in Rust
+            # Call the original logging method with all kwargs (including extra)
+            method = getattr(self.logger, method_name)
+            return method(msg, *args, **kwargs)
+
+        def _log_with_extra_level(self, method_name, level, msg, *args, **kwargs):
+            """Handle log method with level parameter and extra support"""
+            # Extra parameter processing is now handled in Rust
+            # Call the original logging method with all kwargs (including extra)
+            method = getattr(self.logger, method_name)
+            return method(level, msg, *args, **kwargs)
 
         def isEnabledFor(self, level):
             return self.logger.isEnabledFor(level)
@@ -213,37 +227,80 @@ class _LoggingModule:
         self._checkLevel = _checkLevel
 
     def debug(self, msg, *args, **kwargs):
-        self.root.debug(msg, *args, **kwargs)
+        return self._root_log_with_extra("debug", msg, *args, **kwargs)
 
     def info(self, msg, *args, **kwargs):
-        self.root.info(msg, *args, **kwargs)
+        return self._root_log_with_extra("info", msg, *args, **kwargs)
 
     def warning(self, msg, *args, **kwargs):
-        self.root.warning(msg, *args, **kwargs)
+        return self._root_log_with_extra("warning", msg, *args, **kwargs)
 
     def error(self, msg, *args, **kwargs):
-        self.root.error(msg, *args, **kwargs)
+        return self._root_log_with_extra("error", msg, *args, **kwargs)
 
     def critical(self, msg, *args, **kwargs):
-        self.root.critical(msg, *args, **kwargs)
+        return self._root_log_with_extra("critical", msg, *args, **kwargs)
+
+    def _root_log_with_extra(self, method_name, msg, *args, **kwargs):
+        """Handle root-level logging with extra parameter support"""
+        # Extra parameter processing is now handled in Rust
+        # Call the original logging method on root with all kwargs (including extra)
+        method = getattr(self.root, method_name)
+        return method(msg, *args, **kwargs)
 
     def exception(self, msg, *args, **kwargs):
-        self.root.exception(msg, *args, **kwargs)
+        return self._root_log_with_extra("exception", msg, *args, **kwargs)
 
     def log(self, level, msg, *args, **kwargs):
-        self.root.log(level, msg, *args, **kwargs)
+        return self._root_log_with_extra_level(level, msg, *args, **kwargs)
+
+    def _root_log_with_extra_level(self, level, msg, *args, **kwargs):
+        """Handle root-level log method with level parameter and extra support"""
+        # Extra parameter processing is now handled in Rust
+        # Call the log method on root with all kwargs (including extra)
+        return self.root.log(level, msg, *args, **kwargs)
 
     def fatal(self, msg, *args, **kwargs):
-        self.root.fatal(msg, *args, **kwargs)
+        return self._root_log_with_extra("fatal", msg, *args, **kwargs)
 
     def warn(self, msg, *args, **kwargs):
-        self.root.warn(msg, *args, **kwargs)
+        return self._root_log_with_extra("warn", msg, *args, **kwargs)
 
     def captureWarnings(self, capture=True):
         _std_logging.captureWarnings(capture)
 
     def makeLogRecord(self, dict):
-        return self.LogRecord()
+        """Create a LogRecord from a dictionary."""
+        # Extract required fields with defaults
+        name = dict.get("name", "unknown")
+        levelno = dict.get("levelno", 0)
+        pathname = dict.get("pathname", "")
+        lineno = dict.get("lineno", 0)
+        msg = dict.get("msg", "")
+        args = dict.get("args")
+        exc_info = dict.get("exc_info")
+        func_name = dict.get("funcName", dict.get("func_name", ""))
+        stack_info = dict.get("stack_info")
+
+        # Create the LogRecord
+        record = self.LogRecord(
+            name=name,
+            levelno=levelno,
+            pathname=pathname,
+            lineno=lineno,
+            msg=msg,
+            args=args,
+            exc_info=exc_info,
+            func_name=func_name,
+            stack_info=stack_info,
+        )
+
+        # Set additional attributes from the dict
+        for key, value in dict.items():
+            if not hasattr(record, key):
+                setattr(record, key, value)
+
+        return record
 
     def getLogRecordFactory(self):
         return self.LogRecord
@@ -288,9 +345,9 @@ _manager = LoggingManager()
 logging = _LoggingModule()
 
 
-def install(sentry=None):
+def _install(sentry=None):
     """
-    Install logxide as a drop-in replacement for the standard logging module.
+    Private function to install logxide as a drop-in replacement for logging.
 
     This function monkey-patches the logging module's getLogger function to
     return logxide loggers while keeping all other logging functionality intact.
@@ -300,20 +357,7 @@ def install(sentry=None):
     Args:
         sentry: Enable/disable Sentry integration (None for auto-detect)
 
-    Call this function early in your application, before importing any
-    third-party libraries that use logging.
-
-    Example:
-        import logxide
-        logxide.install()
-
-        # Now all libraries will use logxide for logging
-        import requests  # requests will use logxide for logging
-        import sqlalchemy  # sqlalchemy will use logxide for logging
-
-        # With explicit Sentry control:
-        logxide.install(sentry=True)  # Force enable Sentry
-        logxide.install(sentry=False)  # Disable Sentry
+    This is called automatically when importing from logxide.
     """
     import logging as std_logging
 
@@ -353,13 +397,22 @@ def install(sentry=None):
                 def create_wrapper(orig_method, logxide_method):
                     def wrapper(*args, **kwargs):
                         # Call the original method first (for caplog compatibility)
-                        import contextlib
 
-                        with contextlib.suppress(Exception):
+                        # Don't suppress exceptions during debugging
+                        try:
                             orig_method(*args, **kwargs)
+                        except Exception as e:
+                            # Suppress only KeyError from missing format fields
+                            if not isinstance(e, KeyError):
+                                pass  # Let other exceptions through for debugging
+
                         # Then call LogXide method (for performance)
-                        with contextlib.suppress(Exception):
+                        try:
                             logxide_method(*args, **kwargs)
+                        except Exception as e:
+                            # Suppress only KeyError from missing format fields
+                            if not isinstance(e, KeyError):
+                                pass  # Let other exceptions through for debugging
 
                     return wrapper
 
@@ -447,7 +500,7 @@ def uninstall():
     """
     Restore the standard logging module.
 
-    This undoes the monkey-patching done by install().
+    This undoes the monkey-patching done by _install().
     """
     import logging as std_logging
 

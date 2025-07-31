@@ -31,9 +31,10 @@ mod formatter_pure;
 use std::cell::RefCell;
 
 use core::{
-    create_log_record, get_logger as core_get_logger, get_root_logger, LogLevel, LogRecord, Logger,
+    create_log_record_with_extra, get_logger as core_get_logger, get_root_logger, LogLevel,
+    LogRecord, Logger,
 };
-use handler::{Handler, PythonHandler};
+use handler::{ConsoleHandler, Handler, PythonHandler, RotatingFileHandler};
 
 use crossbeam::channel::{self, Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use once_cell::sync::Lazy;
@@ -155,6 +156,27 @@ impl Clone for PyLogger {
 
 #[pymethods]
 impl PyLogger {
+    /// Extract the 'extra' parameter from kwargs and convert to HashMap<String, String>
+    fn extract_extra_fields(
+        &self,
+        kwargs: Option<&Bound<PyDict>>,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        kwargs.and_then(|dict| {
+            if let Ok(Some(extra_bound)) = dict.get_item("extra") {
+                if let Ok(extra_dict) = extra_bound.downcast::<pyo3::types::PyDict>() {
+                    let mut extra_map = std::collections::HashMap::new();
+                    for (key, value) in extra_dict.iter() {
+                        if let (Ok(key_str), Ok(value_str)) = (key.str(), value.str()) {
+                            extra_map.insert(key_str.to_string(), value_str.to_string());
+                        }
+                    }
+                    return Some(extra_map);
+                }
+            }
+            None
+        })
+    }
+
     #[getter]
     fn name(&self) -> PyResult<String> {
         Ok(self.fast_logger.name.to_string())
@@ -317,23 +339,25 @@ impl PyLogger {
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
-        let _ = kwargs; // Ignore kwargs for now
-
         // Fast atomic level check - no lock needed
         if !self.fast_logger.is_enabled_for(LogLevel::Debug) {
             return Ok(());
         }
 
+        // Extract extra fields from kwargs
+        let extra_fields = self.extract_extra_fields(kwargs);
+
         // Only create record if level is enabled - format message with args
         let formatted_msg = self
             .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
-        let record = create_log_record(
+        let record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Debug,
             formatted_msg,
+            extra_fields,
         );
-        self.handle(record.into_py(py))?;
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
         if *self.propagate.lock().unwrap() {
             if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
                 Python::with_gil(|py| {
@@ -355,21 +379,23 @@ impl PyLogger {
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
-        let _ = kwargs;
-
         if !self.fast_logger.is_enabled_for(LogLevel::Info) {
             return Ok(());
         }
 
+        // Extract extra fields from kwargs
+        let extra_fields = self.extract_extra_fields(kwargs);
+
         let formatted_msg = self
             .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
-        let record = create_log_record(
+        let record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Info,
             formatted_msg,
+            extra_fields,
         );
-        self.handle(record.into_py(py))?;
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
         if *self.propagate.lock().unwrap() {
             if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
                 Python::with_gil(|py| {
@@ -391,21 +417,23 @@ impl PyLogger {
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
-        let _ = kwargs;
-
         if !self.fast_logger.is_enabled_for(LogLevel::Warning) {
             return Ok(());
         }
 
+        // Extract extra fields from kwargs
+        let extra_fields = self.extract_extra_fields(kwargs);
+
         let formatted_msg = self
             .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
-        let record = create_log_record(
+        let record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Warning,
             formatted_msg,
+            extra_fields,
         );
-        self.handle(record.into_py(py))?;
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
         if *self.propagate.lock().unwrap() {
             if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
                 Python::with_gil(|py| {
@@ -427,21 +455,23 @@ impl PyLogger {
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
-        let _ = kwargs;
-
         if !self.fast_logger.is_enabled_for(LogLevel::Error) {
             return Ok(());
         }
 
+        // Extract extra fields from kwargs
+        let extra_fields = self.extract_extra_fields(kwargs);
+
         let formatted_msg = self
             .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
-        let record = create_log_record(
+        let record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Error,
             formatted_msg,
+            extra_fields,
         );
-        self.handle(record.into_py(py))?;
+        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
         if *self.propagate.lock().unwrap() {
             if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
                 Python::with_gil(|py| {
@@ -462,19 +492,21 @@ impl PyLogger {
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
-        let _ = kwargs;
-
         if !self.fast_logger.is_enabled_for(LogLevel::Critical) {
             return Ok(());
         }
 
+        // Extract extra fields from kwargs
+        let extra_fields = self.extract_extra_fields(kwargs);
+
         let formatted_msg = self
             .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
-        let record = create_log_record(
+        let record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Critical,
             formatted_msg,
+            extra_fields,
         );
         let _ = SENDER.send(LogMessage::Record(Box::new(record)));
         if *self.propagate.lock().unwrap() {
@@ -577,11 +609,12 @@ impl PyLogger {
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
-        let _ = kwargs; // Ignore kwargs for now
-
         if !self.fast_logger.is_enabled_for(LogLevel::Error) {
             return Ok(());
         }
+
+        // Extract extra fields from kwargs
+        let extra_fields = self.extract_extra_fields(kwargs);
 
         let mut formatted_msg = self
             .format_message(py, msg.clone_ref(py), args)
@@ -596,10 +629,11 @@ impl PyLogger {
         formatted_msg.push('\n');
         formatted_msg.push_str(&traceback);
 
-        let record = create_log_record(
+        let record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Error,
             formatted_msg,
+            extra_fields,
         );
         let _ = SENDER.send(LogMessage::Record(Box::new(record)));
         if *self.propagate.lock().unwrap() {
@@ -653,8 +687,6 @@ impl PyLogger {
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
-        let _ = kwargs;
-
         let log_level = LogLevel::from_usize(level as usize);
 
         // Fast atomic level check
@@ -662,10 +694,18 @@ impl PyLogger {
             return Ok(());
         }
 
+        // Extract extra fields from kwargs
+        let extra_fields = self.extract_extra_fields(kwargs);
+
         let formatted_msg = self
             .format_message(py, msg.clone_ref(py), args)
             .unwrap_or_else(|_| "".to_string());
-        let record = create_log_record(self.fast_logger.name.to_string(), log_level, formatted_msg);
+        let record = create_log_record_with_extra(
+            self.fast_logger.name.to_string(),
+            log_level,
+            formatted_msg,
+            extra_fields,
+        );
         let _ = SENDER.send(LogMessage::Record(Box::new(record)));
         if *self.propagate.lock().unwrap() {
             if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
@@ -726,6 +766,10 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(register_python_handler, m)?)?;
     m.add_function(wrap_pyfunction!(set_thread_name, m)?)?;
 
+    // Add pure Rust handler registration functions for 100% Rust processing
+    m.add_function(wrap_pyfunction!(register_console_handler, m)?)?;
+    m.add_function(wrap_pyfunction!(register_file_handler, m)?)?;
+
     Ok(())
 }
 
@@ -774,6 +818,46 @@ fn flush(_py: Python) -> PyResult<()> {
 fn register_python_handler(_py: Python, _handler: PyObject) -> PyResult<()> {
     // For now, just return Ok(()) as a placeholder
     // The actual registration will be handled by the Python wrapper
+    Ok(())
+}
+
+/// Register a pure Rust console handler (no Python boundary).
+#[pyfunction(name = "register_console_handler")]
+fn register_console_handler(_py: Python, level: Option<u32>) -> PyResult<()> {
+    use std::sync::Arc;
+
+    let log_level = LogLevel::from_usize(level.unwrap_or(30) as usize); // Default: WARNING
+    let handler = Arc::new(ConsoleHandler::with_level(log_level));
+
+    HANDLERS.lock().unwrap().push(handler);
+    Ok(())
+}
+
+/// Register a pure Rust file handler (no Python boundary).
+#[pyfunction(name = "register_file_handler")]
+fn register_file_handler(
+    _py: Python,
+    filename: String,
+    max_bytes: Option<u64>,
+    backup_count: Option<u32>,
+    level: Option<u32>,
+) -> PyResult<()> {
+    use std::sync::Arc;
+
+    let log_level = LogLevel::from_usize(level.unwrap_or(30) as usize); // Default: WARNING
+    let max_size = max_bytes.unwrap_or(10 * 1024 * 1024); // Default: 10MB
+    let backups = backup_count.unwrap_or(5); // Default: 5 backups
+
+    // Create a formatter for the file handler
+    let formatter = Arc::new(formatter::PythonFormatter::new(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s".to_string(),
+    ));
+
+    let handler = Arc::new(RotatingFileHandler::with_formatter(
+        filename, max_size, backups, log_level, formatter,
+    ));
+
+    HANDLERS.lock().unwrap().push(handler);
     Ok(())
 }
 

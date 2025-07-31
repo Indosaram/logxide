@@ -122,7 +122,7 @@ def main():
     logging.flush()
 
     print("\n=== Integration Summary ===")
-    print("✓ logxide.install() enables drop-in replacement")
+    print("✓ Auto-install pattern provides drop-in replacement")
     print("✓ Real HTTP library logs captured (urllib3/requests)")
     print("✓ Real database logs captured (SQLAlchemy)")
     print("✓ Multiple libraries can coexist seamlessly")

@@ -118,7 +118,7 @@ def demo_exception_handling():
         value = data["age"]  # Key doesn't exist
     except Exception as e:
         # Another exception with additional context
-        app_logger.error("Failed to access user data: %s", str(e), exc_info=True)
+        app_logger.error(f"Failed to access user data: {str(e)}", exc_info=True)
 
     print("✓ Exceptions sent to Sentry with full stack traces")
     print()

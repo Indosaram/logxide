@@ -147,9 +147,8 @@ from logxide import logging
 # Force enable Sentry (even if not configured)
 logging.basicConfig(handlers=[SentryHandler()])
 
-# Disable Sentry integration
-import logxide
-logxide.install(sentry=False)  # Explicit disable
+# Note: If you need to disable Sentry integration for some reason,
+# you can configure it through environment variables or Sentry SDK directly
 
 # Check if Sentry is available
 from logxide import SentryHandler

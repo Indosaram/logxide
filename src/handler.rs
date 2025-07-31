@@ -216,7 +216,13 @@ impl Handler for PythonHandler {
                 .ok();
             py_record.set_item("process", record.process).ok();
             py_record.set_item("msg", record.msg.clone()).ok();
-            // Optionals omitted for brevity
+
+            // Add extra fields if present
+            if let Some(ref extra_fields) = record.extra {
+                for (key, value) in extra_fields {
+                    py_record.set_item(key, value).ok();
+                }
+            }
 
             let _ = self.py_callable.call1(py, (py_record,));
         });

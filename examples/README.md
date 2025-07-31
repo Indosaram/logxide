@@ -49,3 +49,13 @@ For advanced features:
 python examples/third_party_integration.py
 python examples/format_detailed.py
 ```
+
+## Expected Output
+
+All examples produce structured logging output with:
+- Proper timestamp formatting
+- Logger hierarchy information
+- Formatted messages with dynamic values
+- Performance metrics (where applicable)
+
+Note: Examples use f-string formatting for optimal compatibility with LogXide.

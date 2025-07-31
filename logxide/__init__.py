@@ -45,7 +45,7 @@ except ImportError:
         logxide = RustExtension()
 
 # Package metadata
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __author__ = "LogXide Team"
 __email__ = "freedomzero91@gmail.com"
 __license__ = "MIT"
@@ -79,7 +79,7 @@ from .compat_handlers import (
     StreamHandler,
 )
 from .logger_wrapper import basicConfig, getLogger
-from .module_system import install, logging, uninstall
+from .module_system import _install, logging, uninstall
 
 # Optional Sentry integration (imported lazily to avoid dependency issues)
 try:
@@ -105,7 +105,7 @@ class _LoggingModule(ModuleType):
     def __getattr__(self, name):
         # Automatically install logxide when logging module is accessed
         if not self._installed:
-            install()
+            _install()
             self._installed = True
         return getattr(self._wrapped, name)
 
@@ -138,7 +138,6 @@ LoggerAdapter = logging.LoggerAdapter
 __all__ = [
     # Core functionality
     "logging",
-    "install",
     "uninstall",
     "LoggingManager",
     # Version and metadata

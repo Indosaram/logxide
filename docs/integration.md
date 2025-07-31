@@ -748,9 +748,8 @@ from django.conf import settings
 # or
 from fastapi import FastAPI
 
-# ❌ Old pattern - no longer needed
-import logxide
-logxide.install()
+# ❌ Don't do this - install() is called automatically
+import logging  # Standard logging without LogXide
 ```
 
 ### 2. Structured Logging
