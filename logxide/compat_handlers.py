@@ -5,11 +5,15 @@ This module provides handler classes that maintain compatibility with
 Python's standard logging module.
 """
 
+import atexit
+import contextlib
 import sys
+
+# Define logging level constants
+import threading
 import time
 import traceback
 
-# Define logging level constants
 NOTSET = 0
 DEBUG = 10
 INFO = 20
@@ -192,13 +196,36 @@ class Handler:
 class StreamHandler(Handler):
     """Stream handler class - compatible with logging.StreamHandler"""
 
+    _shutdown = False
+    _lock = threading.RLock()
+
     def __init__(self, stream=None):
         super().__init__()
         if stream is None:
             stream = sys.stderr
-        self.stream = stream
+        self._stream = stream
+
+    def _get_stream(self):
+        """Get the stream, ensuring it's not closed."""
+        if hasattr(self, "_stream"):
+            stream = self._stream
+            if hasattr(stream, "closed") and not stream.closed:
+                return stream
+        return None
+
+    @property
+    def stream(self):
+        return self._get_stream() or sys.stderr
+
+    @stream.setter
+    def stream(self, value):
+        self._stream = value
 
     def emit(self, record):
+        # Check if we're shutting down
+        if self._shutdown:
+            return
+
         try:
             # Handle different record types from LogXide
             if isinstance(record, dict):
@@ -218,25 +245,53 @@ class StreamHandler(Handler):
                     msg = self.formatter.format(record)
 
             stream = self.stream
-            stream.write(msg + self.terminator)
-            self.flush()
+            # Check if stream is closed before writing
+            if hasattr(stream, "closed") and stream.closed:
+                return
+
+            # Thread-safe write
+            with self._lock:
+                if not self._shutdown and stream and hasattr(stream, "write"):
+                    try:
+                        stream.write(msg + self.terminator)
+                        self.flush()
+                    except (ValueError, OSError):
+                        # Stream was closed during operation
+                        pass
         except RecursionError:
             raise
         except Exception:
             self.handleError(record)
 
     def flush(self):
-        if self.stream and hasattr(self.stream, "flush"):
-            self.stream.flush()
+        if self._shutdown:
+            return
+
+        with self._lock:
+            if self.stream and hasattr(self.stream, "flush"):
+                # Check if stream is closed before flushing
+                if hasattr(self.stream, "closed") and self.stream.closed:
+                    return
+                with contextlib.suppress(ValueError, OSError):
+                    self.stream.flush()
 
     def close(self):
         """
         Close the stream.
         """
-        self.flush()
-        if hasattr(self.stream, "close"):
-            self.stream.close()
+        with self._lock:
+            self._shutdown = True
+            self.flush()
+            if hasattr(self.stream, "close"):
+                with contextlib.suppress(ValueError, OSError):
+                    self.stream.close()
         Handler.close(self)
+
+    @classmethod
+    def _at_exit_shutdown(cls):
+        """Shutdown all handlers at exit."""
+        with cls._lock:
+            cls._shutdown = True
 
 
 class FileHandler(StreamHandler):
@@ -266,3 +321,7 @@ class LoggingManager:
 
     def __init__(self):
         self.disable = 0  # SQLAlchemy checks this attribute
+
+
+# Register shutdown handler
+atexit.register(StreamHandler._at_exit_shutdown)

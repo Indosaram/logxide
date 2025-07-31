@@ -8,41 +8,9 @@ its Rust backend.
 
 import sys
 from types import ModuleType
-from typing import TYPE_CHECKING
 
-# Import logxide with fallback for type checking
-try:
-    from . import logxide
-except ImportError:
-    # Handle case where Rust extension is not available
-    if TYPE_CHECKING:
-        from typing import Any
-
-        # Type stubs for the Rust extension
-        class RustExtension:
-            logging: Any
-
-        logxide = RustExtension()
-    else:
-
-        class RustExtension:
-            class logging:
-                @staticmethod
-                def flush():
-                    pass
-
-                @staticmethod
-                def register_python_handler(handler):
-                    pass
-
-                @staticmethod
-                def set_thread_name(name):
-                    pass
-
-                PyLogger = object
-                LogRecord = object
-
-        logxide = RustExtension()
+# Import Rust extension - if this fails, it's a bug
+from . import logxide
 
 # Package metadata
 __version__ = "0.1.2"

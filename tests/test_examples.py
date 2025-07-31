@@ -53,11 +53,8 @@ def test_logxide_basic():
     print("Testing LogXide basic functionality...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
+        # Use auto-install pattern
+        from logxide import logging
 
         # Configure logging
         logging.basicConfig(
@@ -87,13 +84,10 @@ def test_flask_integration():
     print("Testing Flask integration...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
-
+        # Use auto-install pattern
         from flask import Flask
+
+        from logxide import logging
 
         app = Flask(__name__)
 
@@ -131,14 +125,11 @@ def test_django_integration():
     print("Testing Django integration...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
-
+        # Use auto-install pattern
         import django
         from django.conf import settings
+
+        from logxide import logging
 
         # Configure Django settings
         if not settings.configured:
@@ -184,14 +175,11 @@ def test_fastapi_integration():
     print("Testing FastAPI integration...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
-
+        # Use auto-install pattern
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
+        from logxide import logging
 
         app = FastAPI()
 
@@ -229,12 +217,10 @@ def test_performance():
     print("Testing LogXide performance...")
 
     try:
-        import logxide
-
-        logxide.install()
-
-        import logging
+        # Use auto-install pattern
         import time
+
+        from logxide import logging
 
         # Configure logging
         logging.basicConfig(
@@ -262,6 +248,17 @@ def test_performance():
 
         # Verify performance is reasonable
         assert total_time < 5.0, f"Performance test too slow: {total_time:.3f}s"
+
+        # Clean up handlers to prevent leftover messages
+        root = logging.getLogger()
+        if hasattr(root, "handlers"):
+            for handler in list(root.handlers):
+                try:
+                    if hasattr(handler, "close"):
+                        handler.close()
+                except:
+                    pass
+            root.handlers.clear()
 
         print("✓ LogXide performance - Success")
         return True

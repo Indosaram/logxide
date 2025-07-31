@@ -73,3 +73,5 @@ docs/_build/
 .python-version
 
 benchmark_results.txt
+
+.serena
