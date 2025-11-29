@@ -103,6 +103,31 @@ LogRecord = logxide.logging.LogRecord
 Filter = logging.Filter
 LoggerAdapter = logging.LoggerAdapter
 
+# Production utilities (optional import to avoid circular dependency)
+try:
+    from .production import (
+        DuplicateFilter,
+        JSONFormatter,
+        JSONHandler,
+        RateLimitedHandler,
+        SamplingHandler,
+        bind_context,
+        bound_contextvars,
+        configure_development,
+        configure_from_env,
+        configure_production,
+        get_bound_context,
+        get_logging_health,
+        graceful_shutdown,
+        register_shutdown_handler,
+        unbind_context,
+        with_context,
+    )
+
+    _production_available = True
+except ImportError:
+    _production_available = False
+
 __all__ = [
     # Core functionality
     "logging",
@@ -149,12 +174,21 @@ __all__ = [
     # Sentry integration (optional)
     "SentryHandler",
     "auto_configure_sentry",
-    # TODO: Implement these functions for full compatibility
-    # "captureWarnings",
-    # "makeLogRecord",
-    # "getLogRecordFactory",
-    # "setLogRecordFactory",
-    # "getLevelNamesMapping",
-    # "getHandlerByName",
-    # "getHandlerNames",
+    # Production utilities (optional)
+    "JSONFormatter",
+    "JSONHandler",
+    "configure_from_env",
+    "configure_production",
+    "configure_development",
+    "register_shutdown_handler",
+    "graceful_shutdown",
+    "RateLimitedHandler",
+    "SamplingHandler",
+    "DuplicateFilter",
+    "bind_context",
+    "unbind_context",
+    "get_bound_context",
+    "bound_contextvars",
+    "with_context",
+    "get_logging_health",
 ]
