@@ -15,6 +15,7 @@ import os
 import signal
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
@@ -339,7 +340,7 @@ def configure_from_env(
 # Graceful Shutdown
 # =============================================================================
 
-_shutdown_handlers: list[callable] = []
+_shutdown_handlers: list[Callable[[], None]] = []
 _shutdown_registered = False
 _shutdown_lock = threading.Lock()
 
@@ -360,7 +361,7 @@ def _shutdown_handler(signum=None, frame=None):
             handler()
 
 
-def register_shutdown_handler(handler: callable) -> None:
+def register_shutdown_handler(handler: Callable[[], None]) -> None:
     """
     Register a handler to be called during graceful shutdown.
 
