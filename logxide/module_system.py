@@ -349,10 +349,9 @@ def _install(sentry=None):
     """
     Private function to install logxide as a drop-in replacement for logging.
 
-    This function monkey-patches the logging module's getLogger function to
-    return logxide loggers while keeping all other logging functionality intact.
-    This preserves compatibility with uvicorn and other libraries that rely on
-    the standard logging module's internal structure.
+    This approach replaces the standard handlers with LogXide handlers,
+    ensuring logs are processed once through the Rust backend while
+    maintaining full caplog/pytest compatibility.
 
     Args:
         sentry: Enable/disable Sentry integration (None for auto-detect)
@@ -365,93 +364,72 @@ def _install(sentry=None):
     if not hasattr(std_logging, "_original_getLogger"):
         std_logging._original_getLogger = std_logging.getLogger  # type: ignore[attr-defined]
 
-    # Replace getLogger with our version
+    # Create a LogXide handler that routes logs to Rust backend
+    class LogXideHandler(std_logging.Handler):
+        """Handler that routes logs to LogXide's Rust backend.
+        
+        This handler replaces standard StreamHandler for console output,
+        routing logs through LogXide's async Rust backend for processing.
+        """
+
+        def __init__(self, level=std_logging.NOTSET):
+            super().__init__(level)
+            self._logxide_loggers = {}
+
+        def emit(self, record):
+            """Send log record to LogXide's Rust backend."""
+            try:
+                # Get or create LogXide logger for this record's logger name
+                if record.name not in self._logxide_loggers:
+                    self._logxide_loggers[record.name] = getLogger(record.name)
+
+                logxide_logger = self._logxide_loggers[record.name]
+
+                # Map log level to method
+                level_to_method = {
+                    std_logging.DEBUG: "debug",
+                    std_logging.INFO: "info",
+                    std_logging.WARNING: "warning",
+                    std_logging.ERROR: "error",
+                    std_logging.CRITICAL: "critical",
+                }
+
+                method_name = level_to_method.get(record.levelno, "info")
+                method = getattr(logxide_logger, method_name, None)
+
+                if method:
+                    # Format the message using the record's getMessage()
+                    msg = record.getMessage()
+                    method(msg)
+            except Exception:
+                # Never let handler errors break the app
+                pass
+
+    # Create global LogXide handler instance
+    if not hasattr(std_logging, "_logxide_handler"):
+        std_logging._logxide_handler = LogXideHandler()  # type: ignore[attr-defined]
+
+    # Replace getLogger - return standard logger but with LogXide handler
     def logxide_getLogger(name=None):
-        """Get a logxide logger that wraps the standard logger"""
-        # Get the standard logger first
+        """Get a logger with LogXide handler for output."""
+        # Get the standard logger
         if hasattr(std_logging, "_original_getLogger"):
-            std_logger = std_logging._original_getLogger(name)  # type: ignore[attr-defined]
+            logger = std_logging._original_getLogger(name)  # type: ignore[attr-defined]
         else:
-            # Fallback if _original_getLogger doesn't exist
-            std_logger = (
+            logger = (
                 std_logging.Logger.manager.getLogger(name) if name else std_logging.root
             )
 
-        # Create a logxide logger
-        logxide_logger = getLogger(name)
-
-        # Replace the standard logger's methods with logxide versions
-        # But also ensure they still work with caplog by calling the original methods
-        methods_to_replace = [
-            "debug",
-            "info",
-            "warning",
-            "error",
-            "critical",
-            "exception",
-            "log",
-            "fatal",
-            "warn",
-        ]
-
-        for method in methods_to_replace:
-            if hasattr(logxide_logger, method):
-                # Create a wrapper that calls both LogXide and original logging
-                original_method = getattr(std_logger, method)
-                logxide_method = getattr(logxide_logger, method)
-
-                def create_wrapper(orig_method, logxide_method):
-                    def wrapper(*args, **kwargs):
-                        # Call the original method first (for caplog compatibility)
-
-                        # Don't suppress exceptions during debugging
-                        try:
-                            orig_method(*args, **kwargs)
-                        except Exception as e:
-                            # Suppress only KeyError from missing format fields
-                            if not isinstance(e, KeyError):
-                                pass  # Let other exceptions through for debugging
-
-                        # Then call LogXide method (for performance)
-                        try:
-                            logxide_method(*args, **kwargs)
-                        except Exception as e:
-                            # Suppress only KeyError from missing format fields
-                            if not isinstance(e, KeyError):
-                                pass  # Let other exceptions through for debugging
-
-                    return wrapper
-
-                setattr(
-                    std_logger, method, create_wrapper(original_method, logxide_method)
-                )
-
-        # Handle exception method specially - it's error + traceback
-        if hasattr(std_logger, "exception"):
-
-            def exception_wrapper(msg, *args, **kwargs):
-                # Use logxide error method for exception logging
-                logxide_logger.exception(msg, *args, **kwargs)
-
-            std_logger.exception = exception_wrapper
-
-        # Copy handlers from std_logger to logxide_logger
-        # This ensures handlers added to Python logger work with LogXide
-        # Only copy callable handlers as LogXide requires handlers to be callable
-        if hasattr(logxide_logger, "addHandler"):
-            for handler in std_logger.handlers:
-                if callable(handler) and handler not in getattr(
-                    logxide_logger, "handlers", []
-                ):
-                    import contextlib
-
-                    with contextlib.suppress(ValueError):
-                        logxide_logger.addHandler(handler)
-
-        return std_logger
+        # The LogXide handler is added to root logger, so child loggers inherit it
+        return logger
 
     # Replace the getLogger function
     std_logging.getLogger = logxide_getLogger
+
+    # Add LogXide handler to root logger (all loggers inherit from root)
+    logxide_handler = std_logging._logxide_handler  # type: ignore[attr-defined]
+    if logxide_handler not in std_logging.root.handlers:
+        std_logging.root.addHandler(logxide_handler)
 
     # Also replace basicConfig to use logxide
     if not hasattr(std_logging, "_original_basicConfig"):
