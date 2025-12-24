@@ -24,4 +24,11 @@ def test_compatibility_attributes():
     assert logging.BASIC_FORMAT == "%(levelname)s:%(name)s:%(message)s"
     logger = logging.getLogger("test_compatibility_attributes")
     assert logger.filters == []
+    
+    # Add a handler so hasHandlers returns True
+    handler = logging.StreamHandler()
+    logger.addHandler(handler)
     assert logger.hasHandlers()
+    
+    # Clean up
+    logger.removeHandler(handler)

@@ -11,16 +11,9 @@ from pathlib import Path
 
 # Try to import logxide
 try:
-    # Remove parent directory from path to avoid local import
-    original_path = sys.path.copy()
-    parent_dir = str(Path(__file__).parent.parent)
-    if parent_dir in sys.path:
-        sys.path.remove(parent_dir)
-    if "." in sys.path:
-        sys.path.remove(".")
-
-    # Import from installed package
-    import logxide as logxide_rust
+    # Import the Rust extension directly without triggering _install()
+    from logxide import logxide as logxide_rust
+    from logxide.compat_handlers import NullHandler as LogxideNullHandler
 
     # Get the logging module from the Rust extension
     logging_mod = logxide_rust.logging
@@ -36,16 +29,23 @@ try:
     print("Successfully imported logxide")
     logxide = logxide_rust
 
-    # Restore path
-    sys.path = original_path
 except Exception as e:
     print(f"Warning: Could not import logxide: {e}")
+    import traceback
+    traceback.print_exc()
     logxide = None
     logxide_getLogger = None
+    LogxideNullHandler = None
     DEBUG = INFO = WARNING = ERROR = CRITICAL = None
-    sys.path = original_path
 
-import picologging
+try:
+    import picologging
+    PICOLOGGING_AVAILABLE = True
+except ImportError:
+    print("Warning: picologging not available, skipping picologging benchmarks")
+    picologging = None
+    PICOLOGGING_AVAILABLE = False
+
 import structlog
 
 
@@ -58,9 +58,14 @@ class LoggerBenchmark:
 
     def setup_logxide(self):
         """Setup logxide logger."""
-        if logxide_getLogger:
+        if logxide_getLogger and LogxideNullHandler:
+            # Create logger and configure it
             logger = logxide_getLogger("benchmark")
-            logger.setLevel(INFO)  # Use setLevel like standard logging
+            logger.propagate = False  # Prevent propagation to root logger
+            # Add a NullHandler that discards all output
+            handler = LogxideNullHandler()
+            logger.addHandler(handler)
+            logger.setLevel(INFO)
             return logger
         return None
 
@@ -83,6 +88,8 @@ class LoggerBenchmark:
 
     def setup_picologging(self):
         """Setup picologging logger."""
+        if not PICOLOGGING_AVAILABLE:
+            return None
         import io
 
         logger = picologging.getLogger("benchmark")
@@ -179,7 +186,10 @@ class LoggerBenchmark:
             loggers["logxide"] = logxide_logger
 
         loggers["structlog"] = self.setup_structlog()
-        loggers["picologging"] = self.setup_picologging()
+        
+        picologging_logger = self.setup_picologging()
+        if picologging_logger:
+            loggers["picologging"] = picologging_logger
 
         benchmarks = [
             ("simple_logging", self.benchmark_simple_logging),

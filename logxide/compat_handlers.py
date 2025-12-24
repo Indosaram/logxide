@@ -53,21 +53,32 @@ class Formatter:
 
     def format(self, record):
         """
-        NO-OP formatter - ALL formatting is now handled in Rust.
+        Format a log record using the format string.
 
-        This method should never be called if you're using the pure Rust pipeline.
-        For maximum performance, use logxide.register_console_handler() or
-        logxide.register_file_handler() instead of Python handlers.
-
-        If this method is called, it means you're using Python handlers for
-        compatibility. The real formatting should have been done in Rust already.
+        This handles both dict records (from Rust) and LogRecord objects.
         """
-        # True NO-OP: Return empty string or just the basic message
-        # All real formatting is done in Rust
+        # Convert record to dict for formatting
         if isinstance(record, dict):
-            return record.get("msg", "")
+            record_dict = record.copy()
         else:
-            return getattr(record, "msg", "")  # Just the raw message, no formatting
+            record_dict = record.__dict__ if hasattr(record, '__dict__') else {}
+        
+        # Ensure 'message' key exists (some formats use it)
+        if 'message' not in record_dict:
+            record_dict['message'] = record_dict.get('msg', '')
+        
+        # Add asctime if not present and format string requires it
+        if 'asctime' not in record_dict and '%(asctime)' in self.fmt:
+            record_dict['asctime'] = self.formatTime(record, self.datefmt)
+        
+        # Apply format string
+        try:
+            # Use Python's % formatting with record dict
+            s = self.fmt % record_dict
+            return s
+        except (KeyError, ValueError, TypeError) as e:
+            # Fallback to just the message if formatting fails
+            return record_dict.get('msg', str(record))
 
     def formatTime(self, record, datefmt=None):
         """
@@ -139,10 +150,28 @@ class Handler:
         self.level = NOTSET
 
     def handle(self, record):
-        self.emit(record)
+        """
+        Handle a log record by checking level and calling emit.
+        
+        This is a complete override to prevent any stdlib logging.Handler
+        methods from being called, which would expect LogRecord objects
+        instead of dicts.
+        """
+        # Check if this handler's level allows this record
+        if isinstance(record, dict):
+            record_level = record.get('levelno', 0)
+        else:
+            record_level = getattr(record, 'levelno', 0)
+        
+        if record_level >= self.level:
+            self.emit(record)
 
     def emit(self, record):
-        # This method should be overridden by subclasses
+        """
+        Emit a log record. Must be overridden by subclasses.
+        
+        This method should never call any stdlib logging methods.
+        """
         pass
 
     def handleError(self, record):
@@ -196,14 +225,16 @@ class Handler:
 class StreamHandler(Handler):
     """Stream handler class - compatible with logging.StreamHandler"""
 
-    _shutdown = False
-    _lock = threading.RLock()
+    _class_lock = threading.RLock()  # Class-level lock for _at_exit_shutdown
+    _class_shutdown = False  # Class-level shutdown flag
 
     def __init__(self, stream=None):
         super().__init__()
         if stream is None:
             stream = sys.stderr
         self._stream = stream
+        self._shutdown = False  # Instance-level shutdown flag
+        self._lock = threading.RLock()  # Instance-level lock
 
     def _get_stream(self):
         """Get the stream, ensuring it's not closed."""
@@ -222,8 +253,8 @@ class StreamHandler(Handler):
         self._stream = value
 
     def emit(self, record):
-        # Check if we're shutting down
-        if self._shutdown:
+        # Check if we're shutting down (instance or class level)
+        if self._shutdown or self._class_shutdown:
             return
 
         try:
@@ -237,12 +268,19 @@ class StreamHandler(Handler):
             else:
                 msg = str(record)
 
-            # Apply formatter if available
+            # Apply formatter if available - but only use our own Formatter class
+            # to avoid issues with stdlib logging.Formatter expecting LogRecord objects
             if self.formatter:
-                import contextlib
-
-                with contextlib.suppress(AttributeError, KeyError, TypeError):
-                    msg = self.formatter.format(record)
+                # Check if this is our Formatter (from logxide.compat_handlers)
+                formatter_module = getattr(self.formatter.__class__, '__module__', '')
+                if formatter_module == 'logxide.compat_handlers':
+                    # Safe to use our formatter with dict records
+                    try:
+                        msg = self.formatter.format(record)
+                    except (AttributeError, KeyError, TypeError):
+                        # If formatting fails, use the original message
+                        pass
+                # If it's a stdlib formatter, skip it to avoid errors with dict records
 
             stream = self.stream
             # Check if stream is closed before writing
@@ -251,7 +289,7 @@ class StreamHandler(Handler):
 
             # Thread-safe write
             with self._lock:
-                if not self._shutdown and stream and hasattr(stream, "write"):
+                if not self._shutdown and not self._class_shutdown and stream and hasattr(stream, "write"):
                     try:
                         stream.write(msg + self.terminator)
                         self.flush()
@@ -264,7 +302,7 @@ class StreamHandler(Handler):
             self.handleError(record)
 
     def flush(self):
-        if self._shutdown:
+        if self._shutdown or self._class_shutdown:
             return
 
         with self._lock:
@@ -290,8 +328,8 @@ class StreamHandler(Handler):
     @classmethod
     def _at_exit_shutdown(cls):
         """Shutdown all handlers at exit."""
-        with cls._lock:
-            cls._shutdown = True
+        with cls._class_lock:
+            cls._class_shutdown = True
 
 
 class FileHandler(StreamHandler):

@@ -17,31 +17,84 @@ from logxide import logging
 @pytest.fixture(autouse=True)
 def cleanup_logxide():
     """Ensure proper cleanup of logxide handlers after each test."""
+    import gc
+    from logxide import logging
+    
+    # BEFORE test: flush any pending logs
+    with contextlib.suppress(BaseException):
+        logging.flush()
+    
+    # Clear Python-side logger handlers (but not Rust global handlers)
+    try:
+        import logging as std_logging
+        
+        # Clear all logger handlers
+        if hasattr(std_logging.Logger, "manager") and hasattr(std_logging.Logger.manager, "loggerDict"):
+            for logger_name, logger_obj in list(std_logging.Logger.manager.loggerDict.items()):
+                if hasattr(logger_obj, "handlers"):
+                    logger_obj.handlers.clear()
+                # Also clear the _logxide_pylogger attribute to force re-wrapping
+                if hasattr(logger_obj, "_logxide_pylogger"):
+                    delattr(logger_obj, "_logxide_pylogger")
+        
+        # Clear root logger
+        if hasattr(std_logging, "root") and hasattr(std_logging.root, "handlers"):
+            std_logging.root.handlers.clear()
+            if hasattr(std_logging.root, "_logxide_pylogger"):
+                delattr(std_logging.root, "_logxide_pylogger")
+    except:
+        pass
+    
+    # Also clear LogXide's root logger
+    try:
+        root = logging.getLogger()
+        if hasattr(root, "handlers"):
+            root.handlers.clear()
+        if hasattr(root, "_logxide_pylogger"):
+            delattr(root, "_logxide_pylogger")
+    except:
+        pass
+    
+    # Force garbage collection before test
+    gc.collect()
+    
     yield
 
-    import gc
-
-    from logxide import logging
-    from logxide.compat_handlers import StreamHandler
-
-    # First just flush
+    # AFTER test: cleanup
     with contextlib.suppress(BaseException):
         logging.flush()
 
     # Small delay to let any active operations complete
     time.sleep(0.05)
 
-    # Now try to shutdown handlers
-    with contextlib.suppress(BaseException):
-        StreamHandler._at_exit_shutdown()
+    # Complete reset again after test
+    try:
+        import logging as std_logging
+        
+        # Clear all logger handlers
+        if hasattr(std_logging.Logger, "manager") and hasattr(std_logging.Logger.manager, "loggerDict"):
+            for logger_name, logger_obj in list(std_logging.Logger.manager.loggerDict.items()):
+                if hasattr(logger_obj, "handlers"):
+                    logger_obj.handlers.clear()
+                # Clear the _logxide_pylogger attribute
+                if hasattr(logger_obj, "_logxide_pylogger"):
+                    delattr(logger_obj, "_logxide_pylogger")
+        
+        # Clear root logger
+        if hasattr(std_logging, "root") and hasattr(std_logging.root, "handlers"):
+            std_logging.root.handlers.clear()
+            if hasattr(std_logging.root, "_logxide_pylogger"):
+                delattr(std_logging.root, "_logxide_pylogger")
+    except:
+        pass
 
-    # Clear handlers from root logger
+    # Clear LogXide's root logger
     try:
         root = logging.getLogger()
         if hasattr(root, "handlers"):
-            # Don't close handlers, just clear the list
-            # Closing can interfere with active contexts
             root.handlers.clear()
+        if hasattr(root, "_logxide_pylogger"):
+            delattr(root, "_logxide_pylogger")
     except:
         pass
 
