@@ -77,21 +77,11 @@ static SENDER: Lazy<CrossbeamSender<LogMessage>> = Lazy::new(|| {
         while let Ok(message) = receiver.recv() {
             match message {
                 LogMessage::Record(record) => {
-                    // Dispatch to all registered handlers
+                    // Dispatch to all registered handlers synchronously
+                    // No per-handler task spawning to reduce overhead
                     let handlers = HANDLERS.lock().unwrap().clone();
-                    let mut tasks = Vec::new();
-                    for handler in handlers {
-                        // Each handler is async
-                        let record = record.clone();
-                        let handler = handler.clone();
-                        let task = RUNTIME.spawn(async move {
-                            handler.emit(&record).await;
-                        });
-                        tasks.push(task);
-                    }
-                    // Wait for all handlers to complete
-                    for task in tasks {
-                        let _ = task.await;
+                    for handler in handlers.iter() {
+                        handler.emit(&record).await;
                     }
                 }
                 LogMessage::Flush(sender) => {

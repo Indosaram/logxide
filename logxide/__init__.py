@@ -25,10 +25,17 @@ __url__ = "https://github.com/Indosaram/logxide"
 # Import from organized modules
 from .compat_functions import (
     addLevelName,
+    captureWarnings,
     disable,
+    getHandlerByName,
+    getHandlerNames,
     getLevelName,
+    getLevelNamesMapping,
     getLoggerClass,
+    getLogRecordFactory,
+    makeLogRecord,
     setLoggerClass,
+    setLogRecordFactory,
 )
 from .compat_handlers import (
     CRITICAL,
@@ -149,12 +156,12 @@ __all__ = [
     # Sentry integration (optional)
     "SentryHandler",
     "auto_configure_sentry",
-    # TODO: Implement these functions for full compatibility
-    # "captureWarnings",
-    # "makeLogRecord",
-    # "getLogRecordFactory",
-    # "setLogRecordFactory",
-    # "getLevelNamesMapping",
-    # "getHandlerByName",
-    # "getHandlerNames",
+    # Newly implemented compatibility functions (Phase 4)
+    "captureWarnings",
+    "makeLogRecord",
+    "getLogRecordFactory",
+    "setLogRecordFactory",
+    "getLevelNamesMapping",
+    "getHandlerByName",
+    "getHandlerNames",
 ]

@@ -22,6 +22,7 @@
 
 use async_trait::async_trait;
 use chrono::TimeZone;
+use once_cell::sync::OnceCell;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::fs::{File, OpenOptions};
@@ -107,6 +108,9 @@ pub struct PythonHandler {
     pub filters: Vec<Arc<dyn Filter + Send + Sync>>,
 }
 
+// Cache for Python logging.LogRecord class to avoid repeated imports
+static LOG_RECORD_CLASS: OnceCell<PyObject> = OnceCell::new();
+
 impl PythonHandler {
     /// Create a new PythonHandler wrapping a Python callable.
     ///
@@ -189,42 +193,53 @@ impl Handler for PythonHandler {
     /// * `record` - The log record to emit
     async fn emit(&self, record: &LogRecord) {
         Python::with_gil(|py| {
-            let py_record = PyDict::new(py);
-            py_record.set_item("name", record.name.clone()).ok();
-            py_record.set_item("levelno", record.levelno).ok();
-            py_record
-                .set_item("levelname", record.levelname.clone())
-                .ok();
-            py_record.set_item("pathname", record.pathname.clone()).ok();
-            py_record.set_item("filename", record.filename.clone()).ok();
-            py_record.set_item("module", record.module.clone()).ok();
-            py_record.set_item("lineno", record.lineno).ok();
-            py_record
-                .set_item("funcName", record.func_name.clone())
-                .ok();
-            py_record.set_item("created", record.created).ok();
-            py_record.set_item("msecs", record.msecs).ok();
-            py_record
-                .set_item("relativeCreated", record.relative_created)
-                .ok();
-            py_record.set_item("thread", record.thread).ok();
-            py_record
-                .set_item("threadName", record.thread_name.clone())
-                .ok();
-            py_record
-                .set_item("processName", record.process_name.clone())
-                .ok();
-            py_record.set_item("process", record.process).ok();
-            py_record.set_item("msg", record.msg.clone()).ok();
-
-            // Add extra fields if present
+            let handler_obj = self.py_callable.bind(py);
+            
+            // Get cached LogRecord class or initialize it
+            let log_record_class = LOG_RECORD_CLASS.get_or_init(|| {
+                Python::with_gil(|py| {
+                    let logging_module = py.import("logging").expect("Failed to import logging");
+                    let log_record_class = logging_module.getattr("LogRecord").expect("Failed to get LogRecord class");
+                    log_record_class.into()
+                })
+            });
+            
+            let log_record_class = log_record_class.bind(py);
+            
+            // Create a proper LogRecord object
+            // LogRecord.__init__(name, level, pathname, lineno, msg, args, exc_info, func=None, sinfo=None)
+            let py_record = match log_record_class.call1((
+                &record.name,           // name
+                record.levelno,         // level
+                &record.pathname,       // pathname
+                record.lineno,          // lineno
+                &record.msg,            // msg
+                py.None(),              // args (empty tuple)
+                py.None(),              // exc_info
+            )) {
+                Ok(rec) => rec,
+                Err(_) => return,
+            };
+            
+            // Set additional fields on the LogRecord object
+            let _ = py_record.setattr("created", record.created);
+            let _ = py_record.setattr("msecs", record.msecs);
+            let _ = py_record.setattr("threadName", &record.thread_name);
+            let _ = py_record.setattr("thread", record.thread);
+            let _ = py_record.setattr("process", record.process);
+            let _ = py_record.setattr("module", &record.module);
+            let _ = py_record.setattr("filename", &record.filename);
+            let _ = py_record.setattr("funcName", &record.func_name);
+            
+            // Add extra fields to the LogRecord object (as strings due to Rust storage)
             if let Some(ref extra_fields) = record.extra {
                 for (key, value) in extra_fields {
-                    py_record.set_item(key, value).ok();
+                    let _ = py_record.setattr(key.as_str(), value.as_str());
                 }
             }
-
-            let _ = self.py_callable.call1(py, (py_record,));
+            
+            // Call handle() method with proper LogRecord object
+            let _ = handler_obj.call_method1("handle", (py_record,));
         });
     }
 
