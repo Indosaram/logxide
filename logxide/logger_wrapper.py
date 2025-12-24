@@ -37,6 +37,7 @@ def basicConfig(**kwargs):
     - level: Set the effective level for the root logger
     - format: Format string for log messages
     - datefmt: Date format string
+    - stream: Stream to write log output to
     """
 
     # Store configuration for applying to new loggers
@@ -47,6 +48,7 @@ def basicConfig(**kwargs):
     # Apply configuration to LogXide's Rust backend
     format_str = kwargs.get("format")
     datefmt = kwargs.get("datefmt")
+    stream = kwargs.get("stream")
 
     # Build kwargs for Rust basicConfig
     rust_kwargs = {}
@@ -71,7 +73,7 @@ def basicConfig(**kwargs):
 
     if not root_logger.handlers:
         # No handlers exist, create a new one
-        handler = StreamHandler()
+        handler = StreamHandler(stream)
         root_logger.addHandler(handler)
     else:
         # Use existing handler

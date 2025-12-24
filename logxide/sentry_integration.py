@@ -7,7 +7,7 @@ when it's configured in the project.
 """
 
 import sys
-from typing import Any, Optional
+from typing import Any, Literal, Optional, cast
 
 from .compat_handlers import CRITICAL, ERROR, WARNING, Handler
 
@@ -162,8 +162,14 @@ class SentryHandler(Handler):
             },
         )
 
-    def _map_level_to_sentry(self, level_no: int) -> str:
-        """Map Python logging levels to Sentry levels."""
+    def _map_level_to_sentry(
+        self, level_no: int
+    ) -> Literal["fatal", "critical", "error", "warning", "info", "debug"]:
+        """Map Python logging levels to Sentry levels.
+        
+        Returns a Sentry-compatible log level string that matches the
+        LogLevelStr type from sentry_sdk.
+        """
         if level_no >= CRITICAL:
             return "fatal"
         elif level_no >= ERROR:
@@ -173,8 +179,14 @@ class SentryHandler(Handler):
         else:
             return "info"
 
-    def _map_level_to_sentry_breadcrumb(self, level_name: str) -> str:
-        """Map Python logging level names to Sentry breadcrumb levels."""
+    def _map_level_to_sentry_breadcrumb(
+        self, level_name: str
+    ) -> Literal["fatal", "critical", "error", "warning", "info", "debug"]:
+        """Map Python logging level names to Sentry breadcrumb levels.
+        
+        Returns a Sentry-compatible log level string that matches the
+        LogLevelStr type from sentry_sdk.
+        """
         level_mapping = {
             "CRITICAL": "fatal",
             "ERROR": "error",
@@ -182,7 +194,11 @@ class SentryHandler(Handler):
             "INFO": "info",
             "DEBUG": "debug",
         }
-        return level_mapping.get(level_name.upper(), "info")
+        result = level_mapping.get(level_name.upper(), "info")
+        # Cast is safe because we control the mapping and default value
+        return cast(
+            Literal["fatal", "critical", "error", "warning", "info", "debug"], result
+        )
 
     def _extract_extra_context(self, record) -> dict[str, Any]:
         """Extract extra context from a log record."""

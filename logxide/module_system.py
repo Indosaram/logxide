@@ -377,77 +377,110 @@ def _install(sentry=None):
                 std_logging.Logger.manager.getLogger(name) if name else std_logging.root
             )
 
-        # Create a logxide logger
-        logxide_logger = getLogger(name)
+        def _replace_logger_methods(std_logger, name):
+            """Replace standard logger methods with LogXide versions."""
+            # Create a logxide logger
+            logxide_logger = getLogger(name)
+            
+            # Store the PyLogger instance as an attribute for later access
+            std_logger._logxide_pylogger = logxide_logger
 
-        # Replace the standard logger's methods with logxide versions
-        # But also ensure they still work with caplog by calling the original methods
-        methods_to_replace = [
-            "debug",
-            "info",
-            "warning",
-            "error",
-            "critical",
-            "exception",
-            "log",
-            "fatal",
-            "warn",
-        ]
+            # Replace the standard logger's methods with logxide versions
+            methods_to_replace = [
+                "debug",
+                "info",
+                "warning",
+                "error",
+                "critical",
+                "exception",
+                "log",
+                "fatal",
+                "warn",
+            ]
 
-        for method in methods_to_replace:
-            if hasattr(logxide_logger, method):
-                # Create a wrapper that calls both LogXide and original logging
-                original_method = getattr(std_logger, method)
-                logxide_method = getattr(logxide_logger, method)
+            for method in methods_to_replace:
+                if hasattr(logxide_logger, method):
+                    logxide_method = getattr(logxide_logger, method)
+                    # Always use LogXide only (no double-calling)
+                    setattr(std_logger, method, logxide_method)
 
-                def create_wrapper(orig_method, logxide_method):
-                    def wrapper(*args, **kwargs):
-                        # Call the original method first (for caplog compatibility)
+            # Handle exception method specially - it's error + traceback
+            if hasattr(std_logger, "exception"):
+                std_logger.exception = logxide_logger.exception
 
-                        # Don't suppress exceptions during debugging
-                        try:
-                            orig_method(*args, **kwargs)
-                        except Exception as e:
-                            # Suppress only KeyError from missing format fields
-                            if not isinstance(e, KeyError):
-                                pass  # Let other exceptions through for debugging
+        # Call the function to replace methods
+        _replace_logger_methods(std_logger, name)
+        
+        # AFTER method replacement, wrap addHandler to sync handlers
+        # Get the actual PyLogger instance from the stored attribute
+        actual_pylogger = None
+        if hasattr(std_logger, '_logxide_pylogger'):
+            actual_pylogger = std_logger._logxide_pylogger
+        elif hasattr(std_logger.info, '__self__'):
+            actual_pylogger = std_logger.info.__self__
+        
+        if actual_pylogger is not None:
+            original_addHandler = std_logger.addHandler
+            
+            def wrapped_addHandler(handler):
+                # Add to stdlib logger (for compatibility)
+                original_addHandler(handler)
+                
+                # Also add to the actual PyLogger that's handling the logging
+                # Check if handler has emit or handle method, not just if it's callable
+                if hasattr(handler, 'emit') or hasattr(handler, 'handle') or callable(handler):
+                    try:
+                        # Get the current PyLogger instance from the stored attribute
+                        current_pylogger = None
+                        if hasattr(std_logger, '_logxide_pylogger'):
+                            current_pylogger = std_logger._logxide_pylogger
+                        elif hasattr(std_logger.info, '__self__'):
+                            current_pylogger = std_logger.info.__self__
+                        
+                        if current_pylogger is not None:
+                            current_pylogger.addHandler(handler)
+                    except Exception:
+                        # Silently ignore errors to avoid breaking compatibility
+                        pass
+            
+            std_logger.addHandler = wrapped_addHandler
+            
+            # Wrap setLevel to sync level between stdlib and PyLogger
+            original_setLevel = std_logger.setLevel
+            
+            def wrapped_setLevel(level):
+                # Set on stdlib logger
+                original_setLevel(level)
+                # Also set on the actual PyLogger - get from stored attribute
+                if hasattr(std_logger, '_logxide_pylogger'):
+                    current_pylogger = std_logger._logxide_pylogger
+                    current_pylogger.setLevel(level)
+                elif hasattr(std_logger.info, '__self__'):
+                    current_pylogger = std_logger.info.__self__
+                    current_pylogger.setLevel(level)
+            
+            std_logger.setLevel = wrapped_setLevel
 
-                        # Then call LogXide method (for performance)
-                        try:
-                            logxide_method(*args, **kwargs)
-                        except Exception as e:
-                            # Suppress only KeyError from missing format fields
-                            if not isinstance(e, KeyError):
-                                pass  # Let other exceptions through for debugging
-
-                    return wrapper
-
-                setattr(
-                    std_logger, method, create_wrapper(original_method, logxide_method)
-                )
-
-        # Handle exception method specially - it's error + traceback
-        if hasattr(std_logger, "exception"):
-
-            def exception_wrapper(msg, *args, **kwargs):
-                # Use logxide error method for exception logging
-                logxide_logger.exception(msg, *args, **kwargs)
-
-            std_logger.exception = exception_wrapper
-
-        # Copy handlers from std_logger to logxide_logger
-        # This ensures handlers added to Python logger work with LogXide
-        # Only copy callable handlers as LogXide requires handlers to be callable
-        if hasattr(logxide_logger, "addHandler"):
+            # Copy existing handlers from std_logger to the actual pylogger
+            # This ensures handlers added before LogXide was configured work
             for handler in std_logger.handlers:
-                if callable(handler) and handler not in getattr(
-                    logxide_logger, "handlers", []
-                ):
+                if hasattr(handler, 'emit') or hasattr(handler, 'handle') or callable(handler):
                     import contextlib
-
                     with contextlib.suppress(ValueError):
-                        logxide_logger.addHandler(handler)
-
+                        actual_pylogger.addHandler(handler)
+            
+            # Add hasHandlers method if PyLogger has it
+            if hasattr(actual_pylogger, 'hasHandlers'):
+                def wrapped_hasHandlers():
+                    # Check both stdlib handlers and PyLogger handlers
+                    if std_logger.handlers:
+                        return True
+                    if hasattr(std_logger, '_logxide_pylogger'):
+                        return std_logger._logxide_pylogger.hasHandlers()
+                    return False
+                
+                std_logger.hasHandlers = wrapped_hasHandlers
+        
         return std_logger
 
     # Replace the getLogger function
@@ -478,25 +511,9 @@ def _install(sentry=None):
     # Migrate any loggers that might have been created before install()
     _migrate_existing_loggers()
 
-    # Set up default StreamHandler for the root logger
-    # Get the LogXide root logger directly
-    logxide_root = getLogger()
-
-    # Check if LogXide root has handlers, if not add StreamHandler
-    if hasattr(logxide_root, "handlers") and not logxide_root.handlers:
-        from .compat_handlers import StreamHandler
-
-        handler = StreamHandler()
-        if hasattr(logxide_root, "addHandler"):
-            logxide_root.addHandler(handler)
-
-    # Also set up the standard root logger
-    std_root = std_logging.root
-    if not std_root.handlers:
-        from .compat_handlers import StreamHandler
-
-        handler = StreamHandler()
-        std_root.addHandler(handler)  # type: ignore[arg-type]
+    # Note: Handlers should be added via explicit basicConfig() call
+    # We no longer add default handlers automatically to avoid unexpected output
+    # This allows users to have full control over logging configuration
 
     # Auto-configure Sentry integration if available
     _auto_configure_sentry(sentry)
