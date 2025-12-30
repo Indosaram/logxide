@@ -38,38 +38,38 @@ def basicConfig(**kwargs):
 
     Supported parameters:
     - level: Set the effective level for the root logger
-    - format: Format string for log messages (currently not implemented in Rust handlers)
-    - datefmt: Date format string (currently not implemented in Rust handlers)
-    - stream: Stream to write log output to (only sys.stdout or sys.stderr supported)
+    - format: Format string for log messages (not implemented in Rust handlers)
+    - datefmt: Date format string (not implemented in Rust handlers)
+    - stream: Stream to write log output to (sys.stdout or sys.stderr supported)
     - filename: Log to a file instead of a stream
     - force: If True, remove any existing handlers and reconfigure (default: False)
-    
+
     Note: LogXide uses Rust native handlers for performance. All handler
     configuration is done through this function. Direct handler registration
     via addHandler() is not supported.
-    
+
     Like Python's standard logging, basicConfig() will do nothing if the root
     logger already has handlers configured, unless force=True is specified.
     """
     import sys
-    
+
     # Import logxide at the top of the function
     from . import logxide as logxide_module
-    
+
     global _basic_config_called
-    
+
     # Check if already configured (unless force=True)
     force = kwargs.get("force", False)
     if _basic_config_called and not force:
         return
-    
+
     # If force=True, clear existing handlers
     if force and _basic_config_called:
-        try:
+        import contextlib
+
+        with contextlib.suppress(ImportError, AttributeError):
             logxide_module.logging.clear_handlers()
-        except (ImportError, AttributeError):
-            pass
-    
+
     _basic_config_called = True
 
     # Store configuration for applying to new loggers
@@ -79,8 +79,6 @@ def basicConfig(**kwargs):
 
     # Get configuration parameters
     level = kwargs.get("level", 10)  # Default to DEBUG (10)
-    format_str = kwargs.get("format")
-    datefmt = kwargs.get("datefmt")
     stream = kwargs.get("stream")
     filename = kwargs.get("filename")
 
@@ -104,7 +102,7 @@ def basicConfig(**kwargs):
 
     # Set root logger level
     root_logger = getLogger()
-    if hasattr(root_logger, 'setLevel'):
+    if hasattr(root_logger, "setLevel"):
         root_logger.setLevel(level)
 
     # Now handle existing Python loggers that were created before LogXide
