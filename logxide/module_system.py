@@ -61,7 +61,6 @@ from .logger_wrapper import _migrate_existing_loggers, basicConfig, getLogger
 
 # Get references to Rust functions
 flush = logxide.logging.flush  # type: ignore[attr-defined]
-register_python_handler = logxide.logging.register_python_handler  # type: ignore[attr-defined]
 set_thread_name = logxide.logging.set_thread_name  # type: ignore[attr-defined]
 PyLogger = logxide.logging.PyLogger  # type: ignore[attr-defined]
 
@@ -83,7 +82,6 @@ class _LoggingModule:
 
     basicConfig = staticmethod(basicConfig)
     flush = staticmethod(flush)
-    register_python_handler = staticmethod(register_python_handler)
     set_thread_name = staticmethod(set_thread_name)
     PyLogger = PyLogger
 
@@ -200,7 +198,11 @@ class _LoggingModule:
 
         # Use standard logging's root logger and utility functions
         self.root = getLogger()
-        self.FileHandler = _std_logging.FileHandler
+        # Import Rust native handlers from logxide
+        from . import logxide as _logxide_ext
+        self.FileHandler = _logxide_ext.FileHandler
+        self.StreamHandler = _logxide_ext.StreamHandler
+        self.RotatingFileHandler = _logxide_ext.RotatingFileHandler
         self.lastResort = NullHandler()
         self.raiseExceptions = True
 
@@ -427,21 +429,22 @@ def _install(sentry=None):
                 original_addHandler(handler)
                 
                 # Also add to the actual PyLogger that's handling the logging
-                # Check if handler has emit or handle method, not just if it's callable
-                if hasattr(handler, 'emit') or hasattr(handler, 'handle') or callable(handler):
-                    try:
-                        # Get the current PyLogger instance from the stored attribute
-                        current_pylogger = None
-                        if hasattr(std_logger, '_logxide_pylogger'):
-                            current_pylogger = std_logger._logxide_pylogger
-                        elif hasattr(std_logger.info, '__self__'):
-                            current_pylogger = std_logger.info.__self__
-                        
-                        if current_pylogger is not None:
-                            current_pylogger.addHandler(handler)
-                    except Exception:
-                        # Silently ignore errors to avoid breaking compatibility
-                        pass
+                try:
+                    # Get the current PyLogger instance from the stored attribute
+                    current_pylogger = None
+                    if hasattr(std_logger, '_logxide_pylogger'):
+                        current_pylogger = std_logger._logxide_pylogger
+                    elif hasattr(std_logger.info, '__self__'):
+                        current_pylogger = std_logger.info.__self__
+                    
+                    if current_pylogger is not None:
+                        current_pylogger.addHandler(handler)
+                except ValueError:
+                    # Re-raise ValueError for invalid handlers
+                    raise
+                except Exception:
+                    # Silently ignore other errors to avoid breaking compatibility
+                    pass
             
             std_logger.addHandler = wrapped_addHandler
             
@@ -460,14 +463,32 @@ def _install(sentry=None):
                     current_pylogger.setLevel(level)
             
             std_logger.setLevel = wrapped_setLevel
+            
+            # Wrap propagate property to sync between stdlib and PyLogger
+            original_propagate = std_logger.propagate
+            
+            class PropagateProperty:
+                def __get__(self, obj, objtype=None):
+                    if hasattr(std_logger, '_logxide_pylogger'):
+                        return std_logger._logxide_pylogger.propagate
+                    return original_propagate
+                
+                def __set__(self, obj, value):
+                    # Set on PyLogger
+                    if hasattr(std_logger, '_logxide_pylogger'):
+                        std_logger._logxide_pylogger.propagate = value
+                    # Also set on stdlib logger for compatibility
+                    std_logger.__dict__['propagate'] = value
+            
+            # Replace propagate with property descriptor
+            type(std_logger).propagate = PropagateProperty()
 
             # Copy existing handlers from std_logger to the actual pylogger
             # This ensures handlers added before LogXide was configured work
             for handler in std_logger.handlers:
-                if hasattr(handler, 'emit') or hasattr(handler, 'handle') or callable(handler):
-                    import contextlib
-                    with contextlib.suppress(ValueError):
-                        actual_pylogger.addHandler(handler)
+                import contextlib
+                with contextlib.suppress(ValueError):
+                    actual_pylogger.addHandler(handler)
             
             # Add hasHandlers method if PyLogger has it
             if hasattr(actual_pylogger, 'hasHandlers'):

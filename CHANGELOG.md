@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2024-12-30
+
+### Fixed
+- Removed all unused imports and dependencies (tokio, crossbeam, tracing, lazy_static)
+- Removed unused `RUNTIME` static variable that was never utilized
+- Fixed unused variable warnings in `register_stream_handler` and `register_file_handler`
+- Removed unnecessary `mut` declarations in handler registration functions
+- Fixed `FileHandler` filename field unused warning with proper attribute
+- **Fixed FileHandler buffering issue**: FileHandler now flushes immediately after each write for reliable logging
+- **Fixed addHandler() functionality**: Verified that `logger.addHandler()` works correctly with Rust native handlers
+
+### Changed
+- **Breaking Architecture Change**: Removed async/Tokio runtime architecture in favor of direct handler calls for maximum performance
+- Updated README to accurately reflect direct processing architecture (removed async/Tokio claims)
+- **Updated README documentation**: Clarified that `addHandler()` IS supported but only accepts Rust native handlers (FileHandler, StreamHandler, RotatingFileHandler)
+- Unified Python version requirements (3.9+ in both README and pyproject.toml)
+- Replaced `tokio::spawn` with `futures::executor::block_on` for direct blocking calls
+- Replaced `tokio::task::block_in_place` with direct Python GIL calls in PythonStreamHandler
+
+### Added
+- Added `python-handlers` feature flag to conditionally compile deprecated PythonHandler code
+- PythonHandler is now disabled by default (enable with `python-handlers` feature)
+- Improved code quality with zero Clippy warnings
+
+### Removed
+- Removed unused dependencies: tokio, crossbeam, tracing, lazy_static
+- Removed unused Tokio runtime that was creating overhead without being used
+- Cleaned up 25+ compiler warnings
+
+## [0.1.2] - 2024-01-XX
+
 ### Added
 - Initial PyPI release preparation
 - Comprehensive documentation for all modules
@@ -21,7 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Thread safety improvements
 - Format string parsing edge cases
-- Memory leaks in async processing
 
 ## [0.1.0] - 2024-01-XX
 

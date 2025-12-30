@@ -2,18 +2,20 @@
 Compatibility handler classes for LogXide.
 
 This module provides handler classes that maintain compatibility with
-Python's standard logging module.
+Python's standard logging module, but delegates actual logging to
+Rust native handlers for maximum performance.
 """
 
 import atexit
-import contextlib
 import sys
-
-# Define logging level constants
 import threading
 import time
 import traceback
 
+# Import Rust native handler registration functions
+from logxide import logxide as _logxide_rust
+
+# Define logging level constants
 NOTSET = 0
 DEBUG = 10
 INFO = 20
@@ -25,7 +27,11 @@ FATAL = CRITICAL  # Alias for CRITICAL
 
 
 class NullHandler:
-    """A handler that does nothing - compatible with logging.NullHandler"""
+    """A handler that does nothing - compatible with logging.NullHandler
+    
+    Note: This is a no-op wrapper for compatibility. LogXide ignores all handlers
+    and uses internal Rust handlers for performance.
+    """
 
     def __init__(self):
         pass
@@ -36,9 +42,15 @@ class NullHandler:
     def emit(self, record):
         pass
 
+    def setLevel(self, level):
+        pass
+
+    def setFormatter(self, formatter):
+        pass
+
     def __call__(self, record):
         """Make it callable for logxide compatibility"""
-        self.handle(record)
+        pass
 
 
 class Formatter:
@@ -76,7 +88,7 @@ class Formatter:
             # Use Python's % formatting with record dict
             s = self.fmt % record_dict
             return s
-        except (KeyError, ValueError, TypeError) as e:
+        except (KeyError, ValueError, TypeError):
             # Fallback to just the message if formatting fails
             return record_dict.get('msg', str(record))
 
@@ -143,46 +155,31 @@ class Formatter:
 
 
 class Handler:
-    """Basic handler class - compatible with logging.Handler"""
+    """Basic handler class - compatible with logging.Handler
+    
+    Note: This is a compatibility shim. LogXide uses Rust native handlers
+    for actual log processing. Python handlers are not supported for
+    performance reasons.
+    """
 
     def __init__(self):
         self.formatter = None
         self.level = NOTSET
 
     def handle(self, record):
-        """
-        Handle a log record by checking level and calling emit.
-        
-        This is a complete override to prevent any stdlib logging.Handler
-        methods from being called, which would expect LogRecord objects
-        instead of dicts.
-        """
-        # Check if this handler's level allows this record
-        if isinstance(record, dict):
-            record_level = record.get('levelno', 0)
-        else:
-            record_level = getattr(record, 'levelno', 0)
-        
-        if record_level >= self.level:
-            self.emit(record)
+        """Handle a log record - compatibility method only"""
+        pass
 
     def emit(self, record):
-        """
-        Emit a log record. Must be overridden by subclasses.
-        
-        This method should never call any stdlib logging methods.
-        """
+        """Emit a log record - must be overridden by subclasses"""
         pass
 
     def handleError(self, record):
-        # Default error handling - print to stderr
+        """Handle errors during emit()"""
         import traceback
-
         if sys.stderr:
             sys.stderr.write("--- Logging error ---\n")
             traceback.print_exc(file=sys.stderr)
-            sys.stderr.write("Call stack:\n")
-            traceback.print_stack(file=sys.stderr)
             sys.stderr.write("--- End of logging error ---\n")
 
     @property
@@ -190,8 +187,9 @@ class Handler:
         return "\n"
 
     def setFormatter(self, formatter):
-        """Set the formatter for this handler"""
+        """Set the formatter for this handler - not supported in LogXide"""
         self.formatter = formatter
+        # Note: Formatter setting is currently ignored by Rust handlers
 
     def setLevel(self, level):
         """Set the effective level for this handler"""
@@ -202,156 +200,114 @@ class Handler:
         if self.formatter:
             return self.formatter.format(record)
         else:
-            # Default formatting
             if isinstance(record, dict):
                 return record.get("msg", str(record))
             else:
                 return getattr(record, "msg", str(record))
 
     def close(self):
-        """
-        Tidy up any resources used by the handler.
-
-        This version does nothing - it's up to subclasses to implement
-        any cleanup operations.
-        """
+        """Close the handler - compatibility method only"""
         pass
 
     def __call__(self, record):
         """Make it callable for logxide compatibility"""
-        self.handle(record)
+        pass
 
 
 class StreamHandler(Handler):
-    """Stream handler class - compatible with logging.StreamHandler"""
-
-    _class_lock = threading.RLock()  # Class-level lock for _at_exit_shutdown
-    _class_shutdown = False  # Class-level shutdown flag
+    """Stream handler class - compatibility wrapper
+    
+    WARNING: LogXide does not support custom Python handlers for performance reasons.
+    Handlers are managed internally by Rust. This class exists only for API compatibility.
+    
+    To configure output, use basicConfig() instead:
+        logxide.basicConfig(level=logging.DEBUG, format='%(message)s')
+    """
 
     def __init__(self, stream=None):
         super().__init__()
         if stream is None:
             stream = sys.stderr
         self._stream = stream
-        self._shutdown = False  # Instance-level shutdown flag
-        self._lock = threading.RLock()  # Instance-level lock
-
-    def _get_stream(self):
-        """Get the stream, ensuring it's not closed."""
-        if hasattr(self, "_stream"):
-            stream = self._stream
-            if hasattr(stream, "closed") and not stream.closed:
-                return stream
-        return None
 
     @property
     def stream(self):
-        return self._get_stream() or sys.stderr
+        return self._stream
 
     @stream.setter
     def stream(self, value):
         self._stream = value
 
     def emit(self, record):
-        # Check if we're shutting down (instance or class level)
-        if self._shutdown or self._class_shutdown:
-            return
-
-        try:
-            # Handle different record types from LogXide
-            if isinstance(record, dict):
-                msg = record.get("msg", str(record))
-            elif hasattr(record, "msg"):
-                msg = str(record.msg)
-            elif hasattr(record, "message"):
-                msg = str(record.message)
-            else:
-                msg = str(record)
-
-            # Apply formatter if available - but only use our own Formatter class
-            # to avoid issues with stdlib logging.Formatter expecting LogRecord objects
-            if self.formatter:
-                # Check if this is our Formatter (from logxide.compat_handlers)
-                formatter_module = getattr(self.formatter.__class__, '__module__', '')
-                if formatter_module == 'logxide.compat_handlers':
-                    # Safe to use our formatter with dict records
-                    try:
-                        msg = self.formatter.format(record)
-                    except (AttributeError, KeyError, TypeError):
-                        # If formatting fails, use the original message
-                        pass
-                # If it's a stdlib formatter, skip it to avoid errors with dict records
-
-            stream = self.stream
-            # Check if stream is closed before writing
-            if hasattr(stream, "closed") and stream.closed:
-                return
-
-            # Thread-safe write
-            with self._lock:
-                if not self._shutdown and not self._class_shutdown and stream and hasattr(stream, "write"):
-                    try:
-                        stream.write(msg + self.terminator)
-                        self.flush()
-                    except (ValueError, OSError):
-                        # Stream was closed during operation
-                        pass
-        except RecursionError:
-            raise
-        except Exception:
-            self.handleError(record)
+        """No-op: LogXide uses internal Rust handlers"""
+        pass
 
     def flush(self):
-        if self._shutdown or self._class_shutdown:
-            return
-
-        with self._lock:
-            if self.stream and hasattr(self.stream, "flush"):
-                # Check if stream is closed before flushing
-                if hasattr(self.stream, "closed") and self.stream.closed:
-                    return
-                with contextlib.suppress(ValueError, OSError):
-                    self.stream.flush()
+        """No-op: LogXide uses internal Rust handlers"""
+        pass
 
     def close(self):
-        """
-        Close the stream.
-        """
-        with self._lock:
-            self._shutdown = True
-            self.flush()
-            if hasattr(self.stream, "close"):
-                with contextlib.suppress(ValueError, OSError):
-                    self.stream.close()
-        Handler.close(self)
+        """No-op: LogXide uses internal Rust handlers"""
+        pass
 
-    @classmethod
-    def _at_exit_shutdown(cls):
-        """Shutdown all handlers at exit."""
-        with cls._class_lock:
-            cls._class_shutdown = True
+    def setLevel(self, level):
+        """No-op: LogXide uses internal Rust handlers"""
+        self.level = level
 
 
-class FileHandler(StreamHandler):
-    """File handler class - compatible with logging.FileHandler"""
+class FileHandler(Handler):
+    """File handler class - compatibility wrapper
+    
+    WARNING: LogXide does not support custom Python handlers for performance reasons.
+    Handlers are managed internally by Rust. This class exists only for API compatibility.
+    
+    To configure file output, use basicConfig() instead:
+        logxide.basicConfig(filename='app.log', level=logging.DEBUG)
+    """
 
     def __init__(self, filename, mode="a", encoding=None, delay=False):
-        # Implement basic file handling
+        super().__init__()
         self.baseFilename = filename
         self.mode = mode
         self.encoding = encoding
         self.delay = delay
-        # Open file and keep it open for the handler
-        self._file = open(filename, mode, encoding=encoding)  # noqa: SIM115
-        super().__init__(stream=self._file)
 
     def close(self):
-        """Close the file."""
-        if hasattr(self, "_file") and self._file:
-            self._file.close()
-            self._file = None
-        if hasattr(super(), "close"):
-            super().close()  # type: ignore[misc]
+        """No-op: LogXide uses internal Rust handlers"""
+        pass
+
+    def emit(self, record):
+        """No-op: LogXide uses internal Rust handlers"""
+        pass
+
+
+class RotatingFileHandler(Handler):
+    """Rotating file handler - compatibility wrapper
+    
+    WARNING: LogXide does not support custom Python handlers for performance reasons.
+    Handlers are managed internally by Rust. This class exists only for API compatibility.
+    """
+
+    def __init__(self, filename, mode='a', maxBytes=0, backupCount=0, encoding=None, delay=False):
+        super().__init__()
+        self.baseFilename = filename
+        self.mode = mode
+        self.maxBytes = maxBytes
+        self.backupCount = backupCount
+        self.encoding = encoding
+        self.delay = delay
+
+    def doRollover(self):
+        """No-op: LogXide uses internal Rust handlers"""
+        pass
+
+    def emit(self, record):
+        """No-op: LogXide uses internal Rust handlers"""
+        pass
+
+    def close(self):
+        """No-op: LogXide uses internal Rust handlers"""
+        pass
 
 
 class LoggingManager:
@@ -361,5 +317,4 @@ class LoggingManager:
         self.disable = 0  # SQLAlchemy checks this attribute
 
 
-# Register shutdown handler
-atexit.register(StreamHandler._at_exit_shutdown)
+# No shutdown handler needed - Rust handles cleanup

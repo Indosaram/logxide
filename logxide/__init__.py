@@ -13,7 +13,7 @@ from types import ModuleType
 from . import logxide
 
 # Package metadata
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __author__ = "LogXide Team"
 __email__ = "freedomzero91@gmail.com"
 __license__ = "MIT"
@@ -46,15 +46,23 @@ from .compat_handlers import (
     NOTSET,
     WARN,
     WARNING,
-    FileHandler,
     Formatter,
     Handler,
     LoggingManager,
-    NullHandler,
-    StreamHandler,
+    NullHandler as _CompatNullHandler,
 )
+
+# Import Rust native handlers from the extension module
+from . import logxide
+FileHandler = logxide.FileHandler
+StreamHandler = logxide.StreamHandler
+RotatingFileHandler = logxide.RotatingFileHandler
+NullHandler = _CompatNullHandler  # Use compat NullHandler for now
 from .logger_wrapper import basicConfig, getLogger
 from .module_system import _install, logging, uninstall
+
+# Import clear_handlers from Rust extension
+clear_handlers = logxide.logging.clear_handlers
 
 # Optional Sentry integration (imported lazily to avoid dependency issues)
 try:
@@ -102,13 +110,19 @@ logging = _logging_module
 
 # Re-export important functions and classes from Rust extension
 flush = logxide.logging.flush
-register_python_handler = logxide.logging.register_python_handler
 set_thread_name = logxide.logging.set_thread_name
 PyLogger = logxide.logging.PyLogger
 Logger = PyLogger  # Alias for compatibility
 LogRecord = logxide.logging.LogRecord
 Filter = logging.Filter
 LoggerAdapter = logging.LoggerAdapter
+
+# Rust native handler registration functions (internal use)
+_register_stream_handler = logxide.logging.register_stream_handler
+_register_file_handler = logxide.logging.register_file_handler
+_register_null_handler = logxide.logging.register_null_handler
+_register_console_handler = logxide.logging.register_console_handler
+_register_rotating_file_handler = logxide.logging.register_rotating_file_handler
 
 __all__ = [
     # Core functionality
@@ -137,6 +151,8 @@ __all__ = [
     "Handler",
     "StreamHandler",
     "FileHandler",
+    "RotatingFileHandler",
+    "NullHandler",
     "PyLogger",
     "Logger",
     "LogRecord",
@@ -146,8 +162,8 @@ __all__ = [
     "getLogger",
     "basicConfig",
     "flush",
-    "register_python_handler",
     "set_thread_name",
+    "clear_handlers",
     "addLevelName",
     "getLevelName",
     "disable",

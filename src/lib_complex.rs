@@ -1,4 +1,15 @@
 //! # LogXide
+//! # LogXide - Complex Implementation
+//!
+//! ⚠️ **DEPRECATED: This module is no longer used.**
+//!
+//! This was an experimental implementation that used PythonHandler.
+//! The main implementation in `lib.rs` uses Rust native handlers exclusively
+//! for better performance.
+//!
+//! **Do not use this module.** Use `lib.rs` instead.
+//!
+//! ---
 //!
 //! A high-performance logging library for Python, implemented in Rust.
 //! LogXide provides a drop-in replacement for Python's standard logging module
