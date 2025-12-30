@@ -74,4 +74,11 @@ docs/_build/
 
 benchmark_results.txt
 
+# Benchmark data files (exclude old results, keep latest)
+*.json
+!benchmark/logger_comparison_file_io_20251230_165703.json
+
+# Archive directory
+.archive/
+
 .serena
