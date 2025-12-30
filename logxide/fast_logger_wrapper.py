@@ -43,7 +43,7 @@ class FastLoggerWrapper:
             rust_logger: The underlying Rust PyLogger instance
         """
         self._rust_logger = rust_logger
-        self._effective_level = None
+        self._effective_level: int = 0  # Will be updated by _update_cache()
         self._name = None
         self._update_cache()
 
@@ -68,7 +68,7 @@ class FastLoggerWrapper:
             True if the level is enabled, False otherwise
         """
         # Use cached effective level for fast check
-        if self._effective_level is None:
+        if self._effective_level == 0:
             self._update_cache()
         return level >= self._effective_level
 

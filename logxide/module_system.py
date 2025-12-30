@@ -55,7 +55,7 @@ from .compat_handlers import (
     Handler,
     LoggingManager,
     NullHandler,
-    StreamHandler,
+    StreamHandler as _StreamHandler,
 )
 from .logger_wrapper import _migrate_existing_loggers, basicConfig, getLogger
 
@@ -99,7 +99,7 @@ class _LoggingModule:
     NullHandler = NullHandler
     Formatter = Formatter
     Handler = Handler
-    StreamHandler = StreamHandler
+    StreamHandler = _StreamHandler
     Logger = PyLogger  # Standard logging uses Logger class
     BASIC_FORMAT = "%(levelname)s:%(name)s:%(message)s"
     LogRecord = logxide.logging.LogRecord
