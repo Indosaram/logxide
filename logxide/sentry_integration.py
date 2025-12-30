@@ -166,7 +166,7 @@ class SentryHandler(Handler):
         self, level_no: int
     ) -> Literal["fatal", "critical", "error", "warning", "info", "debug"]:
         """Map Python logging levels to Sentry levels.
-        
+
         Returns a Sentry-compatible log level string that matches the
         LogLevelStr type from sentry_sdk.
         """
@@ -183,7 +183,7 @@ class SentryHandler(Handler):
         self, level_name: str
     ) -> Literal["fatal", "critical", "error", "warning", "info", "debug"]:
         """Map Python logging level names to Sentry breadcrumb levels.
-        
+
         Returns a Sentry-compatible log level string that matches the
         LogLevelStr type from sentry_sdk.
         """
