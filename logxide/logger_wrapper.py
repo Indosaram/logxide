@@ -28,6 +28,9 @@ _existing_logger_registry = {}
 # Track the current LogXide configuration to apply to new loggers
 _current_config = {"level": None, "format": None, "datefmt": None}
 
+# Track whether basicConfig has been called to prevent duplicate handlers
+_basic_config_called = False
+
 
 def basicConfig(**kwargs):
     """
@@ -35,66 +38,86 @@ def basicConfig(**kwargs):
 
     Supported parameters:
     - level: Set the effective level for the root logger
-    - format: Format string for log messages
-    - datefmt: Date format string
-    - stream: Stream to write log output to
+    - format: Format string for log messages (currently not implemented in Rust handlers)
+    - datefmt: Date format string (currently not implemented in Rust handlers)
+    - stream: Stream to write log output to (only sys.stdout or sys.stderr supported)
+    - filename: Log to a file instead of a stream
+    - force: If True, remove any existing handlers and reconfigure (default: False)
+    
+    Note: LogXide uses Rust native handlers for performance. All handler
+    configuration is done through this function. Direct handler registration
+    via addHandler() is not supported.
+    
+    Like Python's standard logging, basicConfig() will do nothing if the root
+    logger already has handlers configured, unless force=True is specified.
     """
+    import sys
+    
+    # Import logxide at the top of the function
+    from . import logxide as logxide_module
+    
+    global _basic_config_called
+    
+    # Check if already configured (unless force=True)
+    force = kwargs.get("force", False)
+    if _basic_config_called and not force:
+        return
+    
+    # If force=True, clear existing handlers
+    if force and _basic_config_called:
+        try:
+            logxide_module.logging.clear_handlers()
+        except (ImportError, AttributeError):
+            pass
+    
+    _basic_config_called = True
 
     # Store configuration for applying to new loggers
     _current_config["level"] = kwargs.get("level")
     _current_config["format"] = kwargs.get("format")
     _current_config["datefmt"] = kwargs.get("datefmt")
 
-    # Apply configuration to LogXide's Rust backend
+    # Get configuration parameters
+    level = kwargs.get("level", 10)  # Default to DEBUG (10)
     format_str = kwargs.get("format")
     datefmt = kwargs.get("datefmt")
     stream = kwargs.get("stream")
+    filename = kwargs.get("filename")
 
-    # Build kwargs for Rust basicConfig
-    rust_kwargs = {}
-    if "level" in kwargs:
-        rust_kwargs["level"] = kwargs["level"]
-    if format_str is not None:
-        rust_kwargs["format"] = format_str
-    if datefmt is not None:
-        rust_kwargs["datefmt"] = datefmt
+    # Register appropriate Rust native handler
+    if filename:
+        # File handler
+        logxide_module.logging.register_file_handler(filename, level)
+    else:
+        # Stream handler (stdout, stderr, or Python object like StringIO)
+        if stream is None:
+            # Default to stderr
+            logxide_module.logging.register_stream_handler("stderr", level)
+        elif stream is sys.stdout:
+            logxide_module.logging.register_stream_handler("stdout", level)
+        elif stream is sys.stderr:
+            logxide_module.logging.register_stream_handler("stderr", level)
+        else:
+            # Python file-like object (StringIO, file, etc.)
+            # Pass the Python object directly to Rust
+            logxide_module.logging.register_stream_handler(stream, level)
 
-    # Call Rust basicConfig with processed parameters
-    _rust_basicConfig(**rust_kwargs)
+    # Set root logger level
+    root_logger = getLogger()
+    if hasattr(root_logger, 'setLevel'):
+        root_logger.setLevel(level)
 
     # Now handle existing Python loggers that were created before LogXide
     _migrate_existing_loggers()
 
-    # Ensure the root logger has a handler with the specified format
-    root_logger = getLogger()  # Get the root logger
-
-    # Import formatter classes
-    from .compat_handlers import Formatter, StreamHandler
-
-    if not root_logger.handlers:
-        # No handlers exist, create a new one
-        handler = StreamHandler(stream)
-        root_logger.addHandler(handler)
-    else:
-        # Use existing handler
-        handler = root_logger.handlers[0]
-
-    # Always set/update the formatter if format_str is provided
-    if format_str:
-        formatter = Formatter(format_str, datefmt)
-        handler.setFormatter(formatter)
-    elif not getattr(handler, "formatter", None):
-        # Set default formatter if none exists
-        formatter = Formatter()
-        handler.setFormatter(formatter)
-
     # Explicitly reconfigure uvicorn loggers to ensure they propagate to LogXide's root
     # This is a targeted fix for uvicorn's aggressive logging setup.
     for logger_name in ["uvicorn", "uvicorn.error", "uvicorn.access"]:
-        uvicorn_logger = getLogger(logger_name)  # Get the LogXide PyLogger instance
+        uvicorn_logger = getLogger(logger_name)
         if uvicorn_logger:
-            uvicorn_logger.handlers.clear()  # Clear handlers uvicorn added
-            uvicorn_logger.propagate = True  # Ensure messages go to root
+            with contextlib.suppress(AttributeError):
+                uvicorn_logger.handlers.clear()
+                uvicorn_logger.propagate = True
 
 
 def _migrate_existing_loggers():

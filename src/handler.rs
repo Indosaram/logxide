@@ -6,8 +6,12 @@
 //!
 //! ## Handler Types
 //!
-//! - **PythonHandler**: Wraps Python callable objects for compatibility
+//! - **PythonHandler**: ⚠️ DEPRECATED - No longer used for performance reasons
 //! - **ConsoleHandler**: Outputs formatted log records to stdout
+//! - **StreamHandler**: Outputs to stdout or stderr (recommended)
+//! - **FileHandler**: Outputs to a file
+//! - **NullHandler**: Discards all log records
+//! - **RotatingFileHandler**: Outputs to a file with automatic rotation
 //!
 //! ## Async Design
 //!
@@ -22,18 +26,21 @@
 
 use async_trait::async_trait;
 use chrono::TimeZone;
+#[cfg(feature = "python-handlers")]
 use once_cell::sync::OnceCell;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 
 use crate::core::{LogLevel, LogRecord};
 use crate::filter::Filter;
 use crate::formatter::Formatter;
+
 
 /// Trait for all log handlers with async processing capabilities.
 ///
@@ -57,6 +64,13 @@ pub trait Handler: Send + Sync {
     ///
     /// * `record` - The log record to process
     async fn emit(&self, record: &LogRecord);
+
+    /// Flush any buffered log records.
+    ///
+    /// This ensures that all buffered log records are written to their
+    /// final destination. Should be called before program termination
+    /// or when immediate persistence is required.
+    async fn flush(&self);
 
     /// Set the formatter for this handler.
     ///
@@ -82,20 +96,38 @@ pub trait Handler: Send + Sync {
     fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>);
 }
 
-/// Handler that wraps a Python callable for compatibility with Python logging.
+/// ⚠️ DEPRECATED: Handler that wraps a Python callable for compatibility with Python logging.
 ///
-/// This handler allows LogXide to interface with existing Python logging
-/// infrastructure by accepting Python handler objects and calling them
-/// with properly formatted log records.
+/// **This handler is no longer used in LogXide for performance reasons.**
+/// Python handlers create significant overhead due to:
+/// - Python FFI boundary crossing
+/// - GIL acquisition
+/// - LogRecord serialization to Python objects
+/// - Python method call overhead
 ///
-/// # Compatibility
+/// LogXide now uses Rust native handlers exclusively for maximum performance.
+/// This struct remains only for backward compatibility and is not registered
+/// by the main lib.rs module.
 ///
-/// The handler converts Rust LogRecord structs to Python dict objects
-/// that match the format expected by Python logging handlers.
+/// # Migration
+///
+/// Use Rust native handlers instead:
+/// - `StreamHandler` for console output
+/// - `FileHandler` for file output
+/// - `RotatingFileHandler` for rotating files
+/// - `NullHandler` for discarding logs
 ///
 /// # Thread Safety
 ///
 /// Uses PyO3's GIL management to safely call Python code from Rust threads.
+/// Python logging handler support (deprecated - use Rust native handlers instead)
+/// 
+/// This is disabled by default. Enable with the `python-handlers` feature flag.
+#[cfg(feature = "python-handlers")]
+#[deprecated(
+    since = "0.1.2",
+    note = "Use Rust native handlers (StreamHandler, FileHandler, etc.) for better performance"
+)]
 pub struct PythonHandler {
     /// Python callable object (typically a logging.Handler instance)
     pub py_callable: PyObject,
@@ -109,10 +141,14 @@ pub struct PythonHandler {
 }
 
 // Cache for Python logging.LogRecord class to avoid repeated imports
+#[cfg(feature = "python-handlers")]
 static LOG_RECORD_CLASS: OnceCell<PyObject> = OnceCell::new();
 
+#[cfg(feature = "python-handlers")]
 impl PythonHandler {
-    /// Create a new PythonHandler wrapping a Python callable.
+    /// ⚠️ DEPRECATED: Create a new PythonHandler wrapping a Python callable.
+    ///
+    /// **Do not use this.** Use Rust native handlers instead.
     ///
     /// The handler will attempt to generate a unique ID by calling
     /// the Python object's __hash__ method.
@@ -124,6 +160,11 @@ impl PythonHandler {
     /// # Returns
     ///
     /// A new PythonHandler instance
+    #[deprecated(
+        since = "0.1.2",
+        note = "Use Rust native handlers (StreamHandler, FileHandler, etc.) instead"
+    )]
+    #[allow(dead_code)]
     pub fn new(py_callable: PyObject) -> Self {
         let py_id = Python::with_gil(|py| {
             py_callable
@@ -142,7 +183,9 @@ impl PythonHandler {
         }
     }
 
-    /// Create a new PythonHandler with an explicit ID.
+    /// ⚠️ DEPRECATED: Create a new PythonHandler with an explicit ID.
+    ///
+    /// **Do not use this.** Use Rust native handlers instead.
     ///
     /// This constructor allows specifying the handler ID directly,
     /// which is useful when the ID is already known (e.g., from Python's id() function).
@@ -155,6 +198,11 @@ impl PythonHandler {
     /// # Returns
     ///
     /// A new PythonHandler instance with the specified ID
+    #[deprecated(
+        since = "0.1.2",
+        note = "Use Rust native handlers (StreamHandler, FileHandler, etc.) instead"
+    )]
+    #[allow(dead_code)]
     pub fn with_id(py_callable: PyObject, py_id: usize) -> Self {
         Self {
             py_callable,
@@ -177,12 +225,18 @@ impl PythonHandler {
     }
 }
 
-/// Implementation of Handler trait for PythonHandler.
+/// ⚠️ DEPRECATED: Implementation of Handler trait for PythonHandler.
 ///
-/// Converts Rust LogRecord to Python dict and calls the wrapped Python callable.
+/// **This is no longer used in LogXide.** Use Rust native handlers instead.
+///
+/// Provides Python handler compatibility with GIL management.
+#[cfg(feature = "python-handlers")]
 #[async_trait]
 impl Handler for PythonHandler {
-    /// Emit a log record by calling the wrapped Python callable.
+    /// ⚠️ DEPRECATED: Emit a log record by calling the wrapped Python callable.
+    ///
+    /// **Do not use this.** This method crosses the Python FFI boundary and
+    /// acquires the GIL, causing significant performance overhead.
     ///
     /// Converts the LogRecord to a Python dictionary with the same field
     /// names and types as Python's logging.LogRecord, then calls the
@@ -250,6 +304,10 @@ impl Handler for PythonHandler {
     fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>) {
         self.filters.push(filter);
     }
+
+    async fn flush(&self) {
+        // PythonHandler doesn't buffer, no-op
+    }
 }
 
 /// Simple console handler that writes formatted log records to stdout.
@@ -266,8 +324,8 @@ impl Handler for PythonHandler {
 ///
 /// The handler level is protected by a Mutex to allow safe concurrent access.
 pub struct ConsoleHandler {
-    /// Minimum log level to output (protected by Mutex for thread safety)
-    pub level: Mutex<LogLevel>,
+    /// Minimum log level to output (using AtomicU8 for lock-free access)
+    pub level: AtomicU8,
     /// Optional formatter for customizing output format
     pub formatter: Option<Arc<dyn Formatter + Send + Sync>>,
     /// List of filters applied before output
@@ -294,7 +352,7 @@ impl ConsoleHandler {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
-            level: Mutex::new(LogLevel::Warning),
+            level: AtomicU8::new(LogLevel::Warning as u8),
             formatter: None,
             filters: Vec::new(),
         }
@@ -312,7 +370,7 @@ impl ConsoleHandler {
     #[allow(dead_code)]
     pub fn with_level(level: LogLevel) -> Self {
         Self {
-            level: Mutex::new(level),
+            level: AtomicU8::new(level as u8),
             formatter: None,
             filters: Vec::new(),
         }
@@ -333,7 +391,7 @@ impl ConsoleHandler {
     /// A new ConsoleHandler instance with the specified configuration
     pub fn with_formatter(level: LogLevel, formatter: Arc<dyn Formatter + Send + Sync>) -> Self {
         Self {
-            level: Mutex::new(level),
+            level: AtomicU8::new(level as u8),
             formatter: Some(formatter),
             filters: Vec::new(),
         }
@@ -368,9 +426,9 @@ impl Handler for ConsoleHandler {
     ///
     /// * `record` - The log record to emit
     async fn emit(&self, record: &LogRecord) {
-        // Check if we should log this record based on level
-        let level = self.level.lock().unwrap();
-        if record.levelno < *level as i32 {
+        // Check if we should log this record based on level (lock-free)
+        let level = self.level.load(Ordering::Relaxed);
+        if record.levelno < level as i32 {
             return;
         }
 
@@ -407,6 +465,312 @@ impl Handler for ConsoleHandler {
     fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>) {
         self.filters.push(filter);
     }
+
+    async fn flush(&self) {
+        // ConsoleHandler uses stdout which auto-flushes on newline
+        // But we'll explicitly flush just to be safe
+        let _ = std::io::stdout().flush();
+    }
+}
+
+/// Null handler that does nothing with log records.
+///
+/// This handler is useful for:
+/// - Disabling logging output
+/// - Library code that should not produce output by default
+/// - Testing scenarios
+///
+/// # Performance
+///
+/// NullHandler has minimal overhead as it performs no I/O operations.
+pub struct NullHandler;
+
+impl NullHandler {
+    /// Create a new NullHandler.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for NullHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Handler for NullHandler {
+    /// Emit does nothing for NullHandler.
+    async fn emit(&self, _record: &LogRecord) {
+        // Intentionally do nothing
+    }
+
+    fn set_formatter(&mut self, _formatter: Arc<dyn Formatter + Send + Sync>) {
+        // NullHandler ignores formatters
+    }
+
+    fn add_filter(&mut self, _filter: Arc<dyn Filter + Send + Sync>) {
+        // NullHandler ignores filters
+    }
+
+    async fn flush(&self) {
+        // NullHandler discards everything, no-op
+    }
+}
+
+/// Stream handler that writes formatted log records to a stream (stdout or stderr).
+///
+/// This is a more flexible version of ConsoleHandler that can write to any stream,
+/// not just stdout. It's the Rust equivalent of Python's logging.StreamHandler.
+///
+/// # Output Destination
+///
+/// The handler can write to:
+/// - `stdout` - Standard output stream
+/// - `stderr` - Standard error stream (default)
+///
+/// # Thread Safety
+///
+/// Uses Mutex to ensure thread-safe access to the output stream.
+pub struct StreamHandler {
+    /// Target stream (stdout or stderr)
+    stream: Mutex<StreamDestination>,
+    /// Minimum log level to output (using AtomicU8 for lock-free access)
+    level: AtomicU8,
+    /// Optional formatter for customizing output format
+    formatter: Option<Arc<dyn Formatter + Send + Sync>>,
+    /// List of filters applied before output
+    filters: Vec<Arc<dyn Filter + Send + Sync>>,
+}
+
+/// Represents the destination stream for output.
+#[derive(Clone, Copy)]
+pub enum StreamDestination {
+    Stdout,
+    Stderr,
+}
+
+impl StreamHandler {
+    /// Create a new StreamHandler writing to stderr (default).
+    pub fn new() -> Self {
+        Self {
+            stream: Mutex::new(StreamDestination::Stderr),
+            level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: None,
+            filters: Vec::new(),
+        }
+    }
+
+    /// Create a new StreamHandler writing to stdout.
+    pub fn stdout() -> Self {
+        Self {
+            stream: Mutex::new(StreamDestination::Stdout),
+            level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: None,
+            filters: Vec::new(),
+        }
+    }
+
+    /// Create a new StreamHandler writing to stderr.
+    pub fn stderr() -> Self {
+        Self {
+            stream: Mutex::new(StreamDestination::Stderr),
+            level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: None,
+            filters: Vec::new(),
+        }
+    }
+
+    /// Set the minimum log level.
+    pub fn set_level(&self, level: LogLevel) {
+        self.level.store(level as u8, Ordering::Relaxed);
+    }
+}
+
+impl Default for StreamHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Handler for StreamHandler {
+    async fn emit(&self, record: &LogRecord) {
+        // Check if we should log this record based on level (lock-free)
+        let level = self.level.load(Ordering::Relaxed);
+        if record.levelno < level as i32 {
+            return;
+        }
+
+        // Format the record
+        let output = if let Some(ref formatter) = self.formatter {
+            formatter.format(record)
+        } else {
+            // Default format matching Python's logging
+            format!(
+                "{} - {} - {} - {}",
+                chrono::Local
+                    .timestamp_opt(record.created as i64, (record.msecs * 1_000_000.0) as u32)
+                    .single()
+                    .unwrap_or_else(chrono::Local::now)
+                    .format("%Y-%m-%d %H:%M:%S,%3f"),
+                record.name,
+                record.levelname,
+                record.msg
+            )
+        };
+
+        // Write to the appropriate stream
+        use std::io::{self, Write};
+        let stream_dest = *self.stream.lock().unwrap();
+        match stream_dest {
+            StreamDestination::Stdout => {
+                let mut stdout = io::stdout();
+                let _ = writeln!(stdout, "{}", output);
+                let _ = stdout.flush();
+            }
+            StreamDestination::Stderr => {
+                let mut stderr = io::stderr();
+                let _ = writeln!(stderr, "{}", output);
+                let _ = stderr.flush();
+            }
+        }
+    }
+
+    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        self.formatter = Some(formatter);
+    }
+
+    fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>) {
+        self.filters.push(filter);
+    }
+
+    async fn flush(&self) {
+        use std::io::{self, Write};
+        let stream_dest = *self.stream.lock().unwrap();
+        match stream_dest {
+            StreamDestination::Stdout => {
+                let _ = io::stdout().flush();
+            }
+            StreamDestination::Stderr => {
+                let _ = io::stderr().flush();
+            }
+        }
+    }
+}
+
+/// File handler that writes formatted log records to a file.
+///
+/// This is a simple file handler that appends log records to a file.
+/// For automatic rotation, use RotatingFileHandler instead.
+///
+/// # File Management
+///
+/// - Opens the file in append mode by default
+/// - Buffers writes for better performance
+/// - Flushes after each write to ensure data is persisted
+///
+/// # Thread Safety
+///
+/// Uses Mutex to ensure thread-safe access to the file writer.
+pub struct FileHandler {
+    /// Path to the log file
+    #[allow(dead_code)]
+    filename: PathBuf,
+    /// File writer (protected by Mutex for thread safety)
+    writer: Mutex<Option<BufWriter<File>>>,
+    /// Minimum log level to output (using AtomicU8 for lock-free access)
+    level: AtomicU8,
+    /// Optional formatter for customizing output format
+    formatter: Option<Arc<dyn Formatter + Send + Sync>>,
+    /// List of filters applied before output
+    filters: Vec<Arc<dyn Filter + Send + Sync>>,
+}
+
+impl FileHandler {
+    /// Create a new FileHandler.
+    ///
+    /// # Arguments
+    ///
+    /// * `filename` - Path to the log file
+    ///
+    /// # Returns
+    ///
+    /// A new FileHandler instance
+    pub fn new<P: AsRef<Path>>(filename: P) -> std::io::Result<Self> {
+        let filename = filename.as_ref().to_path_buf();
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&filename)?;
+        // Use 64KB buffer for better performance (default is 8KB)
+        let writer = BufWriter::with_capacity(64 * 1024, file);
+
+        Ok(Self {
+            filename: filename.clone(),
+            writer: Mutex::new(Some(writer)),
+            level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: None,
+            filters: Vec::new(),
+        })
+    }
+
+    /// Set the minimum log level.
+    pub fn set_level(&self, level: LogLevel) {
+        self.level.store(level as u8, Ordering::Relaxed);
+    }
+}
+
+#[async_trait]
+impl Handler for FileHandler {
+    async fn emit(&self, record: &LogRecord) {
+        // Check if we should log this record based on level (lock-free)
+        let level = self.level.load(Ordering::Relaxed);
+        if record.levelno < level as i32 {
+            return;
+        }
+
+        // Format the record
+        let output = if let Some(ref formatter) = self.formatter {
+            formatter.format(record)
+        } else {
+            // Default format matching Python's logging
+            format!(
+                "{} - {} - {} - {}",
+                chrono::Local
+                    .timestamp_opt(record.created as i64, (record.msecs * 1_000_000.0) as u32)
+                    .single()
+                    .unwrap_or_else(chrono::Local::now)
+                    .format("%Y-%m-%d %H:%M:%S,%3f"),
+                record.name,
+                record.levelname,
+                record.msg
+            )
+        };
+
+        // Write to file with immediate flush for reliability
+        let mut writer_guard = self.writer.lock().unwrap();
+        if let Some(ref mut writer) = *writer_guard {
+            let _ = writeln!(writer, "{}", output);
+            // Flush immediately to ensure logs are written
+            let _ = writer.flush();
+        }
+    }
+
+    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        self.formatter = Some(formatter);
+    }
+
+    fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>) {
+        self.filters.push(filter);
+    }
+
+    async fn flush(&self) {
+        let mut writer_guard = self.writer.lock().unwrap();
+        if let Some(ref mut writer) = *writer_guard {
+            let _ = writer.flush();
+        }
+    }
 }
 
 /// Rotating file handler that automatically rotates log files when they exceed a specified size.
@@ -437,8 +801,8 @@ pub struct RotatingFileHandler {
     pub writer: Mutex<Option<BufWriter<File>>>,
     /// Current file size (protected by Mutex for thread safety)
     pub current_size: Mutex<u64>,
-    /// Minimum log level to output
-    pub level: Mutex<LogLevel>,
+    /// Minimum log level to output (using AtomicU8 for lock-free access)
+    pub level: AtomicU8,
     /// Optional formatter for customizing output format
     pub formatter: Option<Arc<dyn Formatter + Send + Sync>>,
     /// List of filters applied before output
@@ -464,7 +828,7 @@ impl RotatingFileHandler {
             backup_count,
             writer: Mutex::new(None),
             current_size: Mutex::new(0),
-            level: Mutex::new(LogLevel::Warning),
+            level: AtomicU8::new(LogLevel::Debug as u8),
             formatter: None,
             filters: Vec::new(),
         }
@@ -496,7 +860,7 @@ impl RotatingFileHandler {
             backup_count,
             writer: Mutex::new(None),
             current_size: Mutex::new(0),
-            level: Mutex::new(level),
+            level: AtomicU8::new(level as u8),
             formatter: Some(formatter),
             filters: Vec::new(),
         }
@@ -515,10 +879,13 @@ impl RotatingFileHandler {
                 .create(true)
                 .append(true)
                 .open(&self.filename)?;
-
+            
             // Get the current file size
-            *current_size = file.metadata()?.len();
-            *writer = Some(BufWriter::new(file));
+            let size = file.metadata()?.len();
+            *current_size = size;
+            
+            // Use 64KB buffer for better performance (default is 8KB)
+            *writer = Some(BufWriter::with_capacity(64 * 1024, file));
         }
 
         Ok(())
@@ -571,6 +938,11 @@ impl RotatingFileHandler {
         let current_size = self.current_size.lock().unwrap();
         *current_size + record_size as u64 > self.max_bytes
     }
+
+    /// Set the minimum log level.
+    pub fn set_level(&self, level: LogLevel) {
+        self.level.store(level as u8, Ordering::Relaxed);
+    }
 }
 
 /// Implementation of Handler trait for RotatingFileHandler.
@@ -589,12 +961,11 @@ impl Handler for RotatingFileHandler {
     ///
     /// * `record` - The log record to emit
     async fn emit(&self, record: &LogRecord) {
-        // Check if we should log this record based on level
-        let level = self.level.lock().unwrap();
-        if record.levelno < *level as i32 {
+        // Check if we should log this record based on level (lock-free)
+        let level = self.level.load(Ordering::Relaxed);
+        if record.levelno < level as i32 {
             return;
         }
-        drop(level);
 
         // Format the record
         let output = if let Some(ref formatter) = self.formatter {
@@ -652,5 +1023,121 @@ impl Handler for RotatingFileHandler {
 
     fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>) {
         self.filters.push(filter);
+    }
+
+    async fn flush(&self) {
+        let mut writer_guard = self.writer.lock().unwrap();
+        if let Some(ref mut writer) = *writer_guard {
+            let _ = writer.flush();
+        }
+    }
+}
+
+/// Python stream handler that writes to a Python file-like object.
+///
+/// This handler allows writing to Python objects that have a `write()` method,
+/// such as `io.StringIO`, `io.BytesIO`, or custom stream objects.
+/// This is essential for testing with pytest and capturing log output.
+///
+/// # Thread Safety
+///
+/// Uses PyObject which is thread-safe across the FFI boundary.
+/// The Python GIL is acquired for each write operation.
+pub struct PythonStreamHandler {
+    /// Python file-like object to write to
+    stream: PyObject,
+    /// Minimum log level to output (using AtomicU8 for lock-free access)
+    level: AtomicU8,
+    /// Optional formatter for customizing output format
+    formatter: Option<Arc<dyn Formatter + Send + Sync>>,
+    /// List of filters applied before output
+    filters: Vec<Arc<dyn Filter + Send + Sync>>,
+}
+
+impl PythonStreamHandler {
+    /// Create a new PythonStreamHandler.
+    ///
+    /// # Arguments
+    ///
+    /// * `stream` - Python file-like object with write() method
+    ///
+    /// # Returns
+    ///
+    /// A new PythonStreamHandler instance
+    pub fn new(stream: PyObject) -> Self {
+        Self {
+            stream,
+            level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: None,
+            filters: Vec::new(),
+        }
+    }
+
+    pub fn set_level(&mut self, level: LogLevel) {
+        self.level.store(level as u8, Ordering::Relaxed);
+    }
+}
+
+#[async_trait]
+impl Handler for PythonStreamHandler {
+    async fn emit(&self, record: &LogRecord) {
+        // Check if we should log this record based on level (lock-free)
+        let level = self.level.load(Ordering::Relaxed);
+        if record.levelno < level as i32 {
+            return;
+        }
+
+        // Format the record
+        let output = if let Some(ref formatter) = self.formatter {
+            formatter.format(record)
+        } else {
+            // Default format matching Python's logging
+            format!(
+                "{} - {} - {} - {}",
+                chrono::Local
+                    .timestamp_opt(record.created as i64, (record.msecs * 1_000_000.0) as u32)
+                    .single()
+                    .unwrap_or_else(chrono::Local::now)
+                    .format("%Y-%m-%d %H:%M:%S,%3f"),
+                record.name,
+                record.levelname,
+                record.msg
+            )
+        };
+
+        // Write to Python stream object
+        // Use a blocking task to safely acquire GIL in async context
+        let output_with_newline = format!("{}\n", output);
+        
+        // Clone the PyObject reference for use in the blocking task
+        let stream_ref = &self.stream;
+        
+        Python::with_gil(|py| {
+            let stream_bound = stream_ref.bind(py);
+            // Call write() method on the Python object
+            if let Ok(write_method) = stream_bound.getattr("write") {
+                let _ = write_method.call1((output_with_newline,));
+            }
+            // Try to flush if the object has a flush() method
+            if let Ok(flush_method) = stream_bound.getattr("flush") {
+                let _ = flush_method.call0();
+            }
+        });
+    }
+
+    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        self.formatter = Some(formatter);
+    }
+
+    fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>) {
+        self.filters.push(filter);
+    }
+
+    async fn flush(&self) {
+        Python::with_gil(|py| {
+            if let Ok(flush_method) = self.stream.bind(py).getattr("flush") {
+                let _ = flush_method.call0();
+            }
+        });
     }
 }
