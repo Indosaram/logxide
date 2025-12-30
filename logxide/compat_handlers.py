@@ -6,14 +6,11 @@ Python's standard logging module, but delegates actual logging to
 Rust native handlers for maximum performance.
 """
 
-import atexit
 import sys
-import threading
 import time
 import traceback
 
 # Import Rust native handler registration functions
-from logxide import logxide as _logxide_rust
 
 # Define logging level constants
 NOTSET = 0
@@ -28,7 +25,7 @@ FATAL = CRITICAL  # Alias for CRITICAL
 
 class NullHandler:
     """A handler that does nothing - compatible with logging.NullHandler
-    
+
     Note: This is a no-op wrapper for compatibility. LogXide ignores all handlers
     and uses internal Rust handlers for performance.
     """
@@ -73,16 +70,16 @@ class Formatter:
         if isinstance(record, dict):
             record_dict = record.copy()
         else:
-            record_dict = record.__dict__ if hasattr(record, '__dict__') else {}
-        
+            record_dict = record.__dict__ if hasattr(record, "__dict__") else {}
+
         # Ensure 'message' key exists (some formats use it)
-        if 'message' not in record_dict:
-            record_dict['message'] = record_dict.get('msg', '')
-        
+        if "message" not in record_dict:
+            record_dict["message"] = record_dict.get("msg", "")
+
         # Add asctime if not present and format string requires it
-        if 'asctime' not in record_dict and '%(asctime)' in self.fmt:
-            record_dict['asctime'] = self.formatTime(record, self.datefmt)
-        
+        if "asctime" not in record_dict and "%(asctime)" in self.fmt:
+            record_dict["asctime"] = self.formatTime(record, self.datefmt)
+
         # Apply format string
         try:
             # Use Python's % formatting with record dict
@@ -90,7 +87,7 @@ class Formatter:
             return s
         except (KeyError, ValueError, TypeError):
             # Fallback to just the message if formatting fails
-            return record_dict.get('msg', str(record))
+            return record_dict.get("msg", str(record))
 
     def formatTime(self, record, datefmt=None):
         """
@@ -156,7 +153,7 @@ class Formatter:
 
 class Handler:
     """Basic handler class - compatible with logging.Handler
-    
+
     Note: This is a compatibility shim. LogXide uses Rust native handlers
     for actual log processing. Python handlers are not supported for
     performance reasons.
@@ -177,6 +174,7 @@ class Handler:
     def handleError(self, record):
         """Handle errors during emit()"""
         import traceback
+
         if sys.stderr:
             sys.stderr.write("--- Logging error ---\n")
             traceback.print_exc(file=sys.stderr)
@@ -216,10 +214,11 @@ class Handler:
 
 class StreamHandler(Handler):
     """Stream handler class - compatibility wrapper
-    
-    WARNING: LogXide does not support custom Python handlers for performance reasons.
-    Handlers are managed internally by Rust. This class exists only for API compatibility.
-    
+
+    WARNING: LogXide does not support custom Python handlers for performance
+    reasons. Handlers are managed internally by Rust. This class exists only
+    for API compatibility.
+
     To configure output, use basicConfig() instead:
         logxide.basicConfig(level=logging.DEBUG, format='%(message)s')
     """
@@ -257,10 +256,11 @@ class StreamHandler(Handler):
 
 class FileHandler(Handler):
     """File handler class - compatibility wrapper
-    
-    WARNING: LogXide does not support custom Python handlers for performance reasons.
-    Handlers are managed internally by Rust. This class exists only for API compatibility.
-    
+
+    WARNING: LogXide does not support custom Python handlers for performance
+    reasons. Handlers are managed internally by Rust. This class exists only
+    for API compatibility.
+
     To configure file output, use basicConfig() instead:
         logxide.basicConfig(filename='app.log', level=logging.DEBUG)
     """
@@ -283,12 +283,21 @@ class FileHandler(Handler):
 
 class RotatingFileHandler(Handler):
     """Rotating file handler - compatibility wrapper
-    
-    WARNING: LogXide does not support custom Python handlers for performance reasons.
-    Handlers are managed internally by Rust. This class exists only for API compatibility.
+
+    WARNING: LogXide does not support custom Python handlers for performance
+    reasons. Handlers are managed internally by Rust. This class exists only
+    for API compatibility.
     """
 
-    def __init__(self, filename, mode='a', maxBytes=0, backupCount=0, encoding=None, delay=False):
+    def __init__(
+        self,
+        filename,
+        mode="a",
+        maxBytes=0,
+        backupCount=0,
+        encoding=None,
+        delay=False,
+    ):
         super().__init__()
         self.baseFilename = filename
         self.mode = mode
