@@ -49,11 +49,12 @@ from .compat_handlers import (
     Formatter,
     Handler,
     LoggingManager,
+)
+from .compat_handlers import (
     NullHandler as _CompatNullHandler,
 )
 
 # Import Rust native handlers from the extension module
-from . import logxide
 FileHandler = logxide.FileHandler
 StreamHandler = logxide.StreamHandler
 RotatingFileHandler = logxide.RotatingFileHandler

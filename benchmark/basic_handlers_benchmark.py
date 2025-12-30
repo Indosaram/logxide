@@ -299,7 +299,7 @@ class BasicHandlersBenchmark:
             level=logxide.logging.INFO,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             filename=log_file,
-            force=True
+            force=True,
         )
 
         logger = logxide.logging.getLogger(f"logxide_file_{time.time()}")
@@ -422,17 +422,18 @@ class BasicHandlersBenchmark:
         # LogXide now uses Rust native handlers via basicConfig
         # Redirect stderr to null_stream for benchmarking
         import sys
+
         old_stderr = sys.stderr
         sys.stderr = self.null_stream
-        
+
         logxide.logging.basicConfig(
             level=logxide.logging.INFO,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            force=True
+            force=True,
         )
-        
+
         sys.stderr = old_stderr
-        
+
         logger = logxide.logging.getLogger(f"logxide_stream_{time.time()}")
         return logger, []
 
