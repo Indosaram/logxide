@@ -9,7 +9,7 @@
 use pyo3::exceptions::PyValueError;
 #[allow(deprecated)]
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyModule};
+use pyo3::types::{PyAny, PyDict};
 use std::sync::{Arc, Mutex};
 
 mod config;
@@ -34,65 +34,9 @@ use core::{
     create_log_record_with_extra, get_logger as core_get_logger, get_root_logger, LogLevel,
     LogRecord, Logger,
 };
-use handler::{ConsoleHandler, Handler, PythonHandler, RotatingFileHandler};
+use handler::{ConsoleHandler, FileHandler, Handler, NullHandler, PythonStreamHandler, RotatingFileHandler, StreamHandler};
 
-use crossbeam::channel::{self, Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use once_cell::sync::Lazy;
-use tokio::runtime::Runtime;
-use tokio::sync::oneshot;
-
-/// Global Tokio runtime for async logging operations.
-///
-/// This runtime handles all asynchronous log processing in a dedicated thread pool,
-/// ensuring that logging operations don't block the main application threads.
-static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create Tokio runtime")
-});
-
-/// Message types for communication with the async logging system.
-///
-/// The logging system uses a message-passing architecture where log records
-/// and control messages are sent through a channel to be processed asynchronously.
-enum LogMessage {
-    /// A log record to be processed by registered handlers
-    Record(Box<LogRecord>),
-    /// A flush request with a completion signal
-    #[allow(dead_code)]
-    Flush(oneshot::Sender<()>),
-}
-
-/// Global sender for log messages to the async processing system.
-///
-/// This channel is unbounded using crossbeam for better performance.
-/// Messages are processed by a background task spawned in the global RUNTIME.
-static SENDER: Lazy<CrossbeamSender<LogMessage>> = Lazy::new(|| {
-    let (sender, receiver): (CrossbeamSender<LogMessage>, CrossbeamReceiver<LogMessage>) =
-        channel::unbounded();
-
-    // Spawn background task for processing log messages
-    RUNTIME.spawn(async move {
-        while let Ok(message) = receiver.recv() {
-            match message {
-                LogMessage::Record(record) => {
-                    // Dispatch to all registered handlers synchronously
-                    // No per-handler task spawning to reduce overhead
-                    let handlers = HANDLERS.lock().unwrap().clone();
-                    for handler in handlers.iter() {
-                        handler.emit(&record).await;
-                    }
-                }
-                LogMessage::Flush(sender) => {
-                    // Send completion signal
-                    let _ = sender.send(());
-                }
-            }
-        }
-    });
-    sender
-});
 
 /// Global registry of log handlers.
 ///
@@ -123,6 +67,8 @@ pub struct PyLogger {
     fast_logger: Arc<fast_logger::FastLogger>,
     /// Python handler objects for compatibility
     handlers: Arc<Mutex<Vec<PyObject>>>,
+    /// Local Rust native handlers for this specific logger
+    local_handlers: Arc<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>>,
     /// Propagate flag for hierarchy support
     propagate: Arc<Mutex<bool>>,
     /// Parent logger for hierarchy
@@ -137,6 +83,7 @@ impl Clone for PyLogger {
             inner: self.inner.clone(),
             fast_logger: self.fast_logger.clone(),
             handlers: self.handlers.clone(),
+            local_handlers: self.local_handlers.clone(),
             propagate: self.propagate.clone(),
             parent: self.parent.clone(),
             manager: self.manager.clone(),
@@ -146,6 +93,46 @@ impl Clone for PyLogger {
 
 #[pymethods]
 impl PyLogger {
+    /// Emit a log record to all appropriate handlers (local + global).
+    /// 
+    /// This is the core logging dispatch function that:
+    /// 1. Emits to local handlers (if any)
+    /// 2. Emits to global handlers (if no local handlers OR propagate=true)
+    /// 
+    /// Uses fully synchronous emit for immediate write (no async overhead).
+    fn emit_record(&self, record: LogRecord) {
+        let local_handlers = self.local_handlers.lock().unwrap();
+        
+        // Fast path: no local handlers, use global only
+        if local_handlers.is_empty() {
+            drop(local_handlers);
+            let global_handlers = HANDLERS.lock().unwrap();
+            
+            // Emit synchronously - block_in_place to avoid runtime issues
+            for handler in global_handlers.iter() {
+                // Use futures::executor::block_on for synchronous execution
+                futures::executor::block_on(handler.emit(&record));
+            }
+            return;
+        }
+        
+        // Emit to local handlers
+        for handler in local_handlers.iter() {
+            futures::executor::block_on(handler.emit(&record));
+        }
+        
+        // Also emit to global handlers if propagate is true
+        let should_propagate = *self.propagate.lock().unwrap();
+        if should_propagate {
+            drop(local_handlers);
+            let global_handlers = HANDLERS.lock().unwrap();
+            
+            for handler in global_handlers.iter() {
+                futures::executor::block_on(handler.emit(&record));
+            }
+        }
+    }
+    
     /// Extract the 'extra' parameter from kwargs and convert to HashMap<String, String>
     fn extract_extra_fields(
         &self,
@@ -289,18 +276,22 @@ impl PyLogger {
     }
 
     #[allow(non_snake_case)]
-    fn addHandler(&mut self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
-        // Wrap the Python callable as a PythonHandler and register globally
-        if !handler.is_callable() {
-            return Err(PyValueError::new_err("Handler must be callable"));
+    fn addHandler(&self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
+        // Extract Rust handler from Python wrapper and add to local handlers
+        if let Ok(file_handler) = handler.extract::<PyRef<PyFileHandler>>() {
+            self.local_handlers.lock().unwrap().push(file_handler.inner.clone());
+            Ok(())
+        } else if let Ok(stream_handler) = handler.extract::<PyRef<PyStreamHandler>>() {
+            self.local_handlers.lock().unwrap().push(stream_handler.inner.clone());
+            Ok(())
+        } else if let Ok(rotating_handler) = handler.extract::<PyRef<PyRotatingFileHandler>>() {
+            self.local_handlers.lock().unwrap().push(rotating_handler.inner.clone());
+            Ok(())
+        } else {
+            Err(PyValueError::new_err(
+                "Only Rust native handlers are supported. Use FileHandler, StreamHandler, or RotatingFileHandler from logxide.",
+            ))
         }
-        // Use a simple counter for handler identity
-        static HANDLER_COUNTER: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        let handler_id = HANDLER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let py_handler = PythonHandler::with_id(handler.clone().unbind(), handler_id);
-        HANDLERS.lock().unwrap().push(Arc::new(py_handler));
-        Ok(())
     }
 
     /// Format a log message with arguments using Python string formatting
@@ -347,16 +338,9 @@ impl PyLogger {
             formatted_msg,
             extra_fields,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
-        if *self.propagate.lock().unwrap() {
-            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
-                Python::with_gil(|py| {
-                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
-                    parent_logger.debug(py, msg.clone_ref(py), args, kwargs)?;
-                    Ok::<(), PyErr>(())
-                })?;
-            }
-        }
+        
+        // Always emit to local handlers (and global if propagate=true)
+        self.emit_record(record);
         Ok(())
     }
 
@@ -385,16 +369,9 @@ impl PyLogger {
             formatted_msg,
             extra_fields,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
-        if *self.propagate.lock().unwrap() {
-            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
-                Python::with_gil(|py| {
-                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
-                    parent_logger.info(py, msg.clone_ref(py), args, kwargs)?;
-                    Ok::<(), PyErr>(())
-                })?;
-            }
-        }
+        
+        // Always emit to local handlers (and global if propagate=true)
+        self.emit_record(record);
         Ok(())
     }
 
@@ -423,16 +400,9 @@ impl PyLogger {
             formatted_msg,
             extra_fields,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
-        if *self.propagate.lock().unwrap() {
-            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
-                Python::with_gil(|py| {
-                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
-                    parent_logger.warning(py, msg.clone_ref(py), args, kwargs)?;
-                    Ok::<(), PyErr>(())
-                })?;
-            }
-        }
+        
+        // Always emit to local handlers (and global if propagate=true)
+        self.emit_record(record);
         Ok(())
     }
 
@@ -461,16 +431,9 @@ impl PyLogger {
             formatted_msg,
             extra_fields,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
-        if *self.propagate.lock().unwrap() {
-            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
-                Python::with_gil(|py| {
-                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
-                    parent_logger.error(py, msg.clone_ref(py), args, kwargs)?;
-                    Ok::<(), PyErr>(())
-                })?;
-            }
-        }
+        
+        // Always emit to local handlers (and global if propagate=true)
+        self.emit_record(record);
         Ok(())
     }
 
@@ -498,16 +461,9 @@ impl PyLogger {
             formatted_msg,
             extra_fields,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
-        if *self.propagate.lock().unwrap() {
-            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
-                Python::with_gil(|py| {
-                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
-                    parent_logger.critical(py, msg.clone_ref(py), args, kwargs)?;
-                    Ok::<(), PyErr>(())
-                })?;
-            }
-        }
+        
+        // Always emit to local handlers (and global if propagate=true)
+        self.emit_record(record);
         Ok(())
     }
 
@@ -625,16 +581,9 @@ impl PyLogger {
             formatted_msg,
             extra_fields,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
-        if *self.propagate.lock().unwrap() {
-            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
-                Python::with_gil(|py| {
-                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
-                    parent_logger.exception(py, msg.clone_ref(py), args, kwargs)?;
-                    Ok::<(), PyErr>(())
-                })?;
-            }
-        }
+        
+        // Always emit to local handlers (and global if propagate=true)
+        self.emit_record(record);
         Ok(())
     }
 
@@ -648,6 +597,27 @@ impl PyLogger {
     #[allow(non_snake_case)]
     fn removeHandler(&self, _handler: &Bound<PyAny>) -> PyResult<()> {
         // For compatibility - logxide manages handlers globally
+        Ok(())
+    }
+
+    /// Flush all handlers (local and global if propagate is true)
+    fn flush(&self) -> PyResult<()> {
+        // Flush local handlers
+        let local_handlers = self.local_handlers.lock().unwrap();
+        for handler in local_handlers.iter() {
+            futures::executor::block_on(handler.flush());
+        }
+        
+        // Also flush global handlers if propagate is true
+        let should_propagate = *self.propagate.lock().unwrap();
+        if should_propagate {
+            drop(local_handlers);
+            let global_handlers = HANDLERS.lock().unwrap();
+            for handler in global_handlers.iter() {
+                futures::executor::block_on(handler.flush());
+            }
+        }
+        
         Ok(())
     }
 
@@ -696,16 +666,9 @@ impl PyLogger {
             formatted_msg,
             extra_fields,
         );
-        let _ = SENDER.send(LogMessage::Record(Box::new(record)));
-        if *self.propagate.lock().unwrap() {
-            if let Some(parent_obj) = self.parent.lock().unwrap().as_ref() {
-                Python::with_gil(|py| {
-                    let parent_logger = parent_obj.extract::<PyLogger>(py)?;
-                    parent_logger.log(py, level, msg.clone_ref(py), args, kwargs)?;
-                    Ok::<(), PyErr>(())
-                })?;
-            }
-        }
+        
+        // Always emit to local handlers (and global if propagate=true)
+        self.emit_record(record);
         Ok(())
     }
 
@@ -724,6 +687,7 @@ impl PyLogger {
             inner: child_logger,
             fast_logger: child_fast_logger,
             handlers: Arc::new(Mutex::new(Vec::new())),
+            local_handlers: Arc::new(Mutex::new(Vec::new())),
             propagate: Arc::new(Mutex::new(true)), // Default to true like Python logging
             parent: Arc::new(Mutex::new(Some(slf.into_py(py)))),
             manager: Arc::new(Mutex::new(None)),
@@ -738,11 +702,24 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     let logging_module = PyModule::new(m.py(), "logging")?;
     logging_module.add_class::<PyLogger>()?;
     logging_module.add_class::<LogRecord>()?;
+    
+    // Add Rust native handler wrapper classes
+    logging_module.add_class::<PyFileHandler>()?;
+    logging_module.add_class::<PyStreamHandler>()?;
+    logging_module.add_class::<PyRotatingFileHandler>()?;
+    
     logging_module.add_function(wrap_pyfunction!(get_logger, &logging_module)?)?;
     logging_module.add_function(wrap_pyfunction!(basicConfig, &logging_module)?)?;
     logging_module.add_function(wrap_pyfunction!(flush, &logging_module)?)?;
-    logging_module.add_function(wrap_pyfunction!(register_python_handler, &logging_module)?)?;
     logging_module.add_function(wrap_pyfunction!(set_thread_name, &logging_module)?)?;
+    
+    // Rust native handler registration functions
+    logging_module.add_function(wrap_pyfunction!(register_stream_handler, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(register_file_handler, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(register_null_handler, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(register_console_handler, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(register_rotating_file_handler, &logging_module)?)?;
+    logging_module.add_function(wrap_pyfunction!(clear_handlers, &logging_module)?)?;
 
     // Add the logging submodule to the main module
     m.add_submodule(&logging_module)?;
@@ -750,15 +727,24 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     // Also add to the main module for direct access
     m.add_class::<PyLogger>()?;
     m.add_class::<LogRecord>()?;
+    
+    // Add Rust native handler wrapper classes to main module
+    m.add_class::<PyFileHandler>()?;
+    m.add_class::<PyStreamHandler>()?;
+    m.add_class::<PyRotatingFileHandler>()?;
+    
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(basicConfig, m)?)?;
     m.add_function(wrap_pyfunction!(flush, m)?)?;
-    m.add_function(wrap_pyfunction!(register_python_handler, m)?)?;
     m.add_function(wrap_pyfunction!(set_thread_name, m)?)?;
-
-    // Add pure Rust handler registration functions for 100% Rust processing
-    m.add_function(wrap_pyfunction!(register_console_handler, m)?)?;
+    
+    // Rust native handler registration functions
+    m.add_function(wrap_pyfunction!(register_stream_handler, m)?)?;
     m.add_function(wrap_pyfunction!(register_file_handler, m)?)?;
+    m.add_function(wrap_pyfunction!(register_null_handler, m)?)?;
+    m.add_function(wrap_pyfunction!(register_console_handler, m)?)?;
+    m.add_function(wrap_pyfunction!(register_rotating_file_handler, m)?)?;
+    m.add_function(wrap_pyfunction!(clear_handlers, m)?)?;
 
     Ok(())
 }
@@ -778,6 +764,7 @@ fn get_logger(py: Python, name: Option<&str>, manager: Option<PyObject>) -> PyRe
         inner: logger,
         fast_logger,
         handlers: Arc::new(Mutex::new(Vec::new())),
+        local_handlers: Arc::new(Mutex::new(Vec::new())),
         propagate: Arc::new(Mutex::new(true)), // Default to true like Python logging
         parent: Arc::new(Mutex::new(None)),    // Parent will be set by Python Manager
         manager: Arc::new(Mutex::new(manager.map(|m| m.clone_ref(py)))), // Store the manager
@@ -798,16 +785,58 @@ fn basicConfig(_py: Python, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<()>
 /// Flush all logging handlers.
 #[pyfunction(name = "flush")]
 fn flush(_py: Python) -> PyResult<()> {
-    // For now, just return Ok(()) as a placeholder
-    // The actual flushing will be handled by the Python wrapper
+    // Flush all global handlers
+    let global_handlers = HANDLERS.lock().unwrap();
+    for handler in global_handlers.iter() {
+        futures::executor::block_on(handler.flush());
+    }
     Ok(())
 }
 
-/// Register a Python handler with the logging system.
-#[pyfunction(name = "register_python_handler")]
-fn register_python_handler(_py: Python, _handler: PyObject) -> PyResult<()> {
-    // For now, just return Ok(()) as a placeholder
-    // The actual registration will be handled by the Python wrapper
+/// Register a Rust StreamHandler with the logging system.
+/// 
+/// Accepts either a string ("stdout" or "stderr") or a Python file-like object.
+#[pyfunction(name = "register_stream_handler")]
+fn register_stream_handler(_py: Python, stream: Option<&Bound<PyAny>>, level: Option<u32>) -> PyResult<()> {
+    use std::sync::Arc;
+
+    let log_level = LogLevel::from_usize(level.unwrap_or(10) as usize); // Default: DEBUG
+    
+    if let Some(stream_obj) = stream {
+        // Try to extract as string first
+        if let Ok(stream_str) = stream_obj.extract::<String>() {
+            // String path: "stdout" or "stderr"
+            let handler = match stream_str.as_str() {
+                "stdout" => StreamHandler::stdout(),
+                "stderr" => StreamHandler::stderr(),
+                _ => return Err(PyValueError::new_err("stream string must be 'stdout' or 'stderr'")),
+            };
+            handler.set_level(log_level);
+            HANDLERS.lock().unwrap().push(Arc::new(handler));
+        } else {
+            // Python object path: StringIO, file, etc.
+            let py_obj = stream_obj.clone().unbind();
+            let mut handler = PythonStreamHandler::new(py_obj);
+            handler.set_level(log_level);
+            HANDLERS.lock().unwrap().push(Arc::new(handler));
+        }
+    } else {
+        // Default to stderr
+        let handler = StreamHandler::stderr();
+        handler.set_level(log_level);
+        HANDLERS.lock().unwrap().push(Arc::new(handler));
+    }
+    
+    Ok(())
+}
+
+/// Register a Rust NullHandler with the logging system.
+#[pyfunction(name = "register_null_handler")]
+fn register_null_handler(_py: Python) -> PyResult<()> {
+    use std::sync::Arc;
+    
+    let handler = NullHandler::new();
+    HANDLERS.lock().unwrap().push(Arc::new(handler));
     Ok(())
 }
 
@@ -826,6 +855,25 @@ fn register_console_handler(_py: Python, level: Option<u32>) -> PyResult<()> {
 /// Register a pure Rust file handler (no Python boundary).
 #[pyfunction(name = "register_file_handler")]
 fn register_file_handler(
+    _py: Python,
+    filename: String,
+    level: Option<u32>,
+) -> PyResult<()> {
+    use std::sync::Arc;
+
+    let log_level = LogLevel::from_usize(level.unwrap_or(10) as usize); // Default: DEBUG
+
+    let handler = FileHandler::new(filename)
+        .map_err(|e| PyValueError::new_err(format!("Failed to create file handler: {}", e)))?;
+    
+    handler.set_level(log_level);
+    HANDLERS.lock().unwrap().push(Arc::new(handler));
+    Ok(())
+}
+
+/// Register a pure Rust rotating file handler (no Python boundary).
+#[pyfunction(name = "register_rotating_file_handler")]
+fn register_rotating_file_handler(
     _py: Python,
     filename: String,
     max_bytes: Option<u64>,
@@ -857,4 +905,138 @@ fn set_thread_name(_py: Python, _name: String) -> PyResult<()> {
     // For now, just return Ok(()) as a placeholder
     // The actual thread name setting will be handled by the Python wrapper
     Ok(())
+}
+
+/// Clear all registered handlers.
+/// This is useful for test isolation to reset the logging state between tests.
+#[pyfunction(name = "clear_handlers")]
+fn clear_handlers(_py: Python) -> PyResult<()> {
+    HANDLERS.lock().unwrap().clear();
+    Ok(())
+}
+
+// ============================================================================
+// Python Handler Wrapper Classes
+// ============================================================================
+
+/// Python wrapper for Rust FileHandler.
+/// 
+/// This allows creating FileHandler instances from Python that can be added
+/// to individual loggers.
+#[pyclass(name = "FileHandler")]
+pub struct PyFileHandler {
+    pub(crate) inner: Arc<FileHandler>,
+}
+
+#[pymethods]
+impl PyFileHandler {
+    /// Create a new FileHandler.
+    /// 
+    /// Args:
+    ///     filename: Path to the log file
+    ///     
+    /// Returns:
+    ///     A new FileHandler instance
+    #[new]
+    fn new(filename: String) -> PyResult<Self> {
+        let handler = FileHandler::new(filename)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to create FileHandler: {}", e)))?;
+        Ok(Self {
+            inner: Arc::new(handler),
+        })
+    }
+    
+    /// Set the minimum log level for this handler.
+    /// 
+    /// Args:
+    ///     level: Log level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR, 50=CRITICAL)
+    fn setLevel(&self, level: u32) -> PyResult<()> {
+        let log_level = LogLevel::from_usize(level as usize);
+        self.inner.set_level(log_level);
+        Ok(())
+    }
+}
+
+/// Python wrapper for Rust StreamHandler.
+/// 
+/// This allows creating StreamHandler instances from Python that can be added
+/// to individual loggers.
+#[pyclass(name = "StreamHandler")]
+pub struct PyStreamHandler {
+    pub(crate) inner: Arc<StreamHandler>,
+}
+
+#[pymethods]
+impl PyStreamHandler {
+    /// Create a new StreamHandler.
+    /// 
+    /// Args:
+    ///     stream: Optional stream name ("stdout" or "stderr"), defaults to stderr
+    ///     
+    /// Returns:
+    ///     A new StreamHandler instance
+    #[new]
+    #[pyo3(signature = (stream=None))]
+    fn new(stream: Option<&str>) -> PyResult<Self> {
+        let handler = match stream {
+            Some("stdout") => StreamHandler::stdout(),
+            Some("stderr") | None => StreamHandler::stderr(),
+            Some(s) => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Invalid stream '{}': must be 'stdout' or 'stderr'", s)
+            )),
+        };
+        Ok(Self {
+            inner: Arc::new(handler),
+        })
+    }
+    
+    /// Set the minimum log level for this handler.
+    /// 
+    /// Args:
+    ///     level: Log level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR, 50=CRITICAL)
+    fn setLevel(&self, level: u32) -> PyResult<()> {
+        let log_level = LogLevel::from_usize(level as usize);
+        self.inner.set_level(log_level);
+        Ok(())
+    }
+}
+
+/// Python wrapper for Rust RotatingFileHandler.
+/// 
+/// This allows creating RotatingFileHandler instances from Python that can be added
+/// to individual loggers.
+#[pyclass(name = "RotatingFileHandler")]
+pub struct PyRotatingFileHandler {
+    pub(crate) inner: Arc<RotatingFileHandler>,
+}
+
+#[pymethods]
+impl PyRotatingFileHandler {
+    /// Create a new RotatingFileHandler.
+    /// 
+    /// Args:
+    ///     filename: Path to the log file
+    ///     max_bytes: Maximum file size before rotation (in bytes)
+    ///     backup_count: Number of backup files to keep
+    ///     
+    /// Returns:
+    ///     A new RotatingFileHandler instance
+    #[new]
+    #[pyo3(signature = (filename, max_bytes=10485760, backup_count=5))]
+    fn new(filename: String, max_bytes: u64, backup_count: u32) -> PyResult<Self> {
+        let handler = RotatingFileHandler::new(filename, max_bytes, backup_count);
+        Ok(Self {
+            inner: Arc::new(handler),
+        })
+    }
+    
+    /// Set the minimum log level for this handler.
+    /// 
+    /// Args:
+    ///     level: Log level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR, 50=CRITICAL)
+    fn setLevel(&self, level: u32) -> PyResult<()> {
+        let log_level = LogLevel::from_usize(level as usize);
+        self.inner.set_level(log_level);
+        Ok(())
+    }
 }

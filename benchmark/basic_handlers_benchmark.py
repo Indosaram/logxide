@@ -288,25 +288,23 @@ class BasicHandlersBenchmark:
         return logger, [handler]
 
     def setup_logxide_file(self):
-        """LogXide FileHandler."""
+        """LogXide FileHandler using Rust native handler via basicConfig."""
         if not LOGXIDE_AVAILABLE:
             return None, []
 
         log_file = os.path.join(self.temp_dir, f"logxide_file_{time.time()}.log")
-        with open(log_file, "w") as file_handle:
-            pass
 
-        def file_handler(record):
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            file_handle.write(
-                f"{timestamp} - {record.get('logger_name', 'root')} - {record.get('level_name', 'INFO')} - {record.get('message', '')}\n"
-            )
-            file_handle.flush()
+        # Use LogXide's Rust native file handler via basicConfig
+        logxide.logging.basicConfig(
+            level=logxide.logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            filename=log_file,
+            force=True
+        )
 
-        logxide.logxide.logging.register_python_handler(file_handler)
-        logger = logxide.logxide.logging.getLogger(f"logxide_file_{time.time()}")
+        logger = logxide.logging.getLogger(f"logxide_file_{time.time()}")
 
-        return logger, [file_handle]
+        return logger, []
 
     # === StreamHandler Setups ===
 
@@ -417,20 +415,25 @@ class BasicHandlersBenchmark:
         return logger, [handler]
 
     def setup_logxide_stream(self):
-        """LogXide StreamHandler."""
+        """LogXide StreamHandler using basicConfig."""
         if not LOGXIDE_AVAILABLE:
             return None, []
 
-        def stream_handler(record):
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.null_stream.write(
-                f"{timestamp} - {record.get('logger_name', 'root')} - {record.get('level_name', 'INFO')} - {record.get('message', '')}\n"
-            )
-            self.null_stream.flush()
-
-        logxide.logxide.logging.register_python_handler(stream_handler)
-        logger = logxide.logxide.logging.getLogger(f"logxide_stream_{time.time()}")
-
+        # LogXide now uses Rust native handlers via basicConfig
+        # Redirect stderr to null_stream for benchmarking
+        import sys
+        old_stderr = sys.stderr
+        sys.stderr = self.null_stream
+        
+        logxide.logging.basicConfig(
+            level=logxide.logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            force=True
+        )
+        
+        sys.stderr = old_stderr
+        
+        logger = logxide.logging.getLogger(f"logxide_stream_{time.time()}")
         return logger, []
 
     def setup_logxide_rotating(self):

@@ -518,9 +518,8 @@ impl Logger {
             // Here, we just spawn for demonstration (should be handled in async processor)
             let handler = handler.clone();
             let record = record.clone();
-            tokio::spawn(async move {
-                handler.emit(&record).await;
-            });
+            // Direct blocking call for maximum performance
+            futures::executor::block_on(handler.emit(&record));
         }
         // Propagate to parent if enabled
         if self.propagate {
