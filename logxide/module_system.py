@@ -55,6 +55,8 @@ from .compat_handlers import (
     Handler,
     LoggingManager,
     NullHandler,
+)
+from .compat_handlers import (
     StreamHandler as _StreamHandler,
 )
 from .logger_wrapper import _migrate_existing_loggers, basicConfig, getLogger
