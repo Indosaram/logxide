@@ -33,14 +33,13 @@ use pyo3::prelude::*;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use crate::core::{LogLevel, LogRecord};
 use crate::filter::Filter;
 use crate::formatter::Formatter;
-
 
 /// Trait for all log handlers with async processing capabilities.
 ///
@@ -121,7 +120,7 @@ pub trait Handler: Send + Sync {
 ///
 /// Uses PyO3's GIL management to safely call Python code from Rust threads.
 /// Python logging handler support (deprecated - use Rust native handlers instead)
-/// 
+///
 /// This is disabled by default. Enable with the `python-handlers` feature flag.
 #[cfg(feature = "python-handlers")]
 #[deprecated(
@@ -145,6 +144,7 @@ pub struct PythonHandler {
 static LOG_RECORD_CLASS: OnceCell<PyObject> = OnceCell::new();
 
 #[cfg(feature = "python-handlers")]
+#[allow(deprecated)]
 impl PythonHandler {
     /// ⚠️ DEPRECATED: Create a new PythonHandler wrapping a Python callable.
     ///
@@ -232,6 +232,7 @@ impl PythonHandler {
 /// Provides Python handler compatibility with GIL management.
 #[cfg(feature = "python-handlers")]
 #[async_trait]
+#[allow(deprecated)]
 impl Handler for PythonHandler {
     /// ⚠️ DEPRECATED: Emit a log record by calling the wrapped Python callable.
     ///
@@ -248,33 +249,35 @@ impl Handler for PythonHandler {
     async fn emit(&self, record: &LogRecord) {
         Python::with_gil(|py| {
             let handler_obj = self.py_callable.bind(py);
-            
+
             // Get cached LogRecord class or initialize it
             let log_record_class = LOG_RECORD_CLASS.get_or_init(|| {
                 Python::with_gil(|py| {
                     let logging_module = py.import("logging").expect("Failed to import logging");
-                    let log_record_class = logging_module.getattr("LogRecord").expect("Failed to get LogRecord class");
+                    let log_record_class = logging_module
+                        .getattr("LogRecord")
+                        .expect("Failed to get LogRecord class");
                     log_record_class.into()
                 })
             });
-            
+
             let log_record_class = log_record_class.bind(py);
-            
+
             // Create a proper LogRecord object
             // LogRecord.__init__(name, level, pathname, lineno, msg, args, exc_info, func=None, sinfo=None)
             let py_record = match log_record_class.call1((
-                &record.name,           // name
-                record.levelno,         // level
-                &record.pathname,       // pathname
-                record.lineno,          // lineno
-                &record.msg,            // msg
-                py.None(),              // args (empty tuple)
-                py.None(),              // exc_info
+                &record.name,     // name
+                record.levelno,   // level
+                &record.pathname, // pathname
+                record.lineno,    // lineno
+                &record.msg,      // msg
+                py.None(),        // args (empty tuple)
+                py.None(),        // exc_info
             )) {
                 Ok(rec) => rec,
                 Err(_) => return,
             };
-            
+
             // Set additional fields on the LogRecord object
             let _ = py_record.setattr("created", record.created);
             let _ = py_record.setattr("msecs", record.msecs);
@@ -284,14 +287,14 @@ impl Handler for PythonHandler {
             let _ = py_record.setattr("module", &record.module);
             let _ = py_record.setattr("filename", &record.filename);
             let _ = py_record.setattr("funcName", &record.func_name);
-            
+
             // Add extra fields to the LogRecord object (as strings due to Rust storage)
             if let Some(ref extra_fields) = record.extra {
                 for (key, value) in extra_fields {
                     let _ = py_record.setattr(key.as_str(), value.as_str());
                 }
             }
-            
+
             // Call handle() method with proper LogRecord object
             let _ = handler_obj.call_method1("handle", (py_record,));
         });
@@ -879,11 +882,11 @@ impl RotatingFileHandler {
                 .create(true)
                 .append(true)
                 .open(&self.filename)?;
-            
+
             // Get the current file size
             let size = file.metadata()?.len();
             *current_size = size;
-            
+
             // Use 64KB buffer for better performance (default is 8KB)
             *writer = Some(BufWriter::with_capacity(64 * 1024, file));
         }
@@ -1108,10 +1111,10 @@ impl Handler for PythonStreamHandler {
         // Write to Python stream object
         // Use a blocking task to safely acquire GIL in async context
         let output_with_newline = format!("{}\n", output);
-        
+
         // Clone the PyObject reference for use in the blocking task
         let stream_ref = &self.stream;
-        
+
         Python::with_gil(|py| {
             let stream_bound = stream_ref.bind(py);
             // Call write() method on the Python object
