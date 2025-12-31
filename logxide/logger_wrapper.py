@@ -65,8 +65,6 @@ def basicConfig(**kwargs):
 
     # If force=True, clear existing handlers
     if force and _basic_config_called:
-        import contextlib
-
         with contextlib.suppress(ImportError, AttributeError):
             logxide_module.logging.clear_handlers()
 

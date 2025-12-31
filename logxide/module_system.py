@@ -443,8 +443,9 @@ def _install(sentry=None):
                     if current_pylogger is not None:
                         current_pylogger.addHandler(handler)
                 except ValueError:
-                    # Re-raise ValueError for invalid handlers
-                    raise
+                    # Silently ignore ValueError for non-Rust handlers (e.g., NullHandler)
+                    # The handler was already added to stdlib logger above
+                    pass
                 except Exception:
                     # Silently ignore other errors to avoid breaking compatibility
                     pass
