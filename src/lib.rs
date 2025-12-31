@@ -701,7 +701,9 @@ impl PyLogger {
             handlers: Arc::new(Mutex::new(Vec::new())),
             local_handlers: Arc::new(Mutex::new(Vec::new())),
             propagate: Arc::new(Mutex::new(true)), // Default to true like Python logging
-            parent: Arc::new(Mutex::new(Some(unsafe { Py::from_borrowed_ptr(py, slf.as_ptr()) }))),
+            parent: Arc::new(Mutex::new(Some(unsafe {
+                Py::from_borrowed_ptr(py, slf.as_ptr())
+            }))),
             manager: Arc::new(Mutex::new(None)),
         })
     }
