@@ -129,7 +129,7 @@ pub trait Handler: Send + Sync {
 )]
 pub struct PythonHandler {
     /// Python callable object (typically a logging.Handler instance)
-    pub py_callable: PyObject,
+    pub py_callable: Py<PyAny>,
     /// Unique identifier for this handler instance
     #[allow(dead_code)]
     pub py_id: usize,
@@ -141,7 +141,7 @@ pub struct PythonHandler {
 
 // Cache for Python logging.LogRecord class to avoid repeated imports
 #[cfg(feature = "python-handlers")]
-static LOG_RECORD_CLASS: OnceCell<PyObject> = OnceCell::new();
+static LOG_RECORD_CLASS: OnceCell<Py<PyAny>> = OnceCell::new();
 
 #[cfg(feature = "python-handlers")]
 #[allow(deprecated)]
@@ -165,8 +165,8 @@ impl PythonHandler {
         note = "Use Rust native handlers (StreamHandler, FileHandler, etc.) instead"
     )]
     #[allow(dead_code)]
-    pub fn new(py_callable: PyObject) -> Self {
-        let py_id = Python::with_gil(|py| {
+    pub fn new(py_callable: Py<PyAny>) -> Self {
+        let py_id = Python::attach(|py| {
             py_callable
                 .bind(py)
                 .getattr("__hash__")
@@ -203,7 +203,7 @@ impl PythonHandler {
         note = "Use Rust native handlers (StreamHandler, FileHandler, etc.) instead"
     )]
     #[allow(dead_code)]
-    pub fn with_id(py_callable: PyObject, py_id: usize) -> Self {
+    pub fn with_id(py_callable: Py<PyAny>, py_id: usize) -> Self {
         Self {
             py_callable,
             py_id,
@@ -247,12 +247,12 @@ impl Handler for PythonHandler {
     ///
     /// * `record` - The log record to emit
     async fn emit(&self, record: &LogRecord) {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let handler_obj = self.py_callable.bind(py);
 
             // Get cached LogRecord class or initialize it
             let log_record_class = LOG_RECORD_CLASS.get_or_init(|| {
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     let logging_module = py.import("logging").expect("Failed to import logging");
                     let log_record_class = logging_module
                         .getattr("LogRecord")
@@ -1044,11 +1044,11 @@ impl Handler for RotatingFileHandler {
 ///
 /// # Thread Safety
 ///
-/// Uses PyObject which is thread-safe across the FFI boundary.
+/// Uses Py<PyAny> which is thread-safe across the FFI boundary.
 /// The Python GIL is acquired for each write operation.
 pub struct PythonStreamHandler {
     /// Python file-like object to write to
-    stream: PyObject,
+    stream: Py<PyAny>,
     /// Minimum log level to output (using AtomicU8 for lock-free access)
     level: AtomicU8,
     /// Optional formatter for customizing output format
@@ -1067,7 +1067,7 @@ impl PythonStreamHandler {
     /// # Returns
     ///
     /// A new PythonStreamHandler instance
-    pub fn new(stream: PyObject) -> Self {
+    pub fn new(stream: Py<PyAny>) -> Self {
         Self {
             stream,
             level: AtomicU8::new(LogLevel::Debug as u8),
@@ -1112,10 +1112,10 @@ impl Handler for PythonStreamHandler {
         // Use a blocking task to safely acquire GIL in async context
         let output_with_newline = format!("{}\n", output);
 
-        // Clone the PyObject reference for use in the blocking task
+        // Clone the Py<PyAny> reference for use in the blocking task
         let stream_ref = &self.stream;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let stream_bound = stream_ref.bind(py);
             // Call write() method on the Python object
             if let Ok(write_method) = stream_bound.getattr("write") {
@@ -1137,7 +1137,7 @@ impl Handler for PythonStreamHandler {
     }
 
     async fn flush(&self) {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             if let Ok(flush_method) = self.stream.bind(py).getattr("flush") {
                 let _ = flush_method.call0();
             }
