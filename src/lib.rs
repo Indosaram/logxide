@@ -538,7 +538,7 @@ impl PyLogger {
         record.setattr("msg", msg)?;
         record.setattr("args", args)?;
         record.setattr("exc_info", exc_info)?;
-        Ok(record.to_object(py))
+        Ok(record.unbind().into_any())
     }
 
     fn handle(&self, record: PyObject) -> PyResult<()> {
@@ -701,7 +701,7 @@ impl PyLogger {
             handlers: Arc::new(Mutex::new(Vec::new())),
             local_handlers: Arc::new(Mutex::new(Vec::new())),
             propagate: Arc::new(Mutex::new(true)), // Default to true like Python logging
-            parent: Arc::new(Mutex::new(Some(slf.into_py(py)))),
+            parent: Arc::new(Mutex::new(Some(unsafe { Py::from_borrowed_ptr(py, slf.as_ptr()) }))),
             manager: Arc::new(Mutex::new(None)),
         })
     }
