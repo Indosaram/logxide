@@ -69,15 +69,15 @@ pub struct PyLogger {
     /// Fast logger for atomic level checking
     fast_logger: Arc<fast_logger::FastLogger>,
     /// Python handler objects for compatibility
-    handlers: Arc<Mutex<Vec<PyObject>>>,
+    handlers: Arc<Mutex<Vec<Py<PyAny>>>>,
     /// Local Rust native handlers for this specific logger
     local_handlers: Arc<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>>,
     /// Propagate flag for hierarchy support
     propagate: Arc<Mutex<bool>>,
     /// Parent logger for hierarchy
-    parent: Arc<Mutex<Option<PyObject>>>,
+    parent: Arc<Mutex<Option<Py<PyAny>>>>,
     /// Manager reference for compatibility
-    manager: Arc<Mutex<Option<PyObject>>>,
+    manager: Arc<Mutex<Option<Py<PyAny>>>>,
 }
 
 impl Clone for PyLogger {
@@ -143,7 +143,7 @@ impl PyLogger {
     ) -> Option<std::collections::HashMap<String, String>> {
         kwargs.and_then(|dict| {
             if let Ok(Some(extra_bound)) = dict.get_item("extra") {
-                if let Ok(extra_dict) = extra_bound.downcast::<pyo3::types::PyDict>() {
+                if let Ok(extra_dict) = extra_bound.cast::<pyo3::types::PyDict>() {
                     let mut extra_map = std::collections::HashMap::new();
                     for (key, value) in extra_dict.iter() {
                         if let (Ok(key_str), Ok(value_str)) = (key.str(), value.str()) {
@@ -168,7 +168,7 @@ impl PyLogger {
     }
 
     #[getter]
-    fn handlers(&self, py: Python) -> PyResult<PyObject> {
+    fn handlers(&self, py: Python) -> PyResult<Py<PyAny>> {
         // Return current handlers list as a Python list
         let handlers = self.handlers.lock().unwrap();
         let py_list = pyo3::types::PyList::empty(py);
@@ -179,16 +179,16 @@ impl PyLogger {
     }
 
     #[setter]
-    fn set_handlers(&self, handlers: PyObject) -> PyResult<()> {
+    fn set_handlers(&self, handlers: Py<PyAny>) -> PyResult<()> {
         // Allow setting handlers for compatibility with libraries like uvicorn
         let mut current_handlers = self.handlers.lock().unwrap();
         current_handlers.clear();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let handlers_ref = handlers.bind(py);
 
             // Handle both list and single handler cases
-            if let Ok(list) = handlers_ref.downcast::<pyo3::types::PyList>() {
+            if let Ok(list) = handlers_ref.cast::<pyo3::types::PyList>() {
                 for item in list.iter() {
                     current_handlers.push(item.unbind());
                 }
@@ -220,26 +220,26 @@ impl PyLogger {
     }
 
     #[getter]
-    fn parent(&self, py: Python) -> PyResult<Option<PyObject>> {
+    fn parent(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         let parent_lock = self.parent.lock().unwrap();
         Ok(parent_lock.as_ref().map(|p| p.clone_ref(py)))
     }
 
     #[setter]
-    fn set_parent(&self, value: Option<PyObject>) -> PyResult<()> {
+    fn set_parent(&self, value: Option<Py<PyAny>>) -> PyResult<()> {
         let mut parent = self.parent.lock().unwrap();
         *parent = value;
         Ok(())
     }
 
     #[getter]
-    fn manager(&self, py: Python) -> PyResult<Option<PyObject>> {
+    fn manager(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         let manager_lock = self.manager.lock().unwrap();
         Ok(manager_lock.as_ref().map(|m| m.clone_ref(py)))
     }
 
     #[setter]
-    fn set_manager(&self, value: Option<PyObject>) -> PyResult<()> {
+    fn set_manager(&self, value: Option<Py<PyAny>>) -> PyResult<()> {
         let mut manager = self.manager.lock().unwrap();
         *manager = value;
         Ok(())
@@ -250,8 +250,8 @@ impl PyLogger {
         get_logger(py, Some("root"), None)
     }
 
-    fn filter(&self, record: PyObject) -> PyResult<bool> {
-        Python::with_gil(|py| {
+    fn filter(&self, record: Py<PyAny>) -> PyResult<bool> {
+        Python::attach(|py| {
             let record_bound = record.bind(py);
             let rust_record = record_bound.extract::<LogRecord>()?;
             let inner_logger = self.inner.lock().unwrap();
@@ -307,11 +307,11 @@ impl PyLogger {
     }
 
     /// Format a log message with arguments using Python string formatting
-    fn format_message(&self, py: Python, msg: PyObject, args: &Bound<PyAny>) -> PyResult<String> {
+    fn format_message(&self, py: Python, msg: Py<PyAny>, args: &Bound<PyAny>) -> PyResult<String> {
         let msg_str = msg.bind(py);
 
-        // Convert args tuple to a vector of PyObject
-        if let Ok(args_tuple) = args.downcast::<pyo3::types::PyTuple>() {
+        // Convert args tuple to a vector of Py<PyAny>
+        if let Ok(args_tuple) = args.cast::<pyo3::types::PyTuple>() {
             if args_tuple.len() > 0 {
                 // Use Python's % operator for formatting
                 let formatted = msg_str.call_method1("__mod__", (args_tuple,))?;
@@ -328,7 +328,7 @@ impl PyLogger {
     fn debug(
         &self,
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -361,7 +361,7 @@ impl PyLogger {
     fn info(
         &self,
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -392,7 +392,7 @@ impl PyLogger {
     fn warning(
         &self,
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -423,7 +423,7 @@ impl PyLogger {
     fn error(
         &self,
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -453,7 +453,7 @@ impl PyLogger {
     fn critical(
         &self,
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -483,7 +483,7 @@ impl PyLogger {
     fn fatal(
         &self,
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -494,7 +494,7 @@ impl PyLogger {
     fn warn(
         &self,
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -502,7 +502,7 @@ impl PyLogger {
     }
 
     #[getter]
-    fn filters(&self) -> PyResult<Vec<PyObject>> {
+    fn filters(&self) -> PyResult<Vec<Py<PyAny>>> {
         Ok(Vec::new())
     }
 
@@ -512,7 +512,7 @@ impl PyLogger {
     }
 
     #[allow(non_snake_case)]
-    fn getChildren(&self) -> PyResult<Vec<PyObject>> {
+    fn getChildren(&self) -> PyResult<Vec<Py<PyAny>>> {
         Ok(Vec::new())
     }
 
@@ -526,10 +526,10 @@ impl PyLogger {
         level: i32,
         fn_: String,
         lno: i32,
-        msg: PyObject,
-        args: PyObject,
-        exc_info: Option<PyObject>,
-    ) -> PyResult<PyObject> {
+        msg: Py<PyAny>,
+        args: Py<PyAny>,
+        exc_info: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
         let record = py.import("logging")?.call_method0("makeLogRecord")?;
         record.setattr("name", name)?;
         record.setattr("levelno", level)?;
@@ -541,8 +541,8 @@ impl PyLogger {
         Ok(record.unbind().into_any())
     }
 
-    fn handle(&self, record: PyObject) -> PyResult<()> {
-        Python::with_gil(|py| {
+    fn handle(&self, record: Py<PyAny>) -> PyResult<()> {
+        Python::attach(|py| {
             let handlers = self.handlers.lock().unwrap();
             for handler in handlers.iter() {
                 let _ = handler.call_method1(py, "handle", (record.clone_ref(py),));
@@ -563,7 +563,7 @@ impl PyLogger {
     fn exception(
         &self,
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -655,7 +655,7 @@ impl PyLogger {
         &self,
         py: Python,
         level: u32,
-        msg: PyObject,
+        msg: Py<PyAny>,
         args: &Bound<PyAny>,
         kwargs: Option<&Bound<PyDict>>,
     ) -> PyResult<()> {
@@ -769,7 +769,7 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
 /// Get a logger by name, mirroring Python's `logging.getLogger()`.
 #[pyfunction(name = "getLogger")]
 #[pyo3(signature = (name = None, manager = None))]
-fn get_logger(py: Python, name: Option<&str>, manager: Option<PyObject>) -> PyResult<PyLogger> {
+fn get_logger(py: Python, name: Option<&str>, manager: Option<Py<PyAny>>) -> PyResult<PyLogger> {
     let logger_name = name.unwrap_or("root");
     let logger = match name {
         Some(n) => core_get_logger(n),
