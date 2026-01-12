@@ -323,7 +323,26 @@ class LoggingManager:
     """Mock logging manager for compatibility"""
 
     def __init__(self):
-        self.disable = 0  # SQLAlchemy checks this attribute
+        self.disable = 0
+
+
+class Filter:
+    def __init__(self, name=""):
+        self.name = name
+        self.nlen = len(name)
+
+    def filter(self, record):
+        if self.nlen == 0:
+            return True
+        if isinstance(record, dict):
+            record_name = record.get("name", "")
+        else:
+            record_name = getattr(record, "name", "")
+        if self.name == record_name:
+            return True
+        elif record_name.startswith(self.name + "."):
+            return True
+        return False
 
 
 # No shutdown handler needed - Rust handles cleanup
