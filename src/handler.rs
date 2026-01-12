@@ -6,7 +6,6 @@
 //!
 //! ## Handler Types
 //!
-//! - **PythonHandler**: ⚠️ DEPRECATED - No longer used for performance reasons
 //! - **ConsoleHandler**: Outputs formatted log records to stdout
 //! - **StreamHandler**: Outputs to stdout or stderr (recommended)
 //! - **FileHandler**: Outputs to a file
@@ -23,11 +22,10 @@
 //!
 //! Handlers can have their own filters and formatters, providing fine-grained
 //! control over which records are processed and how they are presented.
+//!
 
 use async_trait::async_trait;
 use chrono::TimeZone;
-#[cfg(feature = "python-handlers")]
-use once_cell::sync::OnceCell;
 use pyo3::prelude::*;
 
 use std::fs::{File, OpenOptions};
@@ -93,224 +91,6 @@ pub trait Handler: Send + Sync {
     /// * `filter` - The filter to add to this handler
     #[allow(dead_code)]
     fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>);
-}
-
-/// ⚠️ DEPRECATED: Handler that wraps a Python callable for compatibility with Python logging.
-///
-/// **This handler is no longer used in LogXide for performance reasons.**
-/// Python handlers create significant overhead due to:
-/// - Python FFI boundary crossing
-/// - GIL acquisition
-/// - LogRecord serialization to Python objects
-/// - Python method call overhead
-///
-/// LogXide now uses Rust native handlers exclusively for maximum performance.
-/// This struct remains only for backward compatibility and is not registered
-/// by the main lib.rs module.
-///
-/// # Migration
-///
-/// Use Rust native handlers instead:
-/// - `StreamHandler` for console output
-/// - `FileHandler` for file output
-/// - `RotatingFileHandler` for rotating files
-/// - `NullHandler` for discarding logs
-///
-/// # Thread Safety
-///
-/// Uses PyO3's GIL management to safely call Python code from Rust threads.
-/// Python logging handler support (deprecated - use Rust native handlers instead)
-///
-/// This is disabled by default. Enable with the `python-handlers` feature flag.
-#[cfg(feature = "python-handlers")]
-#[deprecated(
-    since = "0.1.2",
-    note = "Use Rust native handlers (StreamHandler, FileHandler, etc.) for better performance"
-)]
-pub struct PythonHandler {
-    /// Python callable object (typically a logging.Handler instance)
-    pub py_callable: Py<PyAny>,
-    /// Unique identifier for this handler instance
-    #[allow(dead_code)]
-    pub py_id: usize,
-    /// Optional formatter for this handler
-    pub formatter: Option<Arc<dyn Formatter + Send + Sync>>,
-    /// List of filters applied to records before emission
-    pub filters: Vec<Arc<dyn Filter + Send + Sync>>,
-}
-
-// Cache for Python logging.LogRecord class to avoid repeated imports
-#[cfg(feature = "python-handlers")]
-static LOG_RECORD_CLASS: OnceCell<Py<PyAny>> = OnceCell::new();
-
-#[cfg(feature = "python-handlers")]
-#[allow(deprecated)]
-impl PythonHandler {
-    /// ⚠️ DEPRECATED: Create a new PythonHandler wrapping a Python callable.
-    ///
-    /// **Do not use this.** Use Rust native handlers instead.
-    ///
-    /// The handler will attempt to generate a unique ID by calling
-    /// the Python object's __hash__ method.
-    ///
-    /// # Arguments
-    ///
-    /// * `py_callable` - Python object that can be called with log records
-    ///
-    /// # Returns
-    ///
-    /// A new PythonHandler instance
-    #[deprecated(
-        since = "0.1.2",
-        note = "Use Rust native handlers (StreamHandler, FileHandler, etc.) instead"
-    )]
-    #[allow(dead_code)]
-    pub fn new(py_callable: Py<PyAny>) -> Self {
-        let py_id = Python::attach(|py| {
-            py_callable
-                .bind(py)
-                .getattr("__hash__")
-                .and_then(|h| h.call0())
-                .and_then(|v| v.extract::<isize>())
-                .map(|v| v as usize)
-                .unwrap_or(0)
-        });
-        Self {
-            py_callable,
-            py_id,
-            formatter: None,
-            filters: Vec::new(),
-        }
-    }
-
-    /// ⚠️ DEPRECATED: Create a new PythonHandler with an explicit ID.
-    ///
-    /// **Do not use this.** Use Rust native handlers instead.
-    ///
-    /// This constructor allows specifying the handler ID directly,
-    /// which is useful when the ID is already known (e.g., from Python's id() function).
-    ///
-    /// # Arguments
-    ///
-    /// * `py_callable` - Python object that can be called with log records
-    /// * `py_id` - Unique identifier for this handler
-    ///
-    /// # Returns
-    ///
-    /// A new PythonHandler instance with the specified ID
-    #[deprecated(
-        since = "0.1.2",
-        note = "Use Rust native handlers (StreamHandler, FileHandler, etc.) instead"
-    )]
-    #[allow(dead_code)]
-    pub fn with_id(py_callable: Py<PyAny>, py_id: usize) -> Self {
-        Self {
-            py_callable,
-            py_id,
-            formatter: None,
-            filters: Vec::new(),
-        }
-    }
-
-    /// Get the unique ID for this handler.
-    ///
-    /// The ID can be used to identify and manage handler instances.
-    ///
-    /// # Returns
-    ///
-    /// The unique identifier for this handler
-    #[allow(dead_code)]
-    pub fn id(&self) -> usize {
-        self.py_id
-    }
-}
-
-/// ⚠️ DEPRECATED: Implementation of Handler trait for PythonHandler.
-///
-/// **This is no longer used in LogXide.** Use Rust native handlers instead.
-///
-/// Provides Python handler compatibility with GIL management.
-#[cfg(feature = "python-handlers")]
-#[async_trait]
-#[allow(deprecated)]
-impl Handler for PythonHandler {
-    /// ⚠️ DEPRECATED: Emit a log record by calling the wrapped Python callable.
-    ///
-    /// **Do not use this.** This method crosses the Python FFI boundary and
-    /// acquires the GIL, causing significant performance overhead.
-    ///
-    /// Converts the LogRecord to a Python dictionary with the same field
-    /// names and types as Python's logging.LogRecord, then calls the
-    /// Python handler with this dictionary.
-    ///
-    /// # Arguments
-    ///
-    /// * `record` - The log record to emit
-    async fn emit(&self, record: &LogRecord) {
-        Python::attach(|py| {
-            let handler_obj = self.py_callable.bind(py);
-
-            // Get cached LogRecord class or initialize it
-            let log_record_class = LOG_RECORD_CLASS.get_or_init(|| {
-                Python::attach(|py| {
-                    let logging_module = py.import("logging").expect("Failed to import logging");
-                    let log_record_class = logging_module
-                        .getattr("LogRecord")
-                        .expect("Failed to get LogRecord class");
-                    log_record_class.into()
-                })
-            });
-
-            let log_record_class = log_record_class.bind(py);
-
-            // Create a proper LogRecord object
-            // LogRecord.__init__(name, level, pathname, lineno, msg, args, exc_info, func=None, sinfo=None)
-            let py_record = match log_record_class.call1((
-                &record.name,     // name
-                record.levelno,   // level
-                &record.pathname, // pathname
-                record.lineno,    // lineno
-                &record.msg,      // msg
-                py.None(),        // args (empty tuple)
-                py.None(),        // exc_info
-            )) {
-                Ok(rec) => rec,
-                Err(_) => return,
-            };
-
-            // Set additional fields on the LogRecord object
-            let _ = py_record.setattr("created", record.created);
-            let _ = py_record.setattr("msecs", record.msecs);
-            let _ = py_record.setattr("threadName", &record.thread_name);
-            let _ = py_record.setattr("thread", record.thread);
-            let _ = py_record.setattr("process", record.process);
-            let _ = py_record.setattr("module", &record.module);
-            let _ = py_record.setattr("filename", &record.filename);
-            let _ = py_record.setattr("funcName", &record.func_name);
-
-            // Add extra fields to the LogRecord object (as strings due to Rust storage)
-            if let Some(ref extra_fields) = record.extra {
-                for (key, value) in extra_fields {
-                    let _ = py_record.setattr(key.as_str(), value.as_str());
-                }
-            }
-
-            // Call handle() method with proper LogRecord object
-            let _ = handler_obj.call_method1("handle", (py_record,));
-        });
-    }
-
-    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        self.formatter = Some(formatter);
-    }
-
-    fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>) {
-        self.filters.push(filter);
-    }
-
-    async fn flush(&self) {
-        // PythonHandler doesn't buffer, no-op
-    }
 }
 
 /// Simple console handler that writes formatted log records to stdout.

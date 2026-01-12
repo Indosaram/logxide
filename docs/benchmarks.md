@@ -28,9 +28,9 @@ These benchmarks test actual file I/O operations with realistic formatting, repr
 
 | Rank | Library | Ops/sec | Avg Time (s) | Relative Performance |
 |------|---------|---------|--------------|---------------------|
-| 1위 | **LogXide** | **439,913** | 0.227 | **가장 빠름** ⭐ |
-| 2위 | Picologging | 352,800 | 0.283 | 1.25x 느림 |
-| 3위 | Structlog | 179,948 | 0.556 | 2.44x 느림 |
+| 1st | **LogXide** | **439,913** | 0.227 | **Fastest** |
+| 2nd | Picologging | 352,800 | 0.283 | 1.25x slower |
+| 3rd | Structlog | 179,948 | 0.556 | 2.44x slower |
 
 ### Structured Logging Performance
 
@@ -38,9 +38,9 @@ These benchmarks test actual file I/O operations with realistic formatting, repr
 
 | Rank | Library | Ops/sec | Avg Time (s) | Relative Performance |
 |------|---------|---------|--------------|---------------------|
-| 1위 | **LogXide** | **416,242** | 0.240 | **가장 빠름** ⭐ |
-| 2위 | Picologging | 371,144 | 0.269 | 1.12x 느림 |
-| 3위 | Structlog | 165,936 | 0.603 | 2.51x 느림 |
+| 1st | **LogXide** | **416,242** | 0.240 | **Fastest** |
+| 2nd | Picologging | 371,144 | 0.269 | 1.12x slower |
+| 3rd | Structlog | 165,936 | 0.603 | 2.51x slower |
 
 ### Error Logging Performance
 
@@ -48,9 +48,9 @@ These benchmarks test actual file I/O operations with realistic formatting, repr
 
 | Rank | Library | Ops/sec | Avg Time (s) | Relative Performance |
 |------|---------|---------|--------------|---------------------|
-| 1위 | **LogXide** | **411,238** | 0.243 | **가장 빠름** ⭐ |
-| 2위 | Picologging | 353,487 | 0.283 | 1.16x 느림 |
-| 3위 | Structlog | 170,498 | 0.587 | 2.41x 느림 |
+| 1st | **LogXide** | **411,238** | 0.243 | **Fastest** |
+| 2nd | Picologging | 353,487 | 0.283 | 1.16x slower |
+| 3rd | Structlog | 170,498 | 0.587 | 2.41x slower |
 
 ### Key Findings
 
@@ -93,52 +93,46 @@ These benchmarks test actual file I/O operations with realistic formatting, repr
 #### FileHandler Performance
 | Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
 |------|---------|-------------|---------------------|---------------------|
-| 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 | 기준 대비 속도 향상 |
-|------|---------|-------------|---------------------|---------------------|
-| 1위 | **LogXide** | **2,091,663** | **1.00배** | **12.5배 더 빠름** |
-| 2위 | Structlog | 1,288,187 | 0.62배 | 7.7배 더 빠름 |
-| 3위 | Picologging | 446,114 | 0.21배 | 2.7배 더 빠름 |
-| 4위 | Python logging | 166,833 | 0.08배 | 1.0배 (기준) |
-| 5위 | Logbook | 145,410 | 0.07배 | 0.9배 |
-| 6위 | Loguru | 132,228 | 0.06배 | 0.8배 |
+| 1st | **LogXide** | **2,091,663** | **1.00x** | **12.5x faster** |
+| 2nd | Structlog | 1,288,187 | 0.62x | 7.7x faster |
+| 3rd | Picologging | 446,114 | 0.21x | 2.7x faster |
+| 4th | Python logging | 166,833 | 0.08x | 1.0x (baseline) |
+| 5th | Logbook | 145,410 | 0.07x | 0.9x |
+| 6th | Loguru | 132,228 | 0.06x | 0.8x |
 
 #### StreamHandler Performance
 | Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
 |------|---------|-------------|---------------------|---------------------|
-| 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 | 기준 대비 속도 향상 |
-|------|---------|-------------|---------------------|---------------------|
-| 1위 | **LogXide** | **2,137,244** | **1.00배** | **186.2배 더 빠름** |
-| 2위 | Structlog | 1,222,748 | 0.57배 | 106.5배 더 빠름 |
-| 3위 | Picologging | 802,598 | 0.38배 | 69.9배 더 빠름 |
-| 4위 | Python logging | 11,474 | 0.01배 | 1.0배 (기준) |
-| 5위 | Logbook | 147,733 | 0.07배 | 12.9배 더 빠름 |
-| 6위 | Loguru | 8,438 | 0.004배 | 0.7배 |
+| 1st | **LogXide** | **2,137,244** | **1.00x** | **186.2x faster** |
+| 2nd | Structlog | 1,222,748 | 0.57x | 106.5x faster |
+| 3rd | Picologging | 802,598 | 0.38x | 69.9x faster |
+| 4th | Python logging | 11,474 | 0.01x | 1.0x (baseline) |
+| 5th | Logbook | 147,733 | 0.07x | 12.9x faster |
+| 6th | Loguru | 8,438 | 0.004x | 0.7x |
 
 #### RotatingFileHandler Performance
 | Rank | Library | Messages/sec | Relative Performance | Speedup vs Baseline |
 |------|---------|-------------|---------------------|---------------------|
-| 순위 | 라이브러리 | 초당 메시지 수 | 상대적 성능 | 기준 대비 속도 향상 |
-|------|---------|-------------|---------------------|---------------------|
-| 1위 | **LogXide** | **2,205,392** | **1.00배** | **17.7배 더 빠름** |
-| 2위 | Picologging | 435,633 | 0.20배 | 3.5배 더 빠름 |
-| 3위 | Python logging | 124,900 | 0.06배 | 1.0배 (기준) |
-| 4위 | Loguru | 114,459 | 0.05배 | 0.9배 |
+| 1st | **LogXide** | **2,205,392** | **1.00x** | **17.7x faster** |
+| 2nd | Picologging | 435,633 | 0.20x | 3.5x faster |
+| 3rd | Python logging | 124,900 | 0.06x | 1.0x (baseline) |
+| 4th | Loguru | 114,459 | 0.05x | 0.9x |
 
 ## Detailed Performance Comparison
 
 ### LogXide Advantages
 
-**1. Real I/O Operations** ✅
+**1. Real I/O Operations**
 - 12-25% faster than Picologging in actual file writing
 - Rust's native I/O provides measurable performance gains
 - Efficient buffering and system call optimization
 
-**2. Consistent Performance** ✅
+**2. Consistent Performance**
 - Maintains advantage across all logging patterns
 - No performance degradation with structured logging
 - Stable performance under high load
 
-**3. Production Ready** ✅
+**3. Production Ready**
 - Best performance where it matters: actual logging operations
 - Optimized for real-world usage patterns
 - Scales well with application complexity
@@ -146,20 +140,20 @@ These benchmarks test actual file I/O operations with realistic formatting, repr
 ### When to Choose Each Library
 
 **Choose LogXide when:**
-- ✅ You need maximum performance in production
-- ✅ Your application does significant logging to files
-- ✅ You want a drop-in replacement with better performance
-- ✅ You value consistent performance across scenarios
+- You need maximum performance in production
+- Your application does significant logging to files
+- You want a drop-in replacement with better performance
+- You value consistent performance across scenarios
 
 **Choose Picologging when:**
-- ⚠️ You primarily need stdout/stderr logging
-- ⚠️ Your application rarely logs (mostly disabled)
-- ⚠️ You need absolute minimal overhead for disabled logging
+- You primarily need stdout/stderr logging
+- Your application rarely logs (mostly disabled)
+- You need absolute minimal overhead for disabled logging
 
 **Choose Structlog when:**
-- ⚠️ You need advanced structured logging features
-- ⚠️ Performance is not a primary concern
-- ⚠️ You want maximum flexibility in log processing
+- You need advanced structured logging features
+- Performance is not a primary concern
+- You want maximum flexibility in log processing
 
 ## Test Reproducibility
 
@@ -205,21 +199,21 @@ python benchmark/compare_loggers.py
 
 **LogXide is the best choice for production Python applications:**
 
-1. ✅ **Proven Performance**: 12-25% faster than Picologging in real file I/O
-2. ✅ **Real-World Testing**: Benchmarks based on actual file operations, not synthetic tests
-3. ✅ **Drop-in Replacement**: No code changes required, instant performance gains
-4. ✅ **Consistent Speed**: Maintains advantage across all logging patterns
-5. ✅ **Native Performance**: Rust's efficiency provides measurable benefits
+1. **Proven Performance**: 12-25% faster than Picologging in real file I/O
+2. **Real-World Testing**: Benchmarks based on actual file operations, not synthetic tests
+3. **Drop-in Replacement**: No code changes required, instant performance gains
+4. **Consistent Speed**: Maintains advantage across all logging patterns
+5. **Native Performance**: Rust's efficiency provides measurable benefits
 
 ### Performance Summary Table
 
 | Scenario | LogXide | Picologging | Structlog | Winner |
 |----------|---------|-------------|-----------|---------|
-| **File I/O** | 411-440k ops/sec | 353-371k ops/sec | 166-180k ops/sec | **LogXide** ⭐ |
-| **Simple Logging** | **439,913** ops/sec | 352,800 ops/sec | 179,948 ops/sec | **LogXide** ⭐ |
-| **Structured Logging** | **416,242** ops/sec | 371,144 ops/sec | 165,936 ops/sec | **LogXide** ⭐ |
-| **Error Logging** | **411,238** ops/sec | 353,487 ops/sec | 170,498 ops/sec | **LogXide** ⭐ |
-| **Overall** | **최고** | 매우 좋음 | 보통 | **LogXide** ⭐ |
+| **File I/O** | 411-440k ops/sec | 353-371k ops/sec | 166-180k ops/sec | **LogXide** |
+| **Simple Logging** | **439,913** ops/sec | 352,800 ops/sec | 179,948 ops/sec | **LogXide** |
+| **Structured Logging** | **416,242** ops/sec | 371,144 ops/sec | 165,936 ops/sec | **LogXide** |
+| **Error Logging** | **411,238** ops/sec | 353,487 ops/sec | 170,498 ops/sec | **LogXide** |
+| **Overall** | **Best** | Very Good | Good | **LogXide** |
 
 ### Key Takeaways
 

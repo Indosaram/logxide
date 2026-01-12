@@ -44,6 +44,8 @@ pip install logxide[sentry]
 pip install logxide[dev]
 ```
 
+> **📘 [Usage Guide](USAGE.md)** - Common mistakes, correct patterns, and troubleshooting
+
 ## Documentation
 
 - **[Usage Guide](docs/usage.md)** - Complete usage examples and API guide
@@ -88,9 +90,9 @@ LogXide delivers exceptional performance through its Rust-powered native archite
 
 | Test Scenario | LogXide | Picologging | Python logging | vs Pico | vs Stdlib |
 |--------------|---------|-------------|----------------|---------|-----------|
-| **Simple Logging** | 446,135 ops/sec | 372,020 ops/sec | 157,220 ops/sec | **+20%** ⭐ | **+184%** ⭐⭐ |
-| **Structured Logging** | 412,235 ops/sec | 357,193 ops/sec | 153,547 ops/sec | **+15%** ⭐ | **+168%** ⭐⭐ |
-| **Error Logging** | 426,294 ops/sec | 361,053 ops/sec | 155,332 ops/sec | **+18%** ⭐ | **+174%** ⭐⭐ |
+| **Simple Logging** | 446,135 ops/sec | 372,020 ops/sec | 157,220 ops/sec | **+20%** | **+184%** |
+| **Structured Logging** | 412,235 ops/sec | 357,193 ops/sec | 153,547 ops/sec | **+15%** | **+168%** |
+| **Error Logging** | 426,294 ops/sec | 361,053 ops/sec | 155,332 ops/sec | **+18%** | **+174%** |
 
 **Key highlights:**
 - **15-20% faster** than Picologging (C-based) in production file I/O scenarios
@@ -103,18 +105,18 @@ LogXide delivers exceptional performance through its Rust-powered native archite
 
 LogXide uses **Rust-native handlers only** for maximum performance. This means:
 
-- ⚠️ **Rust handlers only**: `logger.addHandler()` only accepts Rust native handlers (FileHandler, StreamHandler, RotatingFileHandler)
-- ❌ **No Python handlers**: Custom Python logging.Handler subclasses are not supported
-- ❌ **No StringIO capture**: Use file-based logging for tests
-- ❌ **No pytest caplog**: Not compatible with Rust native architecture
-- ✅ **Use `basicConfig()`**: Recommended for simple configuration
-- ✅ **Use `addHandler()`**: For advanced handler configuration with Rust handlers
-- ✅ **File-based testing**: Write to files instead of capturing streams
+- **Rust handlers only**: `logger.addHandler()` only accepts Rust native handlers (FileHandler, StreamHandler, RotatingFileHandler)
+- **No Python handlers**: Custom Python logging.Handler subclasses are not supported
+- **No StringIO capture**: Use file-based logging for tests
+- **No pytest caplog**: Not compatible with Rust native architecture
+- **Use `basicConfig()`**: Recommended for simple configuration
+- **Use `addHandler()`**: For advanced handler configuration with Rust handlers
+- **File-based testing**: Write to files instead of capturing streams
 
 **Example - The LogXide way:**
 
 ```python
-# ✅ Option 1: Use basicConfig() for simple configuration
+# Option 1: Use basicConfig() for simple configuration
 import tempfile
 from logxide import logging
 
@@ -131,7 +133,7 @@ with tempfile.NamedTemporaryFile(mode='w+', delete=False) as f:
     with open(f.name) as log_file:
         assert "Test message" in log_file.read()
 
-# ✅ Option 2: Use addHandler() with Rust native handlers
+# Option 2: Use addHandler() with Rust native handlers
 from logxide import logging, FileHandler, StreamHandler
 
 logger = logging.getLogger('myapp')
@@ -148,7 +150,7 @@ logger.addHandler(stream_handler)
 **What NOT to do:**
 
 ```python
-# ❌ Wrong - Custom Python handlers not supported
+# Wrong - Custom Python handlers not supported
 import logging as stdlib_logging
 
 class MyCustomHandler(stdlib_logging.Handler):
@@ -158,7 +160,7 @@ class MyCustomHandler(stdlib_logging.Handler):
 handler = MyCustomHandler()
 logger.addHandler(handler)  # Raises ValueError
 
-# ❌ Wrong - StringIO capture doesn't work with stdlib handlers
+# Wrong - StringIO capture doesn't work with stdlib handlers
 import io
 stream = io.StringIO()
 handler = stdlib_logging.StreamHandler(stream)
@@ -167,7 +169,7 @@ logger.addHandler(handler)  # Raises ValueError - not a Rust handler
 
 ## Compatibility
 
-- **Python**: 3.9+ (3.13+ recommended for best performance)
+- **Python**: 3.12+ (3.14 supported)
 - **Platforms**: macOS, Linux, Windows
 - **API**: Core logging API compatible (see limitations above)
 - **Dependencies**: None (Rust compiled into native extension)

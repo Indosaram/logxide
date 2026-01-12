@@ -87,18 +87,34 @@ impl FastLoggerManager {
     }
 
     pub fn get_logger(&self, name: &str) -> Arc<FastLogger> {
-        if name.is_empty() {
+        if name.is_empty() || name == "root" {
             return self.root_logger.clone();
         }
 
-        match self.loggers.get(name) {
-            Some(logger) => logger.clone(),
-            None => {
-                let logger = Arc::new(FastLogger::new(name));
-                self.loggers.insert(name.to_string(), logger.clone());
-                logger
+        if let Some(logger) = self.loggers.get(name) {
+            return logger.clone();
+        }
+
+        // Inheritance logic: Find nearest ancestor to inherit effective level
+        let mut parent_level = self.root_logger.effective_level.load(Ordering::Relaxed);
+        let mut current_name = name;
+
+        while let Some(dot_idx) = current_name.rfind('.') {
+            current_name = &current_name[0..dot_idx];
+            if let Some(parent) = self.loggers.get(current_name) {
+                parent_level = parent.effective_level.load(Ordering::Relaxed);
+                break;
             }
         }
+
+        let logger = Arc::new(FastLogger::new(name));
+        // Initialize with parent's effective level
+        logger
+            .effective_level
+            .store(parent_level, Ordering::Relaxed);
+
+        self.loggers.insert(name.to_string(), logger.clone());
+        logger
     }
 
     #[allow(dead_code)]
