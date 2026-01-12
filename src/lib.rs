@@ -96,19 +96,23 @@ impl Clone for PyLogger {
 
 #[pymethods]
 impl PyLogger {
-    /// Emit a log record to all appropriate handlers (local + global).
+    /// Emit a log record to all appropriate handlers (local + global + Python).
     ///
     /// This is the core logging dispatch function that:
-    /// 1. Emits to local handlers (if any)
-    /// 2. Emits to global handlers (if no local handlers OR propagate=true)
+    /// 1. Emits to local Rust handlers (if any)
+    /// 2. Emits to Python handlers (for compatibility with stdlib handlers)
+    /// 3. Emits to global handlers (if no local handlers OR propagate=true)
     ///
     /// Uses fully synchronous emit for immediate write (no async overhead).
     fn emit_record(&self, record: LogRecord) {
         let local_handlers = self.local_handlers.lock().unwrap();
+        let python_handlers = self.handlers.lock().unwrap();
+        let has_local_handlers = !local_handlers.is_empty() || !python_handlers.is_empty();
 
         // Fast path: no local handlers, use global only
-        if local_handlers.is_empty() {
+        if !has_local_handlers {
             drop(local_handlers);
+            drop(python_handlers);
             let global_handlers = HANDLERS.lock().unwrap();
 
             // Emit synchronously - block_in_place to avoid runtime issues
@@ -119,9 +123,72 @@ impl PyLogger {
             return;
         }
 
-        // Emit to local handlers
+        // Emit to local Rust handlers
         for handler in local_handlers.iter() {
             futures::executor::block_on(handler.emit(&record));
+        }
+
+        // Emit to Python handlers (stdlib handlers like logging.FileHandler)
+        if !python_handlers.is_empty() {
+            Python::attach(|py| {
+                // Clone handler refs inside GIL context
+                let handlers_clone: Vec<Py<PyAny>> = python_handlers
+                    .iter()
+                    .map(|h| h.clone_ref(py))
+                    .collect();
+                drop(python_handlers);
+
+                // Create a Python LogRecord for compatibility with stdlib handlers
+                let logging_module = match py.import("logging") {
+                    Ok(m) => m,
+                    Err(_) => return,
+                };
+
+                let log_record_class = match logging_module.getattr("LogRecord") {
+                    Ok(c) => c,
+                    Err(_) => return,
+                };
+
+                // Create a proper LogRecord object
+                // LogRecord.__init__(name, level, pathname, lineno, msg, args, exc_info, func=None, sinfo=None)
+                let py_record = match log_record_class.call1((
+                    &record.name,     // name
+                    record.levelno,   // level
+                    &record.pathname, // pathname
+                    record.lineno,    // lineno
+                    &record.msg,      // msg
+                    py.None(),        // args (empty tuple)
+                    py.None(),        // exc_info
+                )) {
+                    Ok(rec) => rec,
+                    Err(_) => return,
+                };
+
+                // Set additional fields on the LogRecord object
+                let _ = py_record.setattr("created", record.created);
+                let _ = py_record.setattr("msecs", record.msecs);
+                let _ = py_record.setattr("threadName", &record.thread_name);
+                let _ = py_record.setattr("thread", record.thread);
+                let _ = py_record.setattr("process", record.process);
+                let _ = py_record.setattr("module", &record.module);
+                let _ = py_record.setattr("filename", &record.filename);
+                let _ = py_record.setattr("funcName", &record.func_name);
+                let _ = py_record.setattr("levelname", &record.levelname);
+
+                // Add extra fields to the LogRecord object (as strings due to Rust storage)
+                if let Some(ref extra_fields) = record.extra {
+                    for (key, value) in extra_fields {
+                        let _ = py_record.setattr(key.as_str(), value.as_str());
+                    }
+                }
+
+                // Call handle() method on each Python handler
+                for handler in handlers_clone.iter() {
+                    let _ = handler.call_method1(py, "handle", (&py_record,));
+                }
+            });
+        } else {
+            drop(python_handlers);
         }
 
         // Also emit to global handlers if propagate is true
@@ -280,7 +347,7 @@ impl PyLogger {
 
     #[allow(non_snake_case)]
     fn addHandler(&self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
-        // Extract Rust handler from Python wrapper and add to local handlers
+        // Try to extract Rust handler from Python wrapper and add to local handlers
         if let Ok(file_handler) = handler.extract::<PyRef<PyFileHandler>>() {
             self.local_handlers
                 .lock()
@@ -300,9 +367,10 @@ impl PyLogger {
                 .push(rotating_handler.inner.clone());
             Ok(())
         } else {
-            Err(PyValueError::new_err(
-                "Only Rust native handlers are supported. Use FileHandler, StreamHandler, or RotatingFileHandler from logxide.",
-            ))
+            // For non-Rust handlers (e.g., standard library handlers),
+            // store them in the Python handlers list to call during emit
+            self.handlers.lock().unwrap().push(handler.clone().unbind());
+            Ok(())
         }
     }
 
