@@ -54,7 +54,7 @@ pytest tests/ --cov=logxide --cov-report=html
 
 ## Compatibility
 
-- **Python**: 3.12+ (3.13+ recommended)
+- **Python**: 3.12+ (3.14 supported)
 - **Platforms**: macOS, Linux, Windows
 - **API**: Full compatibility with Python's `logging` module
 - **Dependencies**: None (Rust compiled into native extension)

@@ -739,7 +739,7 @@ if __name__ == "__main__":
 Always use the LogXide import pattern - it's automatic:
 
 ```python
-# ✅ Correct - Simple and automatic
+# Correct - Simple and automatic
 from logxide import logging
 
 from flask import Flask
@@ -748,7 +748,7 @@ from django.conf import settings
 # or
 from fastapi import FastAPI
 
-# ❌ Don't do this - install() is called automatically
+# Don't do this - install() is called automatically
 import logging  # Standard logging without LogXide
 ```
 

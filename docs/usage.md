@@ -146,9 +146,9 @@ python examples/minimal_dropin.py
 
 LogXide aims for 100% compatibility with Python's logging module:
 
-- 로거 생성 및 계층
-- 로그 레벨 및 필터링
-- 형식 지정자 및 날짜 형식 지정
-- 기본 설정
-- 스레드 안전성
-- 플러시 기능
+- Logger creation and hierarchy
+- Log levels and filtering
+- Format specifiers and date formatting
+- Basic configuration
+- Thread safety
+- Flush functionality

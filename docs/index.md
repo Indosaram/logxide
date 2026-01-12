@@ -22,13 +22,13 @@ LogXide is a high-performance, Rust-powered, drop-in replacement for Python's st
 
 ## Key Features
 
-- **고성능**: Rust와 Tokio 런타임으로 구동되는 비동기 로깅은 비블로킹 I/O를 제공하여 높은 성능을 자랑합니다.
-- 🔄 **Drop-in Replacement**: Fully compatible with the `logging` module's API. You can switch to Logxide with minimal code changes.
-- 🧵 **Thread-Safe**: Designed from the ground up for multi-threaded applications, with features to make thread-based logging easier.
-- 📝 **Rich Formatting**: Supports all standard Python logging format specifiers, plus advanced features like padding and alignment.
-- ⚡ **Async Processing**: Log messages are processed in the background, so your application's main thread isn't blocked.
-- 🎯 **Level Filtering**: Hierarchical loggers with level filtering and inheritance, just like the standard library.
-- 🔧 **Configurable**: Flexible configuration options to tailor logging to your needs.
+- **High Performance**: Rust-powered logging with native handlers delivers exceptional throughput and non-blocking I/O.
+- **Drop-in Replacement**: Fully compatible with the `logging` module's API. You can switch to LogXide with minimal code changes.
+- **Thread-Safe**: Designed from the ground up for multi-threaded applications, with features to make thread-based logging easier.
+- **Rich Formatting**: Supports all standard Python logging format specifiers, plus advanced features like padding and alignment.
+- **Async Processing**: Log messages are processed in the background, so your application's main thread isn't blocked.
+- **Level Filtering**: Hierarchical loggers with level filtering and inheritance, just like the standard library.
+- **Configurable**: Flexible configuration options to tailor logging to your needs.
 
 ## Installation
 

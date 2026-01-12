@@ -441,7 +441,11 @@ def _install(sentry=None):
                         current_pylogger = std_logger.info.__self__
 
                     if current_pylogger is not None:
-                        current_pylogger.addHandler(handler)
+                        # Check for shim handlers and extract inner Rust handler
+                        if hasattr(handler, "_inner"):
+                            current_pylogger.addHandler(handler._inner)
+                        else:
+                            current_pylogger.addHandler(handler)
                 except ValueError:
                     # Ignore ValueError for non-Rust handlers (e.g., NullHandler)
                     # Handler was already added to stdlib logger above
@@ -537,6 +541,10 @@ def _install(sentry=None):
 
     # Migrate any loggers that might have been created before install()
     _migrate_existing_loggers()
+
+    # Explicitly patch the root logger to ensure dictConfig works
+    # dictConfig accesses logging.root directly, so we must ensure it's patched
+    logxide_getLogger(None)
 
     # Note: Handlers should be added via explicit basicConfig() call
     # We no longer add default handlers automatically to avoid unexpected output

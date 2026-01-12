@@ -32,7 +32,7 @@ LogXide is a Rust-based Python extension that provides high-performance logging.
 ### Prerequisites
 
 - Rust 1.70 or later
-- Python 3.9 or later
+- Python 3.12 or later
 - Git
 
 ### Setup Instructions
