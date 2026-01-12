@@ -1,6 +1,6 @@
 [project]
 name = "logxide"
-version = "0.1.4"
+version = "0.1.5"
 description = "High-performance, Rust-powered drop-in replacement for Python's logging module"
 readme = "README.md"
 license = {text = "MIT"}
