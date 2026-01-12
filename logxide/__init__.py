@@ -6,14 +6,86 @@ with Python's standard logging module while delivering superior performance thro
 its Rust backend.
 """
 
+import os
+import re
 import sys
 from types import ModuleType
+
+
+def _check_python_version():
+    """
+    Check if the compiled extension matches runtime Python version.
+
+    This prevents cryptic import errors when using LogXide compiled for
+    a different Python version.
+    """
+    import glob
+
+    package_dir = os.path.dirname(os.path.abspath(__file__))
+    extension_patterns = [
+        os.path.join(package_dir, "logxide.*.so"),
+        os.path.join(package_dir, "logxide.*.pyd"),
+        os.path.join(package_dir, "logxide.*.dylib"),
+    ]
+
+    extension_file = None
+    for pattern in extension_patterns:
+        matches = glob.glob(pattern)
+        if matches:
+            extension_file = matches[0]
+            break
+
+    if not extension_file:
+        return
+
+    # Pattern matches: logxide.cpython-314-*.so, logxide.cpython-311-*.pyd, etc.
+    version_match = re.search(r"cpython-(\d)(\d+)(?:\d*)", extension_file)
+
+    if version_match:
+        major = int(version_match.group(1))
+        minor = int(version_match.group(2)[:2])  # e.g., 14 -> 14
+        compiled_version = (major, minor)
+        runtime_version = sys.version_info[:2]
+
+        if compiled_version != runtime_version:
+            sys.stderr.write(
+                f"""
+═══════════════════════════════════════════════════════════════
+❌ FATAL: Python Version Mismatch
+═══════════════════════════════════════════════════════════════
+
+LogXide was compiled for Python {compiled_version[0]}.{compiled_version[1]}
+but you are running Python {runtime_version[0]}.{runtime_version[1]}
+
+This will cause complete logging failures (0 bytes written, no output).
+
+Solutions:
+1. Reinstall LogXide with the correct Python version:
+   pip uninstall logxide
+   python{runtime_version[0]}.{runtime_version[1]} -m pip install logxide
+
+2. Use the correct Python interpreter:
+   python{runtime_version[0]}.{runtime_version[1]} your_script.py
+
+3. Build from source with your Python version:
+   git clone https://github.com/Indosaram/logxide
+   cd logxide
+   pip install maturin
+   python{runtime_version[0]}.{runtime_version[1]} -m maturin develop
+
+═══════════════════════════════════════════════════════════════
+"""
+            )
+            sys.exit(1)
+
+
+_check_python_version()
 
 # Import Rust extension - if this fails, it's a bug
 from . import logxide
 
 # Package metadata
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __author__ = "LogXide Team"
 __email__ = "freedomzero91@gmail.com"
 __license__ = "MIT"
@@ -55,9 +127,15 @@ from .compat_handlers import (
 )
 
 # Import Rust native handlers from the extension module
-FileHandler = logxide.FileHandler
-StreamHandler = logxide.StreamHandler
-RotatingFileHandler = logxide.RotatingFileHandler
+# We now use the shim handlers by default for better compatibility
+from .handlers import FileHandler, StreamHandler, RotatingFileHandler
+from . import logxide as _logxide_ext
+
+# Keep raw Rust handlers available if needed
+RustFileHandler = _logxide_ext.FileHandler
+RustStreamHandler = _logxide_ext.StreamHandler
+RustRotatingFileHandler = _logxide_ext.RotatingFileHandler
+
 NullHandler = _CompatNullHandler  # Use compat NullHandler for now
 from .logger_wrapper import basicConfig, getLogger
 from .module_system import _install, logging, uninstall

@@ -68,11 +68,11 @@ logger.addHandler(sentry_handler)
 
 By default, LogXide sends only WARNING level and above to Sentry to avoid noise:
 
-- **DEBUG** ❌ Not sent to Sentry
-- **INFO** ❌ Not sent to Sentry
-- **WARNING** ✅ Sent to Sentry
-- **ERROR** ✅ Sent to Sentry
-- **CRITICAL** ✅ Sent to Sentry
+- **DEBUG**: Not sent to Sentry
+- **INFO**: Not sent to Sentry
+- **WARNING**: Sent to Sentry
+- **ERROR**: Sent to Sentry
+- **CRITICAL**: Sent to Sentry
 
 ### Exception Tracking
 
@@ -467,11 +467,11 @@ sentry_sdk.init(
 
 LogXide's Sentry integration provides:
 
-- 🚀 **Zero-configuration** automatic integration
-- 🎯 **Smart filtering** of log levels
-- 📊 **Rich context** capture
-- 🔒 **Security-conscious** defaults
-- ⚡ **High performance** with async sending
-- 🛠️ **Full control** when needed
+- **Zero-configuration** automatic integration
+- **Smart filtering** of log levels
+- **Rich context** capture
+- **Security-conscious** defaults
+- **High performance** with async sending
+- **Full control** when needed
 
 Just install, configure Sentry as usual, and LogXide handles the rest!

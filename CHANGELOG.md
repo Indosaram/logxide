@@ -86,11 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Easy Integration**: Simple drop-in replacement with automatic installation
 
 ### Supported Python Versions
-- Python 3.9+
-- Python 3.10
-- Python 3.11
 - Python 3.12
 - Python 3.13
+- Python 3.14
 
 ### Performance Improvements
 - Up to 3-5x faster than Python's standard logging module

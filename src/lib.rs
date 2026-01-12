@@ -280,28 +280,56 @@ impl PyLogger {
 
     #[allow(non_snake_case)]
     fn addHandler(&self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
-        // Extract Rust handler from Python wrapper and add to local handlers
-        if let Ok(file_handler) = handler.extract::<PyRef<PyFileHandler>>() {
-            self.local_handlers
-                .lock()
-                .unwrap()
-                .push(file_handler.inner.clone());
-            Ok(())
+        // Extract Rust handler from Python wrapper
+        let handler_arc: Option<Arc<dyn Handler + Send + Sync>> = if let Ok(file_handler) =
+            handler.extract::<PyRef<PyFileHandler>>()
+        {
+            Some(file_handler.inner.clone())
         } else if let Ok(stream_handler) = handler.extract::<PyRef<PyStreamHandler>>() {
-            self.local_handlers
-                .lock()
-                .unwrap()
-                .push(stream_handler.inner.clone());
-            Ok(())
+            Some(stream_handler.inner.clone())
         } else if let Ok(rotating_handler) = handler.extract::<PyRef<PyRotatingFileHandler>>() {
-            self.local_handlers
-                .lock()
-                .unwrap()
-                .push(rotating_handler.inner.clone());
+            Some(rotating_handler.inner.clone())
+        } else {
+            // Check for shim handlers by looking for _inner attribute (added for dictConfig support)
+            if let Ok(inner) = handler.getattr("_inner") {
+                if let Ok(file_handler) = inner.extract::<PyRef<PyFileHandler>>() {
+                    Some(file_handler.inner.clone())
+                } else if let Ok(stream_handler) = inner.extract::<PyRef<PyStreamHandler>>() {
+                    Some(stream_handler.inner.clone())
+                } else if let Ok(rotating_handler) = inner.extract::<PyRef<PyRotatingFileHandler>>()
+                {
+                    Some(rotating_handler.inner.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(h) = handler_arc {
+            // If this is the root logger, add to global handlers to ensure propagation works
+            // The Rust implementation propagates to global handlers, not parent handlers
+            if self.fast_logger.name.as_ref() == "root" {
+                HANDLERS.lock().unwrap().push(h);
+            } else {
+                self.local_handlers.lock().unwrap().push(h);
+            }
             Ok(())
         } else {
             Err(PyValueError::new_err(
-                "Only Rust native handlers are supported. Use FileHandler, StreamHandler, or RotatingFileHandler from logxide.",
+                "LogXide only supports Rust native handlers. You are trying to add a Python standard library handler.\n\n\
+                 ❌ WRONG:\n\
+                 import logging as stdlib\n\
+                 logger.addHandler(stdlib.FileHandler('app.log'))\n\n\
+                 ✅ CORRECT:\n\
+                 from logxide import FileHandler\n\
+                 logger.addHandler(FileHandler('app.log'))\n\n\
+                 ✅ CORRECT (basicConfig):\n\
+                 from logxide import logging\n\
+                 logging.basicConfig(filename='app.log')\n\
+                 logger = logging.getLogger('myapp')\n\n\
+                 Available handlers: FileHandler, StreamHandler, RotatingFileHandler",
             ))
         }
     }
