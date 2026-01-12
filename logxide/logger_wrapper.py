@@ -138,15 +138,23 @@ def _migrate_existing_loggers():
                 _existing_logger_registry[logger_name] = True
 
 
+# Track loggers to ensure we return singleton instances
+_logger_cache = {}
+
+
 def getLogger(name=None):
     """
     Get a logger by name, ensuring existing loggers get LogXide functionality.
-
-    This wraps the Rust getLogger to handle cases where Python libraries
-    created loggers before LogXide was configured.
     """
+    if name is None:
+        name = "root"
+
+    if name in _logger_cache:
+        return _logger_cache[name]
+
     # Get the LogXide logger
     logger = _rust_getLogger(name)
+    _logger_cache[name] = logger
 
     # Ensure any retrieved logger propagates to the root and has no other handlers
     # logger.handlers.clear() # Handlers are managed by the Rust side now
