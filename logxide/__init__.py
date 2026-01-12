@@ -85,7 +85,7 @@ _check_python_version()
 from . import logxide
 
 # Package metadata
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 __author__ = "LogXide Team"
 __email__ = "freedomzero91@gmail.com"
 __license__ = "MIT"
