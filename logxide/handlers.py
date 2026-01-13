@@ -60,8 +60,32 @@ class RotatingFileHandler(logging.handlers.RotatingFileHandler):
 
 
 class BufferedHTTPHandler(logging.Handler):
+    """
+    High-performance HTTP handler with batching and background transmission.
+
+    Args:
+        url: HTTP endpoint URL
+        headers: HTTP headers dict (e.g., {"Authorization": "Bearer token"})
+        capacity: Max buffer capacity (default: 10000)
+        batch_size: Records per batch (default: 1000)
+        flush_interval: Seconds between auto-flush (default: 30)
+        global_context: Dict of fields added to every record
+        transform_callback: Callable(records) -> transformed_records for custom JSON
+        context_provider: Callable() -> dict for dynamic context per batch
+        error_callback: Callable(error_msg) for HTTP failure handling
+    """
+
     def __init__(
-        self, url, headers=None, capacity=10000, batch_size=1000, flush_interval=30
+        self,
+        url,
+        headers=None,
+        capacity=10000,
+        batch_size=1000,
+        flush_interval=30,
+        global_context=None,
+        transform_callback=None,
+        context_provider=None,
+        error_callback=None,
     ):
         super().__init__()
         self._inner = logxide.BufferedHTTPHandler(
@@ -70,6 +94,10 @@ class BufferedHTTPHandler(logging.Handler):
             capacity=capacity,
             batch_size=batch_size,
             flush_interval=flush_interval,
+            global_context=global_context,
+            transform_callback=transform_callback,
+            context_provider=context_provider,
+            error_callback=error_callback,
         )
 
     def setLevel(self, level):
@@ -78,3 +106,10 @@ class BufferedHTTPHandler(logging.Handler):
 
     def emit(self, record):
         pass
+
+    def flush(self):
+        self._inner.flush()
+
+    def close(self):
+        self._inner.shutdown()
+        super().close()

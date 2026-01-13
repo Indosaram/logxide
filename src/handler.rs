@@ -2,11 +2,14 @@
 
 use async_trait::async_trait;
 
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -146,13 +149,25 @@ impl Handler for RotatingFileHandler {
 
 pub struct BufferedHTTPHandler {
     sender: crossbeam_channel::Sender<LogRecord>,
+    flush_signal: crossbeam_channel::Sender<()>,
     level: AtomicU8,
+    shutdown: Arc<AtomicBool>,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverflowStrategy {
     DropOldest,
     DropNewest,
     Block,
+}
+
+pub struct HTTPHandlerConfig {
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub global_context: HashMap<String, Value>,
+    pub transform_callback: Option<Py<PyAny>>,
+    pub context_provider: Option<Py<PyAny>>,
+    pub error_callback: Option<Py<PyAny>>,
 }
 
 impl BufferedHTTPHandler {
@@ -164,54 +179,260 @@ impl BufferedHTTPHandler {
         flush_interval: u64,
         _: OverflowStrategy,
     ) -> Self {
+        Self::with_config(
+            HTTPHandlerConfig {
+                url,
+                headers,
+                global_context: HashMap::new(),
+                transform_callback: None,
+                context_provider: None,
+                error_callback: None,
+            },
+            capacity,
+            batch_size,
+            flush_interval,
+        )
+    }
+
+    pub fn with_config(
+        config: HTTPHandlerConfig,
+        capacity: usize,
+        batch_size: usize,
+        flush_interval: u64,
+    ) -> Self {
         let (s, r) = crossbeam_channel::bounded(capacity);
+        let (flush_tx, flush_rx) = crossbeam_channel::bounded::<()>(1);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_clone = shutdown.clone();
+
+        let url = config.url;
+        let headers = config.headers;
+        let global_context = config.global_context;
+        let transform_callback = config.transform_callback;
+        let context_provider = config.context_provider;
+        let error_callback = config.error_callback;
+
         std::thread::spawn(move || {
             let mut buffer = Vec::with_capacity(batch_size);
             let mut last_flush = std::time::Instant::now();
+
             loop {
+                if shutdown_clone.load(Ordering::Relaxed) && buffer.is_empty() {
+                    break;
+                }
+
+                let should_flush = match flush_rx.try_recv() {
+                    Ok(()) => true,
+                    Err(_) => false,
+                };
+
                 match r.recv_timeout(std::time::Duration::from_millis(100)) {
                     Ok(rec) => {
                         buffer.push(rec);
-                        if buffer.len() >= batch_size {
-                            Self::send_batch(&url, &headers, &mut buffer);
+                        if buffer.len() >= batch_size || should_flush {
+                            Self::send_batch_with_callbacks(
+                                &url,
+                                &headers,
+                                &global_context,
+                                &transform_callback,
+                                &context_provider,
+                                &error_callback,
+                                &mut buffer,
+                            );
                             last_flush = std::time::Instant::now();
                         }
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        if !buffer.is_empty() && last_flush.elapsed().as_secs() >= flush_interval {
-                            Self::send_batch(&url, &headers, &mut buffer);
+                        let should_time_flush =
+                            !buffer.is_empty() && last_flush.elapsed().as_secs() >= flush_interval;
+                        if should_time_flush || should_flush {
+                            Self::send_batch_with_callbacks(
+                                &url,
+                                &headers,
+                                &global_context,
+                                &transform_callback,
+                                &context_provider,
+                                &error_callback,
+                                &mut buffer,
+                            );
                             last_flush = std::time::Instant::now();
                         }
                     }
-                    Err(_) => {
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        if !buffer.is_empty() {
+                            Self::send_batch_with_callbacks(
+                                &url,
+                                &headers,
+                                &global_context,
+                                &transform_callback,
+                                &context_provider,
+                                &error_callback,
+                                &mut buffer,
+                            );
+                        }
                         break;
                     }
                 }
             }
         });
+
         Self {
             sender: s,
+            flush_signal: flush_tx,
             level: AtomicU8::new(LogLevel::Debug as u8),
+            shutdown,
         }
     }
 
-    fn send_batch(url: &str, headers: &HashMap<String, String>, buffer: &mut Vec<LogRecord>) {
+    fn send_batch_with_callbacks(
+        url: &str,
+        headers: &HashMap<String, String>,
+        global_context: &HashMap<String, Value>,
+        transform_callback: &Option<Py<PyAny>>,
+        context_provider: &Option<Py<PyAny>>,
+        error_callback: &Option<Py<PyAny>>,
+        buffer: &mut Vec<LogRecord>,
+    ) {
         if buffer.is_empty() {
             return;
         }
+
         let batch: Vec<LogRecord> = buffer.drain(..).collect();
 
-        let mut request = ureq::post(url).set("Content-Type", "application/json");
+        let json_payload: Value = Python::with_gil(|py| {
+            let dynamic_context: HashMap<String, Value> = context_provider
+                .as_ref()
+                .and_then(|cb| {
+                    cb.call0(py).ok().and_then(|result| {
+                        let dict = result.downcast_bound::<PyDict>(py).ok()?;
+                        let mut map = HashMap::new();
+                        for (k, v) in dict.iter() {
+                            if let Ok(key) = k.extract::<String>() {
+                                map.insert(key, py_to_value(&v));
+                            }
+                        }
+                        Some(map)
+                    })
+                })
+                .unwrap_or_default();
 
+            if let Some(ref cb) = transform_callback {
+                let records_list: Vec<Value> = batch
+                    .iter()
+                    .map(|rec| {
+                        let mut rec_map = serde_json::to_value(rec).unwrap_or(Value::Null);
+                        if let Value::Object(ref mut obj) = rec_map {
+                            for (k, v) in global_context {
+                                obj.insert(k.clone(), v.clone());
+                            }
+                            for (k, v) in &dynamic_context {
+                                obj.insert(k.clone(), v.clone());
+                            }
+                        }
+                        rec_map
+                    })
+                    .collect();
+
+                let py_records = serde_json::to_string(&records_list).ok().and_then(|s| {
+                    py.import("json")
+                        .ok()
+                        .and_then(|json_mod| json_mod.call_method1("loads", (s,)).ok())
+                });
+
+                if let Some(py_recs) = py_records {
+                    if let Ok(result) = cb.call1(py, (py_recs,)) {
+                        if let Ok(json_mod) = py.import("json") {
+                            if let Ok(json_str) = json_mod.call_method1("dumps", (result,)) {
+                                if let Ok(s) = json_str.extract::<String>() {
+                                    if let Ok(v) = serde_json::from_str(&s) {
+                                        return v;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let records_with_context: Vec<Value> = batch
+                .iter()
+                .map(|rec| {
+                    let mut rec_map = serde_json::to_value(rec).unwrap_or(Value::Null);
+                    if let Value::Object(ref mut obj) = rec_map {
+                        for (k, v) in global_context {
+                            obj.insert(k.clone(), v.clone());
+                        }
+                        for (k, v) in &dynamic_context {
+                            obj.insert(k.clone(), v.clone());
+                        }
+                    }
+                    rec_map
+                })
+                .collect();
+
+            Value::Array(records_with_context)
+        });
+
+        let mut request = ureq::post(url).set("Content-Type", "application/json");
         for (key, value) in headers {
             request = request.set(key, value);
         }
 
-        let _ = request.send_json(&batch);
+        let result = request.send_json(&json_payload);
+
+        if let Err(e) = result {
+            if let Some(ref cb) = error_callback {
+                Python::with_gil(|py| {
+                    let _ = cb.call1(py, (e.to_string(),));
+                });
+            }
+        }
+    }
+
+    pub fn flush(&self) {
+        let _ = self.flush_signal.try_send(());
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        let _ = self.flush_signal.try_send(());
     }
 
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
+    }
+}
+
+fn py_to_value(obj: &Bound<PyAny>) -> Value {
+    use pyo3::types::PyList;
+
+    if obj.is_none() {
+        Value::Null
+    } else if let Ok(b) = obj.extract::<bool>() {
+        Value::Bool(b)
+    } else if let Ok(i) = obj.extract::<i64>() {
+        Value::Number(i.into())
+    } else if let Ok(f) = obj.extract::<f64>() {
+        serde_json::Number::from_f64(f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
+    } else if let Ok(s) = obj.extract::<String>() {
+        Value::String(s)
+    } else if let Ok(list) = obj.downcast::<PyList>() {
+        let arr: Vec<Value> = list.iter().map(|item| py_to_value(&item)).collect();
+        Value::Array(arr)
+    } else if let Ok(dict) = obj.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            if let Ok(key) = k.extract::<String>() {
+                map.insert(key, py_to_value(&v));
+            }
+        }
+        Value::Object(map)
+    } else if let Ok(s) = obj.str() {
+        Value::String(s.to_string())
+    } else {
+        Value::Null
     }
 }
 
