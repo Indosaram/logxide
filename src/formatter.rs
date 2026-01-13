@@ -307,7 +307,12 @@ impl Formatter for PythonFormatter {
         if let Some(ref extra_fields) = record.extra {
             for (key, value) in extra_fields {
                 let placeholder = format!("%({})s", key);
-                result = result.replace(&placeholder, value);
+                let value_str = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Null => "null".to_string(),
+                    other => other.to_string(),
+                };
+                result = result.replace(&placeholder, &value_str);
             }
         }
 

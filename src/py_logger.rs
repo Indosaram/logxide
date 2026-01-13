@@ -5,12 +5,45 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::core::{create_log_record_with_extra, LogLevel, LogRecord, Logger};
 use crate::fast_logger::FastLogger;
 use crate::globals::{add_handler_to_registry, HANDLERS};
 use crate::handler::Handler;
+
+fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
+    if obj.is_none() {
+        Value::Null
+    } else if let Ok(b) = obj.extract::<bool>() {
+        Value::Bool(b)
+    } else if let Ok(i) = obj.extract::<i64>() {
+        Value::Number(i.into())
+    } else if let Ok(f) = obj.extract::<f64>() {
+        serde_json::Number::from_f64(f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
+    } else if let Ok(s) = obj.extract::<String>() {
+        Value::String(s)
+    } else if let Ok(list) = obj.downcast::<PyList>() {
+        let arr: Vec<Value> = list.iter().map(|item| py_to_json_value(&item)).collect();
+        Value::Array(arr)
+    } else if let Ok(dict) = obj.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            if let Ok(key) = k.str() {
+                map.insert(key.to_string(), py_to_json_value(&v));
+            }
+        }
+        Value::Object(map)
+    } else if let Ok(s) = obj.str() {
+        Value::String(s.to_string())
+    } else {
+        Value::Null
+    }
+}
 
 #[pyclass]
 pub struct PyLogger {
@@ -56,6 +89,29 @@ impl Drop for PyLogger {
     fn drop(&mut self) {}
 }
 
+impl PyLogger {
+    fn extract_extra_fields(
+        &self,
+        kwargs: Option<&Bound<PyDict>>,
+    ) -> Option<HashMap<String, Value>> {
+        kwargs.and_then(|dict| {
+            if let Ok(Some(extra_bound)) = dict.get_item("extra") {
+                if let Ok(extra_dict) = extra_bound.downcast::<PyDict>() {
+                    let mut extra_map = HashMap::new();
+                    for (key, value) in extra_dict.iter() {
+                        if let Ok(key_str) = key.str() {
+                            let json_value = py_to_json_value(&value);
+                            extra_map.insert(key_str.to_string(), json_value);
+                        }
+                    }
+                    return Some(extra_map);
+                }
+            }
+            None
+        })
+    }
+}
+
 #[pymethods]
 impl PyLogger {
     fn emit_record(&self, record: LogRecord) {
@@ -82,27 +138,6 @@ impl PyLogger {
                 futures::executor::block_on(handler.emit(&record));
             }
         }
-    }
-
-    #[pyo3(signature = (kwargs=None))]
-    fn extract_extra_fields(
-        &self,
-        kwargs: Option<&Bound<PyDict>>,
-    ) -> Option<std::collections::HashMap<String, String>> {
-        kwargs.and_then(|dict| {
-            if let Ok(Some(extra_bound)) = dict.get_item("extra") {
-                if let Ok(extra_dict) = extra_bound.downcast::<PyDict>() {
-                    let mut extra_map = std::collections::HashMap::new();
-                    for (key, value) in extra_dict.iter() {
-                        if let (Ok(key_str), Ok(value_str)) = (key.str(), value.str()) {
-                            extra_map.insert(key_str.to_string(), value_str.to_string());
-                        }
-                    }
-                    return Some(extra_map);
-                }
-            }
-            None
-        })
     }
 
     #[getter]
