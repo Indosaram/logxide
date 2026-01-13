@@ -69,6 +69,7 @@ from .compat_handlers import (
     Formatter,
     Handler,
     LoggingManager,
+    LogRecord,
 )
 from .compat_handlers import NullHandler as _CompatNullHandler
 from .handlers import (
@@ -94,7 +95,7 @@ flush = logxide.logging.flush
 set_thread_name = logxide.logging.set_thread_name
 PyLogger = logxide.logging.PyLogger
 Logger = PyLogger
-LogRecord = logxide.logging.LogRecord
+RustLogRecord = logxide.logging.LogRecord
 
 _auto_install_disabled = (
     os.environ.get("LOGXIDE_DISABLE_AUTO_INSTALL", "").lower() in ("1", "true", "yes")
