@@ -13,11 +13,9 @@ use once_cell::sync::Lazy;
 
 use crate::core::{get_logger as core_get_logger, get_root_logger, LogLevel};
 use crate::fast_logger;
-use crate::handler::{
-    BufferedHTTPHandler, FileHandler, Handler, OverflowStrategy, RotatingFileHandler,
-};
+use crate::handler::{FileHandler, HTTPHandler, Handler, OverflowStrategy, RotatingFileHandler};
 use crate::py_handlers::{
-    PyBufferedHTTPHandler, PyFileHandler, PyRotatingFileHandler, PyStreamHandler,
+    PyFileHandler, PyHTTPHandler, PyOTLPHandler, PyRotatingFileHandler, PyStreamHandler,
 };
 use crate::py_logger::PyLogger;
 
@@ -102,7 +100,7 @@ pub fn register_http_handler(
     flush_interval: Option<u64>,
     level: Option<u32>,
 ) -> PyResult<()> {
-    let h = Arc::new(BufferedHTTPHandler::new(
+    let h = Arc::new(HTTPHandler::new(
         url,
         headers.unwrap_or_default(),
         capacity.unwrap_or(10000),
@@ -171,8 +169,10 @@ pub fn add_handler_to_registry(
             Some(stream_handler.inner.clone())
         } else if let Ok(rotating_handler) = handler.extract::<PyRef<PyRotatingFileHandler>>() {
             Some(rotating_handler.inner.clone())
-        } else if let Ok(http_handler) = handler.extract::<PyRef<PyBufferedHTTPHandler>>() {
+        } else if let Ok(http_handler) = handler.extract::<PyRef<PyHTTPHandler>>() {
             Some(http_handler.inner.clone())
+        } else if let Ok(otlp_handler) = handler.extract::<PyRef<PyOTLPHandler>>() {
+            Some(otlp_handler.inner.clone())
         } else if let Ok(inner) = handler.getattr("_inner") {
             if let Ok(file_handler) = inner.extract::<PyRef<PyFileHandler>>() {
                 Some(file_handler.inner.clone())
@@ -180,8 +180,10 @@ pub fn add_handler_to_registry(
                 Some(stream_handler.inner.clone())
             } else if let Ok(rotating_handler) = inner.extract::<PyRef<PyRotatingFileHandler>>() {
                 Some(rotating_handler.inner.clone())
-            } else if let Ok(http_handler) = inner.extract::<PyRef<PyBufferedHTTPHandler>>() {
+            } else if let Ok(http_handler) = inner.extract::<PyRef<PyHTTPHandler>>() {
                 Some(http_handler.inner.clone())
+            } else if let Ok(otlp_handler) = inner.extract::<PyRef<PyOTLPHandler>>() {
+                Some(otlp_handler.inner.clone())
             } else {
                 None
             }

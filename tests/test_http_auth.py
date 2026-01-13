@@ -47,7 +47,7 @@ def test_http_auth():
     print("Python: Importing logxide and standard logging...")
     import logxide
     import logging
-    from logxide import BufferedHTTPHandler
+    from logxide import HTTPHandler
 
     # 0. 강제 설치
     logxide._install()
@@ -57,8 +57,8 @@ def test_http_auth():
     server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
     server_thread.start()
 
-    print("Python: Creating BufferedHTTPHandler...")
-    handler = BufferedHTTPHandler(
+    print("Python: Creating HTTPHandler...")
+    handler = HTTPHandler(
         url="http://localhost:8081",
         headers={"Authorization": "Bearer my-secret-token", "X-API-KEY": "key-123"},
         batch_size=2,

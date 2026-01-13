@@ -59,7 +59,7 @@ class RotatingFileHandler(logging.handlers.RotatingFileHandler):
         pass
 
 
-class BufferedHTTPHandler(logging.Handler):
+class HTTPHandler(logging.Handler):
     """
     High-performance HTTP handler with batching and background transmission.
 
@@ -88,7 +88,7 @@ class BufferedHTTPHandler(logging.Handler):
         error_callback=None,
     ):
         super().__init__()
-        self._inner = logxide.BufferedHTTPHandler(
+        self._inner = logxide.HTTPHandler(
             url,
             headers=headers,
             capacity=capacity,
@@ -97,6 +97,57 @@ class BufferedHTTPHandler(logging.Handler):
             global_context=global_context,
             transform_callback=transform_callback,
             context_provider=context_provider,
+            error_callback=error_callback,
+        )
+
+    def setLevel(self, level):
+        super().setLevel(level)
+        self._inner.setLevel(level)
+
+    def emit(self, record):
+        pass
+
+    def flush(self):
+        self._inner.flush()
+
+    def close(self):
+        self._inner.shutdown()
+        super().close()
+
+
+class OTLPHandler(logging.Handler):
+    """
+    High-performance OpenTelemetry OTLP (protobuf) handler with batching and background transmission.
+    Compatible with OTLP (OpenTelemetry Protocol) receivers.
+
+    Args:
+        url: OTLP HTTP endpoint URL (e.g., "http://localhost:4318/v1/logs")
+        headers: HTTP headers dict (e.g., {"Authorization": "Bearer token"})
+        service_name: Service name for OTLP resource attribute (default: "unknown_service")
+        capacity: Max buffer capacity (default: 10000)
+        batch_size: Records per batch (default: 1000)
+        flush_interval: Seconds between auto-flush (default: 30)
+        error_callback: Callable(error_msg) for HTTP failure handling
+    """
+
+    def __init__(
+        self,
+        url,
+        headers=None,
+        service_name="unknown_service",
+        capacity=10000,
+        batch_size=1000,
+        flush_interval=30,
+        error_callback=None,
+    ):
+        super().__init__()
+        self._inner = logxide.OTLPHandler(
+            url,
+            headers=headers,
+            service_name=service_name,
+            capacity=capacity,
+            batch_size=batch_size,
+            flush_interval=flush_interval,
             error_callback=error_callback,
         )
 
