@@ -90,16 +90,18 @@ from .module_system import _install, logging, uninstall
 
 clear_handlers = logxide.logging.clear_handlers
 
-# Re-export important functions
 flush = logxide.logging.flush
 set_thread_name = logxide.logging.set_thread_name
 PyLogger = logxide.logging.PyLogger
 Logger = PyLogger
 LogRecord = logxide.logging.LogRecord
 
-# In production, we automatically install and replace sys.modules['logging'].
-# In pytest, we AVOID this completely as it breaks caplog's early initialization.
-if "pytest" not in sys.modules and "PYTEST_CURRENT_TEST" not in os.environ:
+_auto_install_disabled = (
+    os.environ.get("LOGXIDE_DISABLE_AUTO_INSTALL", "").lower() in ("1", "true", "yes")
+    or "pytest" in sys.modules
+    or "PYTEST_CURRENT_TEST" in os.environ
+)
+
+if not _auto_install_disabled:
     _install()
-    # Replace the standard logging module reference
     sys.modules["logging"] = logging
