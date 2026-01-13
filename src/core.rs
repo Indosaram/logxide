@@ -12,6 +12,7 @@ use std::thread;
 
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Log levels, matching Python's logging levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -83,8 +84,8 @@ pub struct LogRecord {
     pub stack_info: Option<String>,
     #[pyo3(get, set)]
     pub task_name: Option<String>,
-    #[pyo3(get, set)]
-    pub extra: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub extra: Option<HashMap<String, Value>>,
 }
 
 #[pymethods]
@@ -147,7 +148,7 @@ pub fn create_log_record_with_extra(
     name: String,
     level: LogLevel,
     msg: String,
-    extra: Option<std::collections::HashMap<String, String>>,
+    extra: Option<HashMap<String, Value>>,
 ) -> LogRecord {
     use crate::string_cache::{get_common_message, get_level_name, get_logger_name};
 
