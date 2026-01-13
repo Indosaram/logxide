@@ -52,19 +52,25 @@ from .compat_functions import (
     setLogRecordFactory,
 )
 from .compat_handlers import (
+    BASIC_FORMAT,
     CRITICAL,
     DEBUG,
     ERROR,
     FATAL,
     Filter,
     INFO,
+    LogRecord as PyLogRecord,
+    LoggingManager,
     NOTSET,
+    PercentStyle,
+    StrFormatStyle,
+    StringTemplateStyle,
     WARN,
     WARNING,
     Formatter,
     Handler,
-    LoggingManager,
     NullHandler,
+    _STYLES,
 )
 from .compat_handlers import StreamHandler as _StreamHandler
 from .logger_wrapper import _migrate_existing_loggers, basicConfig, getLogger
@@ -82,7 +88,6 @@ class _LoggingModule(types.ModuleType):
 
     def __init__(self):
         super().__init__("logging")
-        # Standard constants
         (
             self.CRITICAL,
             self.DEBUG,
@@ -94,7 +99,6 @@ class _LoggingModule(types.ModuleType):
             self.FATAL,
         ) = CRITICAL, DEBUG, INFO, NOTSET, WARN, WARNING, ERROR, FATAL
 
-        # Compatibility classes
         (
             self.NullHandler,
             self.Formatter,
@@ -109,12 +113,16 @@ class _LoggingModule(types.ModuleType):
             Handler,
             _StreamHandler,
             PyLogger,
-            logxide.logging.LogRecord,
+            PyLogRecord,
             Filter,
         )
-        self.BASIC_FORMAT = "%(levelname)s:%(name)s:%(message)s"
 
-        # Internal state shadowing
+        self.PercentStyle = PercentStyle
+        self.StrFormatStyle = StrFormatStyle
+        self.StringTemplateStyle = StringTemplateStyle
+        self._STYLES = _STYLES
+        self.BASIC_FORMAT = BASIC_FORMAT
+
         self._lock, self._handlers, self._handlerList = (
             threading.RLock(),
             weakref.WeakValueDictionary(),
@@ -122,7 +130,6 @@ class _LoggingModule(types.ModuleType):
         )
         self.root = _std_logging.root
 
-        # Rust handlers
         from . import logxide as _ext
 
         self.FileHandler = _ext.FileHandler
@@ -130,7 +137,6 @@ class _LoggingModule(types.ModuleType):
         self.BufferedHTTPHandler = _ext.BufferedHTTPHandler
         self.lastResort, self.raiseExceptions = _std_logging.lastResort, True
 
-        # Module sub-attributes
         import logging.config, logging.handlers
 
         self.config, self.handlers = logging.config, logging.handlers
