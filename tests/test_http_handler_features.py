@@ -5,7 +5,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import logxide
-from logxide import BufferedHTTPHandler
+from logxide import HTTPHandler
 
 logxide._install()
 import logging
@@ -42,7 +42,7 @@ def test_global_context():
     server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
     server_thread.start()
 
-    handler = BufferedHTTPHandler(
+    handler = HTTPHandler(
         url="http://localhost:8082",
         batch_size=1,
         global_context={
@@ -85,7 +85,7 @@ def test_transform_callback():
             "meta": {"count": len(records)},
         }
 
-    handler = BufferedHTTPHandler(
+    handler = HTTPHandler(
         url="http://localhost:8083",
         batch_size=2,
         transform_callback=transform,
@@ -123,7 +123,7 @@ def test_context_provider():
         call_count[0] += 1
         return {"batch_id": call_count[0], "timestamp": "2026-01-13T00:00:00Z"}
 
-    handler = BufferedHTTPHandler(
+    handler = HTTPHandler(
         url="http://localhost:8084",
         batch_size=1,
         context_provider=dynamic_context,
@@ -159,7 +159,7 @@ def test_manual_flush():
     server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
     server_thread.start()
 
-    handler = BufferedHTTPHandler(
+    handler = HTTPHandler(
         url="http://localhost:8085",
         batch_size=100,
         flush_interval=3600,
@@ -189,7 +189,7 @@ def test_extra_fields_complex_types():
     server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
     server_thread.start()
 
-    handler = BufferedHTTPHandler(
+    handler = HTTPHandler(
         url="http://localhost:8086",
         batch_size=1,
     )
@@ -228,7 +228,7 @@ def test_error_callback():
     def on_error(msg):
         ERROR_MESSAGES.append(msg)
 
-    handler = BufferedHTTPHandler(
+    handler = HTTPHandler(
         url="http://localhost:9999",
         batch_size=1,
         error_callback=on_error,

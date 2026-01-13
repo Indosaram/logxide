@@ -22,7 +22,7 @@ LogXide is **NOT** a drop-in replacement for Python's logging module. It priorit
 |---------|--------|-------|
 | Basic logging API | ✅ | `getLogger`, `info`, `debug`, etc. |
 | Formatters | ✅ | `PercentStyle`, `StrFormatStyle`, `StringTemplateStyle` |
-| Rust handlers | ✅ | `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `BufferedHTTPHandler` |
+| Rust handlers | ✅ | `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `HTTPHandler`, `OTLPHandler` |
 | Custom Python handlers | ❌ | Not supported - use Rust handlers only |
 | Subclassing `LogRecord` | ❌ | Rust type, not subclassable |
 | Subclassing `Logger` | ❌ | Rust type, not subclassable |
@@ -127,7 +127,7 @@ LogXide delivers exceptional performance through its Rust-powered native archite
 
 LogXide uses **Rust-native handlers only** for maximum performance:
 
-- **Rust handlers only**: `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `BufferedHTTPHandler`
+- **Rust handlers only**: `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `HTTPHandler`, `OTLPHandler`
 - **No custom Python handlers**: `logger.addHandler()` rejects Python `logging.Handler` subclasses
 - **No subclassing**: `LogRecord`, `Logger` are Rust types (not subclassable)
 - **No StringIO capture**: Use file-based logging for tests
@@ -140,9 +140,9 @@ Instead of subclassing `LogRecord`, use these approaches:
 | Use Case | Alternative |
 |----------|-------------|
 | Add custom fields | Use `extra` parameter: `logger.info("msg", extra={"user_id": 123})` |
-| Add metadata to all logs | Use `global_context` in `BufferedHTTPHandler` |
-| Transform log output | Use `transform_callback` in `BufferedHTTPHandler` |
-| Dynamic context per batch | Use `context_provider` in `BufferedHTTPHandler` |
+| Add metadata to all logs | Use `global_context` in `HTTPHandler` |
+| Transform log output | Use `transform_callback` in `HTTPHandler` |
+| Dynamic context per batch | Use `context_provider` in `HTTPHandler` |
 
 **Example - Adding custom fields:**
 
@@ -162,9 +162,9 @@ logger.info("User logged in", extra={
 **Example - Global context for all logs:**
 
 ```python
-from logxide import BufferedHTTPHandler
+from logxide import HTTPHandler
 
-handler = BufferedHTTPHandler(
+handler = HTTPHandler(
     url="https://logs.example.com",
     global_context={
         "application": "myapp",
@@ -177,12 +177,23 @@ handler = BufferedHTTPHandler(
 **Example - Custom JSON transformation:**
 
 ```python
-handler = BufferedHTTPHandler(
+handler = HTTPHandler(
     url="https://logs.example.com",
     transform_callback=lambda records: {
         "logs": [{"msg": r["msg"], "level": r["levelname"]} for r in records],
         "meta": {"count": len(records)}
     }
+)
+```
+
+**Example - OpenTelemetry OTLP (Protobuf):**
+
+```python
+from logxide import OTLPHandler
+
+handler = OTLPHandler(
+    url="http://localhost:4318/v1/logs",
+    service_name="my-service"
 )
 ```
 
