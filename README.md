@@ -2,22 +2,44 @@
 
 **High-Performance Rust-Powered Logging for Python**
 
-LogXide is a drop-in replacement for Python's standard logging module, delivering exceptional performance through its native Rust implementation.
+LogXide is a high-performance logging library for Python, delivering exceptional performance through its native Rust implementation. It provides a familiar logging API but prioritizes **performance over full compatibility**.
 
 ## Key Features
 
 - **High Performance**: Rust-powered logging with exceptional throughput
-- **Drop-in Replacement**: Full compatibility with Python's logging module API
+- **Familiar API**: Similar to Python's logging module (not a drop-in replacement)
 - **Thread-Safe**: Complete support for multi-threaded applications
 - **Direct Processing**: Efficient log message processing with native Rust handlers
 - **Rich Formatting**: All Python logging format specifiers with advanced features
 - **Level Filtering**: Hierarchical logger levels with inheritance
 - **Sentry Integration**: Automatic error tracking with Sentry (optional)
 
+## ⚠️ Important: Not a Drop-in Replacement
+
+LogXide is **NOT** a drop-in replacement for Python's logging module. It prioritizes performance over compatibility:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Basic logging API | ✅ | `getLogger`, `info`, `debug`, etc. |
+| Formatters | ✅ | `PercentStyle`, `StrFormatStyle`, `StringTemplateStyle` |
+| Rust handlers | ✅ | `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `BufferedHTTPHandler` |
+| Custom Python handlers | ❌ | Not supported - use Rust handlers only |
+| Subclassing `LogRecord` | ❌ | Rust type, not subclassable |
+| Subclassing `Logger` | ❌ | Rust type, not subclassable |
+| pytest `caplog` | ❌ | Not compatible |
+| StringIO capture | ❌ | Use file-based logging |
+
+**If your project requires:**
+- Subclassing `LogRecord` or `Logger`
+- Custom Python handlers
+- pytest `caplog` fixture
+- Full stdlib logging compatibility
+
+**→ Use standard Python logging instead.**
+
 ## Quick Start
 
 ```python
-# Simple and automatic - no setup needed!
 from logxide import logging
 
 logging.basicConfig(
@@ -29,7 +51,7 @@ logger = logging.getLogger('myapp')
 logger.info('Hello from LogXide!')
 ```
 
-That's it! LogXide automatically installs itself when imported. No manual setup required.
+LogXide automatically installs itself when imported.
 
 ## Installation
 
@@ -101,78 +123,63 @@ LogXide delivers exceptional performance through its Rust-powered native archite
 - **Native Rust I/O** provides measurable performance advantages
 - **Consistent performance** across all logging patterns
 
-## Important Limitations
+## Limitations
 
-LogXide uses **Rust-native handlers only** for maximum performance. This means:
+LogXide uses **Rust-native handlers only** for maximum performance:
 
-- **Rust handlers only**: `logger.addHandler()` only accepts Rust native handlers (FileHandler, StreamHandler, RotatingFileHandler)
-- **No Python handlers**: Custom Python logging.Handler subclasses are not supported
+- **Rust handlers only**: `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `BufferedHTTPHandler`
+- **No custom Python handlers**: `logger.addHandler()` rejects Python `logging.Handler` subclasses
+- **No subclassing**: `LogRecord`, `Logger` are Rust types (not subclassable)
 - **No StringIO capture**: Use file-based logging for tests
 - **No pytest caplog**: Not compatible with Rust native architecture
-- **Use `basicConfig()`**: Recommended for simple configuration
-- **Use `addHandler()`**: For advanced handler configuration with Rust handlers
-- **File-based testing**: Write to files instead of capturing streams
 
-**Example - The LogXide way:**
+**Example - Correct usage:**
 
 ```python
-# Option 1: Use basicConfig() for simple configuration
-import tempfile
-from logxide import logging
-
-# For production - stdout/stderr
-logging.basicConfig(level=logging.INFO)
-
-# For testing - file output
-with tempfile.NamedTemporaryFile(mode='w+', delete=False) as f:
-    logging.basicConfig(filename=f.name, level=logging.DEBUG, force=True)
-    logger = logging.getLogger('test')
-    logger.info("Test message")
-    
-    # Read and verify
-    with open(f.name) as log_file:
-        assert "Test message" in log_file.read()
-
-# Option 2: Use addHandler() with Rust native handlers
 from logxide import logging, FileHandler, StreamHandler
 
+# Use basicConfig()
+logging.basicConfig(level=logging.INFO)
+
+# Or use Rust native handlers
 logger = logging.getLogger('myapp')
-logger.setLevel(logging.INFO)
-
-# Add Rust native handlers
-file_handler = FileHandler('app.log')
-stream_handler = StreamHandler()
-
-logger.addHandler(file_handler)
-logger.addHandler(stream_handler)
+logger.addHandler(FileHandler('app.log'))
+logger.addHandler(StreamHandler())
 ```
 
-**What NOT to do:**
+**Example - What NOT to do:**
 
 ```python
-# Wrong - Custom Python handlers not supported
+# ❌ Wrong - Custom Python handlers not supported
 import logging as stdlib_logging
 
-class MyCustomHandler(stdlib_logging.Handler):
-    def emit(self, record):
-        print(record.msg)
+class MyHandler(stdlib_logging.Handler):
+    def emit(self, record): pass
 
-handler = MyCustomHandler()
-logger.addHandler(handler)  # Raises ValueError
+logger.addHandler(MyHandler())  # Raises ValueError
 
-# Wrong - StringIO capture doesn't work with stdlib handlers
-import io
-stream = io.StringIO()
-handler = stdlib_logging.StreamHandler(stream)
-logger.addHandler(handler)  # Raises ValueError - not a Rust handler
+# ❌ Wrong - LogRecord not subclassable
+class MyLogRecord(logxide.LogRecord):  # TypeError
+    pass
 ```
 
 ## Compatibility
 
 - **Python**: 3.12+ (3.14 supported)
 - **Platforms**: macOS, Linux, Windows
-- **API**: Core logging API compatible (see limitations above)
 - **Dependencies**: None (Rust compiled into native extension)
+
+### Third-party Library Compatibility
+
+| Library | Compatible | Notes |
+|---------|------------|-------|
+| Flask | ✅ | Works with `app.logger` |
+| Django | ✅ | Works with Django logging |
+| FastAPI | ✅ | Works with Uvicorn |
+| pytest | ⚠️ | `caplog` not supported, use file-based testing |
+| Sentry | ✅ | Auto-integration supported |
+| structlog | ❌ | Requires custom handlers |
+| infra_basement | ❌ | Requires LogRecord subclassing |
 
 ## Contributing
 
@@ -193,6 +200,6 @@ pytest tests/
 
 ---
 
-**LogXide delivers the performance you need without sacrificing the Python logging API you know.**
+**LogXide delivers high performance for applications that don't need full logging compatibility.**
 
 *Built with Rust for high-performance Python applications.*
