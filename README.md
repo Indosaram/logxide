@@ -133,34 +133,57 @@ LogXide uses **Rust-native handlers only** for maximum performance:
 - **No StringIO capture**: Use file-based logging for tests
 - **No pytest caplog**: Not compatible with Rust native architecture
 
-**Example - Correct usage:**
+### Alternatives to LogRecord Subclassing
+
+Instead of subclassing `LogRecord`, use these approaches:
+
+| Use Case | Alternative |
+|----------|-------------|
+| Add custom fields | Use `extra` parameter: `logger.info("msg", extra={"user_id": 123})` |
+| Add metadata to all logs | Use `global_context` in `BufferedHTTPHandler` |
+| Transform log output | Use `transform_callback` in `BufferedHTTPHandler` |
+| Dynamic context per batch | Use `context_provider` in `BufferedHTTPHandler` |
+
+**Example - Adding custom fields:**
 
 ```python
-from logxide import logging, FileHandler, StreamHandler
+from logxide import logging
 
-# Use basicConfig()
-logging.basicConfig(level=logging.INFO)
-
-# Or use Rust native handlers
 logger = logging.getLogger('myapp')
-logger.addHandler(FileHandler('app.log'))
-logger.addHandler(StreamHandler())
+
+# Use extra parameter (supports complex types: int, dict, list)
+logger.info("User logged in", extra={
+    "user_id": 12345,
+    "ip": "192.168.1.1",
+    "metadata": {"browser": "Chrome", "version": 120}
+})
 ```
 
-**Example - What NOT to do:**
+**Example - Global context for all logs:**
 
 ```python
-# ❌ Wrong - Custom Python handlers not supported
-import logging as stdlib_logging
+from logxide import BufferedHTTPHandler
 
-class MyHandler(stdlib_logging.Handler):
-    def emit(self, record): pass
+handler = BufferedHTTPHandler(
+    url="https://logs.example.com",
+    global_context={
+        "application": "myapp",
+        "environment": "production",
+        "version": "1.2.3"
+    }
+)
+```
 
-logger.addHandler(MyHandler())  # Raises ValueError
+**Example - Custom JSON transformation:**
 
-# ❌ Wrong - LogRecord not subclassable
-class MyLogRecord(logxide.LogRecord):  # TypeError
-    pass
+```python
+handler = BufferedHTTPHandler(
+    url="https://logs.example.com",
+    transform_callback=lambda records: {
+        "logs": [{"msg": r["msg"], "level": r["levelname"]} for r in records],
+        "meta": {"count": len(records)}
+    }
+)
 ```
 
 ## Compatibility
