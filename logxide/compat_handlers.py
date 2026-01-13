@@ -135,43 +135,37 @@ class NullHandler:
 
 
 class Formatter:
-    """Enhanced formatter - compatible with logging.Formatter, supports extra fields"""
-
     def __init__(self, fmt=None, datefmt=None, style="%", validate=True, **kwargs):
-        self.fmt = fmt if fmt else "%(message)s"  # Default format if not provided
+        self.fmt = fmt if fmt else "%(message)s"
         self.datefmt = datefmt
         self.style = style
         self.validate = validate
         self._kwargs = kwargs
 
     def format(self, record):
-        """
-        Format a log record using the format string.
-
-        This handles both dict records (from Rust) and LogRecord objects.
-        """
-        # Convert record to dict for formatting
         if isinstance(record, dict):
             record_dict = record.copy()
+        elif hasattr(record, "__dict__"):
+            record_dict = record.__dict__.copy()
         else:
-            record_dict = record.__dict__ if hasattr(record, "__dict__") else {}
+            record_dict = {}
 
-        # Ensure 'message' key exists (some formats use it)
-        if "message" not in record_dict:
-            record_dict["message"] = record_dict.get("msg", "")
+        if "message" not in record_dict or not record_dict["message"]:
+            if hasattr(record, "getMessage"):
+                record_dict["message"] = record.getMessage()
+            elif "msg" in record_dict:
+                record_dict["message"] = record_dict["msg"]
+            else:
+                record_dict["message"] = getattr(record, "msg", str(record))
 
-        # Add asctime if not present and format string requires it
         if "asctime" not in record_dict and "%(asctime)" in self.fmt:
             record_dict["asctime"] = self.formatTime(record, self.datefmt)
 
-        # Apply format string
         try:
-            # Use Python's % formatting with record dict
             s = self.fmt % record_dict
             return s
         except (KeyError, ValueError, TypeError):
-            # Fallback to just the message if formatting fails
-            return record_dict.get("msg", str(record))
+            return record_dict.get("message", str(record))
 
     def formatTime(self, record, datefmt=None):
         """
