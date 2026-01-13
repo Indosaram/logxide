@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use crate::core::LogLevel;
 use crate::handler::{
-    BufferedHTTPHandler, FileHandler, HTTPHandlerConfig, RotatingFileHandler, StreamHandler,
+    FileHandler, HTTPHandler, HTTPHandlerConfig, OTLPHandler, OTLPHandlerConfig,
+    RotatingFileHandler, StreamHandler,
 };
 
 #[pyclass(name = "FileHandler")]
@@ -75,12 +76,12 @@ impl PyRotatingFileHandler {
     }
 }
 
-#[pyclass(name = "BufferedHTTPHandler")]
-pub struct PyBufferedHTTPHandler {
-    pub(crate) inner: Arc<BufferedHTTPHandler>,
+#[pyclass(name = "HTTPHandler")]
+pub struct PyHTTPHandler {
+    pub(crate) inner: Arc<HTTPHandler>,
 }
 
-impl Drop for PyBufferedHTTPHandler {
+impl Drop for PyHTTPHandler {
     fn drop(&mut self) {}
 }
 
@@ -116,7 +117,7 @@ fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
 }
 
 #[pymethods]
-impl PyBufferedHTTPHandler {
+impl PyHTTPHandler {
     #[new]
     #[pyo3(signature = (
         url,
@@ -165,7 +166,68 @@ impl PyBufferedHTTPHandler {
             error_callback: error_callback.map(|cb| cb.clone_ref(py)),
         };
 
-        let h = BufferedHTTPHandler::with_config(config, capacity, batch_size, flush_interval);
+        let h = HTTPHandler::with_config(config, capacity, batch_size, flush_interval);
+        Ok(Self { inner: Arc::new(h) })
+    }
+
+    fn setLevel(&self, level: u32) -> PyResult<()> {
+        self.inner.set_level(LogLevel::from_usize(level as usize));
+        Ok(())
+    }
+
+    fn flush(&self) -> PyResult<()> {
+        self.inner.flush();
+        Ok(())
+    }
+
+    fn shutdown(&self) -> PyResult<()> {
+        self.inner.shutdown();
+        Ok(())
+    }
+}
+
+#[pyclass(name = "OTLPHandler")]
+pub struct PyOTLPHandler {
+    pub(crate) inner: Arc<OTLPHandler>,
+}
+
+impl Drop for PyOTLPHandler {
+    fn drop(&mut self) {}
+}
+
+#[pymethods]
+impl PyOTLPHandler {
+    #[new]
+    #[pyo3(signature = (
+        url,
+        headers=None,
+        service_name="unknown_service".to_string(),
+        capacity=10000,
+        batch_size=1000,
+        flush_interval=30,
+        error_callback=None
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        py: Python,
+        url: String,
+        headers: Option<HashMap<String, String>>,
+        service_name: String,
+        capacity: usize,
+        batch_size: usize,
+        flush_interval: u64,
+        error_callback: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let h_map = headers.unwrap_or_default();
+
+        let config = OTLPHandlerConfig {
+            url,
+            headers: h_map,
+            service_name,
+            error_callback: error_callback.map(|cb| cb.clone_ref(py)),
+        };
+
+        let h = OTLPHandler::with_config(config, capacity, batch_size, flush_interval);
         Ok(Self { inner: Arc::new(h) })
     }
 

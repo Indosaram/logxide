@@ -134,7 +134,8 @@ class _LoggingModule(types.ModuleType):
 
         self.FileHandler = _ext.FileHandler
         self.RotatingFileHandler = _ext.RotatingFileHandler
-        self.BufferedHTTPHandler = _ext.BufferedHTTPHandler
+        self.HTTPHandler = _ext.HTTPHandler
+        self.OTLPHandler = _ext.OTLPHandler
         self.lastResort, self.raiseExceptions = _std_logging.lastResort, True
 
         import logging.config, logging.handlers

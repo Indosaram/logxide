@@ -147,7 +147,9 @@ impl Handler for RotatingFileHandler {
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
-pub struct BufferedHTTPHandler {
+/// HTTP handler that sends log records as JSON to a remote endpoint.
+/// Uses internal buffering and batch processing for efficient network I/O.
+pub struct HTTPHandler {
     sender: crossbeam_channel::Sender<LogRecord>,
     flush_signal: crossbeam_channel::Sender<()>,
     level: AtomicU8,
@@ -170,7 +172,7 @@ pub struct HTTPHandlerConfig {
     pub error_callback: Option<Py<PyAny>>,
 }
 
-impl BufferedHTTPHandler {
+impl HTTPHandler {
     pub fn new(
         url: String,
         headers: HashMap<String, String>,
@@ -437,7 +439,7 @@ fn py_to_value(obj: &Bound<PyAny>) -> Value {
 }
 
 #[async_trait]
-impl Handler for BufferedHTTPHandler {
+impl Handler for HTTPHandler {
     async fn emit(&self, record: &LogRecord) {
         let level = self.level.load(Ordering::Relaxed);
         if record.levelno < level as i32 {
@@ -447,6 +449,260 @@ impl Handler for BufferedHTTPHandler {
             .sender
             .send_timeout(record.clone(), std::time::Duration::from_millis(5));
     }
+    async fn flush(&self) {}
+
+    fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
+    fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
+}
+
+/// HTTP handler that sends log records as OpenTelemetry OTLP (protobuf) to a remote endpoint.
+/// Uses internal buffering and batch processing for efficient network I/O.
+/// Compatible with OTLP (OpenTelemetry Protocol) receivers.
+pub struct OTLPHandler {
+    sender: crossbeam_channel::Sender<LogRecord>,
+    flush_signal: crossbeam_channel::Sender<()>,
+    level: AtomicU8,
+    shutdown: Arc<AtomicBool>,
+}
+
+pub struct OTLPHandlerConfig {
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub service_name: String,
+    pub error_callback: Option<Py<PyAny>>,
+}
+
+impl OTLPHandler {
+    pub fn new(
+        url: String,
+        headers: HashMap<String, String>,
+        service_name: String,
+        capacity: usize,
+        batch_size: usize,
+        flush_interval: u64,
+    ) -> Self {
+        Self::with_config(
+            OTLPHandlerConfig {
+                url,
+                headers,
+                service_name,
+                error_callback: None,
+            },
+            capacity,
+            batch_size,
+            flush_interval,
+        )
+    }
+
+    pub fn with_config(
+        config: OTLPHandlerConfig,
+        capacity: usize,
+        batch_size: usize,
+        flush_interval: u64,
+    ) -> Self {
+        let (s, r) = crossbeam_channel::bounded(capacity);
+        let (flush_tx, flush_rx) = crossbeam_channel::bounded::<()>(1);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_clone = shutdown.clone();
+
+        let url = config.url;
+        let headers = config.headers;
+        let service_name = config.service_name;
+        let error_callback = config.error_callback;
+
+        std::thread::spawn(move || {
+            let mut buffer = Vec::with_capacity(batch_size);
+            let mut last_flush = std::time::Instant::now();
+
+            loop {
+                if shutdown_clone.load(Ordering::Relaxed) && buffer.is_empty() {
+                    break;
+                }
+
+                let should_flush = matches!(flush_rx.try_recv(), Ok(()));
+
+                match r.recv_timeout(std::time::Duration::from_millis(100)) {
+                    Ok(rec) => {
+                        buffer.push(rec);
+                        if buffer.len() >= batch_size || should_flush {
+                            Self::send_otlp_batch(
+                                &url,
+                                &headers,
+                                &service_name,
+                                &error_callback,
+                                &mut buffer,
+                            );
+                            last_flush = std::time::Instant::now();
+                        }
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        let should_time_flush =
+                            !buffer.is_empty() && last_flush.elapsed().as_secs() >= flush_interval;
+                        if should_time_flush || should_flush {
+                            Self::send_otlp_batch(
+                                &url,
+                                &headers,
+                                &service_name,
+                                &error_callback,
+                                &mut buffer,
+                            );
+                            last_flush = std::time::Instant::now();
+                        }
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        if !buffer.is_empty() {
+                            Self::send_otlp_batch(
+                                &url,
+                                &headers,
+                                &service_name,
+                                &error_callback,
+                                &mut buffer,
+                            );
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+
+        Self {
+            sender: s,
+            flush_signal: flush_tx,
+            level: AtomicU8::new(LogLevel::Debug as u8),
+            shutdown,
+        }
+    }
+
+    fn send_otlp_batch(
+        url: &str,
+        headers: &HashMap<String, String>,
+        service_name: &str,
+        error_callback: &Option<Py<PyAny>>,
+        buffer: &mut Vec<LogRecord>,
+    ) {
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
+        use opentelemetry_proto::tonic::logs::v1::{
+            LogRecord as OtlpLogRecord, ResourceLogs, ScopeLogs,
+        };
+        use opentelemetry_proto::tonic::resource::v1::Resource;
+        use prost::Message;
+
+        if buffer.is_empty() {
+            return;
+        }
+
+        let batch: Vec<LogRecord> = buffer.drain(..).collect();
+
+        let log_records: Vec<OtlpLogRecord> = batch
+            .iter()
+            .map(|rec| {
+                OtlpLogRecord {
+                    time_unix_nano: (rec.created * 1_000_000_000.0) as u64,
+                    observed_time_unix_nano: (rec.created * 1_000_000_000.0) as u64,
+                    severity_number: match rec.levelno {
+                        10 => 5,  // DEBUG
+                        20 => 9,  // INFO
+                        30 => 13, // WARN
+                        40 => 17, // ERROR
+                        50 => 21, // FATAL
+                        _ => 0,
+                    },
+                    severity_text: rec.levelname.clone(),
+                    body: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue(rec.msg.clone())),
+                    }),
+                    attributes: vec![
+                        KeyValue {
+                            key: "logger.name".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue(rec.name.clone())),
+                            }),
+                        },
+                        KeyValue {
+                            key: "code.filepath".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue(rec.pathname.clone())),
+                            }),
+                        },
+                        KeyValue {
+                            key: "code.lineno".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::IntValue(rec.lineno as i64)),
+                            }),
+                        },
+                        KeyValue {
+                            key: "code.function".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue(rec.func_name.clone())),
+                            }),
+                        },
+                    ],
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        let resource_logs = ResourceLogs {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue(service_name.to_string())),
+                    }),
+                }],
+                ..Default::default()
+            }),
+            scope_logs: vec![ScopeLogs {
+                log_records,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let payload = resource_logs.encode_to_vec();
+
+        let mut request = ureq::post(url).set("Content-Type", "application/x-protobuf");
+        for (key, value) in headers {
+            request = request.set(key, value);
+        }
+
+        let result = request.send_bytes(&payload);
+
+        if let Err(e) = result {
+            if let Some(ref cb) = error_callback {
+                Python::with_gil(|py| {
+                    let _ = cb.call1(py, (e.to_string(),));
+                });
+            }
+        }
+    }
+
+    pub fn flush(&self) {
+        let _ = self.flush_signal.try_send(());
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        let _ = self.flush_signal.try_send(());
+    }
+
+    pub fn set_level(&self, level: LogLevel) {
+        self.level.store(level as u8, Ordering::Relaxed);
+    }
+}
+
+#[async_trait]
+impl Handler for OTLPHandler {
+    async fn emit(&self, record: &LogRecord) {
+        let level = self.level.load(Ordering::Relaxed);
+        if record.levelno < level as i32 {
+            return;
+        }
+        let _ = self
+            .sender
+            .send_timeout(record.clone(), std::time::Duration::from_millis(5));
+    }
+
     async fn flush(&self) {}
 
     fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
