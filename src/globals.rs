@@ -15,7 +15,8 @@ use crate::core::{get_logger as core_get_logger, get_root_logger, LogLevel};
 use crate::fast_logger;
 use crate::handler::{FileHandler, HTTPHandler, Handler, OverflowStrategy, RotatingFileHandler};
 use crate::py_handlers::{
-    PyFileHandler, PyHTTPHandler, PyOTLPHandler, PyRotatingFileHandler, PyStreamHandler,
+    PyFileHandler, PyHTTPHandler, PyMemoryHandler, PyOTLPHandler, PyRotatingFileHandler,
+    PyStreamHandler,
 };
 use crate::py_logger::PyLogger;
 
@@ -174,6 +175,8 @@ pub fn add_handler_to_registry(
             Some(http_handler.inner.clone())
         } else if let Ok(otlp_handler) = handler.extract::<PyRef<PyOTLPHandler>>() {
             Some(otlp_handler.inner.clone())
+        } else if let Ok(memory_handler) = handler.extract::<PyRef<PyMemoryHandler>>() {
+            Some(memory_handler.inner.clone())
         } else if let Ok(inner) = handler.getattr("_inner") {
             if let Ok(file_handler) = inner.extract::<PyRef<PyFileHandler>>() {
                 Some(file_handler.inner.clone())
@@ -185,6 +188,8 @@ pub fn add_handler_to_registry(
                 Some(http_handler.inner.clone())
             } else if let Ok(otlp_handler) = inner.extract::<PyRef<PyOTLPHandler>>() {
                 Some(otlp_handler.inner.clone())
+            } else if let Ok(memory_handler) = inner.extract::<PyRef<PyMemoryHandler>>() {
+                Some(memory_handler.inner.clone())
             } else {
                 None
             }

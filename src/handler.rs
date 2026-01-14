@@ -708,3 +708,53 @@ impl Handler for OTLPHandler {
     fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
+
+/// Handler that stores log records in memory.
+/// Highly efficient for testing and log capture.
+pub struct MemoryHandler {
+    records: Arc<Mutex<Vec<LogRecord>>>,
+    level: AtomicU8,
+}
+
+impl MemoryHandler {
+    pub fn new() -> Self {
+        Self {
+            records: Arc::new(Mutex::new(Vec::new())),
+            level: AtomicU8::new(LogLevel::Debug as u8),
+        }
+    }
+
+    pub fn get_records(&self) -> Vec<LogRecord> {
+        self.records.lock().unwrap().clone()
+    }
+
+    pub fn clear(&self) {
+        self.records.lock().unwrap().clear();
+    }
+
+    pub fn set_level(&self, level: LogLevel) {
+        self.level.store(level as u8, Ordering::Relaxed);
+    }
+}
+
+#[async_trait]
+impl Handler for MemoryHandler {
+    async fn emit(&self, record: &LogRecord) {
+        let level = self.level.load(Ordering::Relaxed);
+        if record.levelno < level as i32 {
+            return;
+        }
+        self.records.lock().unwrap().push(record.clone());
+    }
+
+    async fn flush(&self) {}
+
+    fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
+    fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
+}
+
+impl Default for MemoryHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
