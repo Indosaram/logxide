@@ -77,6 +77,7 @@ from .handlers import (
     RotatingFileHandler,
     HTTPHandler,
     OTLPHandler,
+    MemoryHandler,
 )
 from . import logxide as _logxide_ext
 
@@ -85,6 +86,7 @@ RustStreamHandler = _logxide_ext.StreamHandler
 RustRotatingFileHandler = _logxide_ext.RotatingFileHandler
 RustHTTPHandler = _logxide_ext.HTTPHandler
 RustOTLPHandler = _logxide_ext.OTLPHandler
+RustMemoryHandler = _logxide_ext.MemoryHandler
 NullHandler = _CompatNullHandler
 
 from .logger_wrapper import basicConfig, getLogger
