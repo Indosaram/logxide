@@ -5,6 +5,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
+use pyo3::IntoPyObjectExt;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -117,27 +118,60 @@ impl PyLogger {
     fn emit_record(&self, record: LogRecord) {
         let local_handlers = self.local_handlers.lock().unwrap();
 
+        // 1. Handle Rust handlers
         if local_handlers.is_empty() {
             drop(local_handlers);
             let global_handlers = HANDLERS.lock().unwrap();
             for handler in global_handlers.iter() {
-                futures::executor::block_on(handler.emit(&record));
+                let _ = futures::executor::block_on(handler.emit(&record));
             }
-            return;
+        } else {
+            for handler in local_handlers.iter() {
+                let _ = futures::executor::block_on(handler.emit(&record));
+            }
+
+            let should_propagate = *self.propagate.lock().unwrap();
+            if should_propagate {
+                drop(local_handlers);
+                let global_handlers = HANDLERS.lock().unwrap();
+                for handler in global_handlers.iter() {
+                    let _ = futures::executor::block_on(handler.emit(&record));
+                }
+            }
         }
 
-        for handler in local_handlers.iter() {
-            futures::executor::block_on(handler.emit(&record));
-        }
-
-        let should_propagate = *self.propagate.lock().unwrap();
-        if should_propagate {
-            drop(local_handlers);
-            let global_handlers = HANDLERS.lock().unwrap();
-            for handler in global_handlers.iter() {
-                futures::executor::block_on(handler.emit(&record));
+        // 2. Handle Python handlers (like pytest's caplog)
+        // Overhead is just a lock + empty check if no Python handlers are registered.
+        Python::with_gil(|py| {
+            let py_handlers = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+            if !py_handlers.is_empty() {
+                // Convert Rust record to Python record for compatibility
+                if let Ok(py_record) = self.makeRecord(
+                    py,
+                    record.name.clone(),
+                    record.levelno,
+                    record.pathname.clone(),
+                    record.lineno as i32,
+                    record.msg.clone().into_py_any(py).unwrap().into(),
+                    record
+                        .args
+                        .clone()
+                        .into_py_any(py)
+                        .unwrap_or_else(|_| py.None())
+                        .into(),
+                    record
+                        .exc_info
+                        .clone()
+                        .into_py_any(py)
+                        .unwrap_or_else(|_| py.None())
+                        .into(),
+                ) {
+                    for handler in py_handlers.iter() {
+                        let _ = handler.call_method1(py, "handle", (&py_record,));
+                    }
+                }
             }
-        }
+        });
     }
 
     #[getter]
