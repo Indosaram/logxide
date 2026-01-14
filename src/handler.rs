@@ -299,7 +299,7 @@ impl HTTPHandler {
             return;
         }
 
-        let batch: Vec<LogRecord> = buffer.drain(..).collect();
+        let batch = std::mem::take(buffer);
 
         let json_payload: Value = Python::with_gil(|py| {
             let dynamic_context: HashMap<String, Value> = context_provider
@@ -591,7 +591,7 @@ impl OTLPHandler {
             return;
         }
 
-        let batch: Vec<LogRecord> = buffer.drain(..).collect();
+        let batch = std::mem::take(buffer);
 
         let log_records: Vec<OtlpLogRecord> = batch
             .iter()

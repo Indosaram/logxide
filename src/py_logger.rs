@@ -474,6 +474,10 @@ impl PyLogger {
         Ok(())
     }
 
+    fn callHandlers(&self, record: Py<PyAny>) -> PyResult<()> {
+        self.handle(record)
+    }
+
     #[pyo3(signature = (suffix))]
     fn getChild(slf: PyRef<Self>, py: Python, suffix: &str) -> PyResult<PyLogger> {
         let logger_name = if slf.fast_logger.name.is_empty() {
