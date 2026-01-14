@@ -75,6 +75,22 @@ from .compat_handlers import (
 from .compat_handlers import StreamHandler as _StreamHandler
 from .logger_wrapper import _migrate_existing_loggers, basicConfig, getLogger
 
+
+def _auto_configure_sentry(enable=None):
+    """Automatically configure Sentry integration if available."""
+    try:
+        from .sentry_integration import auto_configure_sentry
+
+        handler = auto_configure_sentry(enable)
+        if handler:
+            # Add to standard root logger
+            _std_logging.root.addHandler(handler)
+            # Add to LogXide root logger
+            getLogger().addHandler(handler)
+    except ImportError:
+        pass
+
+
 # Get references to Rust functions
 flush_fn = logxide.logging.flush
 set_thread_name_fn = logxide.logging.set_thread_name
@@ -297,8 +313,7 @@ def _install(sentry=None):
         std_logging.set_thread_name = set_thread_name_fn
 
     _migrate_existing_loggers()
-    # Sentry auto-config disabled for build stability
-    # _auto_configure_sentry(sentry)
+    _auto_configure_sentry()
 
 
 def uninstall():

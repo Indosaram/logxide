@@ -230,9 +230,9 @@ class Formatter:
 
 
 class Handler:
-    def __init__(self):
+    def __init__(self, level=NOTSET):
         self.formatter = None
-        self.level = NOTSET
+        self.level = level
         self.terminator = "\n"
         self._name = None
         self.filters = []

@@ -204,6 +204,11 @@ pub fn add_handler_to_registry(
             .push(handler.clone().unbind());
         Ok(true)
     } else {
-        Ok(false)
+        // Allow Python handlers but store them in keep alive
+        PYTHON_HANDLERS_KEEP_ALIVE
+            .lock()
+            .unwrap()
+            .push(handler.clone().unbind());
+        Ok(true)
     }
 }
