@@ -16,7 +16,8 @@ mod string_cache;
 pub use core::{create_log_record_with_extra, LogLevel, LogRecord};
 pub use globals::{HANDLERS, THREAD_NAME};
 pub use py_handlers::{
-    PyFileHandler, PyHTTPHandler, PyOTLPHandler, PyRotatingFileHandler, PyStreamHandler,
+    PyFileHandler, PyHTTPHandler, PyMemoryHandler, PyOTLPHandler, PyRotatingFileHandler,
+    PyStreamHandler,
 };
 pub use py_logger::PyLogger;
 
@@ -30,6 +31,7 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     logging_module.add_class::<PyRotatingFileHandler>()?;
     logging_module.add_class::<PyHTTPHandler>()?;
     logging_module.add_class::<PyOTLPHandler>()?;
+    logging_module.add_class::<PyMemoryHandler>()?;
     logging_module.add_function(wrap_pyfunction!(globals::get_logger, &logging_module)?)?;
     logging_module.add_function(wrap_pyfunction!(globals::basicConfig, &logging_module)?)?;
     logging_module.add_function(wrap_pyfunction!(globals::flush, &logging_module)?)?;
@@ -56,6 +58,7 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyRotatingFileHandler>()?;
     m.add_class::<PyHTTPHandler>()?;
     m.add_class::<PyOTLPHandler>()?;
+    m.add_class::<PyMemoryHandler>()?;
     m.add_function(wrap_pyfunction!(globals::get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(globals::basicConfig, m)?)?;
     m.add_function(wrap_pyfunction!(globals::flush, m)?)?;

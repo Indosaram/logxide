@@ -7,9 +7,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::LogLevel;
+use crate::core::{LogLevel, LogRecord};
 use crate::handler::{
-    FileHandler, HTTPHandler, HTTPHandlerConfig, OTLPHandler, OTLPHandlerConfig,
+    FileHandler, HTTPHandler, HTTPHandlerConfig, MemoryHandler, OTLPHandler, OTLPHandlerConfig,
     RotatingFileHandler, StreamHandler,
 };
 
@@ -243,6 +243,46 @@ impl PyOTLPHandler {
 
     fn shutdown(&self) -> PyResult<()> {
         self.inner.shutdown();
+        Ok(())
+    }
+}
+
+#[pyclass(name = "MemoryHandler")]
+pub struct PyMemoryHandler {
+    pub(crate) inner: Arc<MemoryHandler>,
+}
+
+impl Drop for PyMemoryHandler {
+    fn drop(&mut self) {}
+}
+
+#[pymethods]
+impl PyMemoryHandler {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(MemoryHandler::new()),
+        }
+    }
+
+    pub fn getRecords(&self) -> Vec<LogRecord> {
+        self.inner.get_records()
+    }
+
+    pub fn clear(&self) {
+        self.inner.clear();
+    }
+
+    pub fn setLevel(&self, level: u32) -> PyResult<()> {
+        self.inner.set_level(LogLevel::from_usize(level as usize));
+        Ok(())
+    }
+
+    pub fn flush(&self) -> PyResult<()> {
+        Ok(())
+    }
+
+    pub fn shutdown(&self) -> PyResult<()> {
         Ok(())
     }
 }
