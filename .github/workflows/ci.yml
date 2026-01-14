@@ -76,6 +76,8 @@ jobs:
                   uv venv
                   uv pip install maturin
             - name: Build and install Python package with dev dependencies
+              env:
+                  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
               run: |
                   uv run maturin develop --extras=dev
             - name: Rust format check
@@ -83,10 +85,15 @@ jobs:
             - name: Rust clippy
               env:
                   RUSTFLAGS: -D warnings
+                  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
               run: cargo clippy --all-targets --all-features
             - name: Run Rust tests
+              env:
+                  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
               run: cargo test --verbose
             - name: Run Python tests
+              env:
+                  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
               run: uv run pytest tests/ -v --cov=logxide --cov-report=xml
             - name: Upload coverage to Codecov
               if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
