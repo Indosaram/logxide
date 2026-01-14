@@ -48,16 +48,32 @@ fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
 
 #[pyclass]
 pub struct PyLogger {
-    inner: Arc<Mutex<Logger>>,
-    fast_logger: Arc<FastLogger>,
-    local_handlers: Arc<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>>,
-    propagate: Arc<Mutex<bool>>,
-    parent: Arc<Mutex<Option<Py<PyAny>>>>,
-    manager: Arc<Mutex<Option<Py<PyAny>>>>,
+    pub(crate) inner: Arc<Mutex<Logger>>,
+    pub(crate) fast_logger: Arc<FastLogger>,
+    pub(crate) local_handlers: Arc<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>>,
+    pub(crate) local_python_handlers: Arc<Mutex<Vec<PyObject>>>,
+    pub(crate) filters: Arc<Mutex<Vec<PyObject>>>,
+    pub(crate) propagate: Arc<Mutex<bool>>,
+    pub(crate) parent: Arc<Mutex<Option<Py<PyAny>>>>,
+    pub(crate) manager: Arc<Mutex<Option<Py<PyAny>>>>,
 }
 
 impl PyLogger {
-    pub fn new(
+    pub fn new(name: &str) -> Self {
+        let fast_logger = Arc::new(FastLogger::new(name));
+        PyLogger {
+            inner: Arc::new(Mutex::new(Logger::new(name))),
+            fast_logger,
+            local_handlers: Arc::new(Mutex::new(Vec::new())),
+            local_python_handlers: Arc::new(Mutex::new(Vec::new())),
+            filters: Arc::new(Mutex::new(Vec::new())),
+            propagate: Arc::new(Mutex::new(true)),
+            parent: Arc::new(Mutex::new(None)),
+            manager: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn with_params(
         inner: Arc<Mutex<Logger>>,
         fast_logger: Arc<FastLogger>,
         manager: Option<Py<PyAny>>,
@@ -66,6 +82,8 @@ impl PyLogger {
             inner,
             fast_logger,
             local_handlers: Arc::new(Mutex::new(Vec::new())),
+            local_python_handlers: Arc::new(Mutex::new(Vec::new())),
+            filters: Arc::new(Mutex::new(Vec::new())),
             propagate: Arc::new(Mutex::new(true)),
             parent: Arc::new(Mutex::new(None)),
             manager: Arc::new(Mutex::new(manager)),
@@ -79,6 +97,8 @@ impl Clone for PyLogger {
             inner: self.inner.clone(),
             fast_logger: self.fast_logger.clone(),
             local_handlers: self.local_handlers.clone(),
+            local_python_handlers: self.local_python_handlers.clone(),
+            filters: self.filters.clone(),
             propagate: self.propagate.clone(),
             parent: self.parent.clone(),
             manager: self.manager.clone(),
@@ -141,35 +161,50 @@ impl PyLogger {
         }
 
         // 2. Handle Python handlers (like pytest's caplog)
-        // Overhead is just a lock + empty check if no Python handlers are registered.
         Python::with_gil(|py| {
-            let py_handlers = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
-            if !py_handlers.is_empty() {
-                // Convert Rust record to Python record for compatibility
-                if let Ok(py_record) = self.makeRecord(
-                    py,
-                    record.name.clone(),
-                    record.levelno,
-                    record.pathname.clone(),
-                    record.lineno as i32,
-                    record.msg.clone().into_py_any(py).unwrap().into(),
-                    record
-                        .args
-                        .clone()
-                        .into_py_any(py)
-                        .unwrap_or_else(|_| py.None())
-                        .into(),
-                    record
-                        .exc_info
-                        .clone()
-                        .into_py_any(py)
-                        .unwrap_or_else(|_| py.None())
-                        .into(),
-                ) {
-                    for handler in py_handlers.iter() {
-                        let _ = handler.call_method1(py, "handle", (&py_record,));
-                    }
+            let local_py = self.local_python_handlers.lock().unwrap();
+            let global_py = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+
+            if local_py.is_empty() && global_py.is_empty() {
+                return;
+            }
+
+            // Create a proper Python LogRecord
+            let py_record = match self.makeRecord(
+                py,
+                record.name.clone(),
+                record.levelno,
+                record.pathname.clone(),
+                record.lineno as i32,
+                record.msg.clone().into_py_any(py).unwrap().into(),
+                record
+                    .args
+                    .clone()
+                    .into_py_any(py)
+                    .unwrap_or_else(|_| py.None())
+                    .into(),
+                record
+                    .exc_info
+                    .clone()
+                    .into_py_any(py)
+                    .unwrap_or_else(|_| py.None())
+                    .into(),
+            ) {
+                Ok(r) => r,
+                Err(_) => {
+                    return;
                 }
+            };
+
+            // Call local Python handlers
+            for handler in local_py.iter() {
+                let b_handler = handler.bind(py);
+                let _ = b_handler.call_method1("handle", (&py_record,));
+            }
+            // Call global Python handlers
+            for handler in global_py.iter() {
+                let b_handler = handler.bind(py);
+                let _ = b_handler.call_method1("handle", (&py_record,));
             }
         });
     }
@@ -269,7 +304,12 @@ impl PyLogger {
     }
 
     fn addHandler(&self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
-        let added = add_handler_to_registry(handler, &self.fast_logger.name, &self.local_handlers)?;
+        let added = add_handler_to_registry(
+            handler,
+            &self.fast_logger.name,
+            &self.local_handlers,
+            &self.local_python_handlers,
+        )?;
 
         if added {
             Ok(())
@@ -486,16 +526,26 @@ impl PyLogger {
         msg: Py<PyAny>,
         args: Py<PyAny>,
         exc_info: Option<Py<PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let record = py.import("logging")?.call_method0("makeLogRecord")?;
-        record.setattr("name", name)?;
-        record.setattr("levelno", level)?;
-        record.setattr("pathname", fn_)?;
-        record.setattr("lineno", lno)?;
-        record.setattr("msg", msg)?;
-        record.setattr("args", args)?;
-        record.setattr("exc_info", exc_info)?;
-        Ok(record.unbind().into_any())
+    ) -> PyResult<PyObject> {
+        let logging = py.import("logging")?;
+        let log_record_cls = logging.getattr("LogRecord")?;
+
+        // Standard LogRecord constructor:
+        // name, level, pathname, lineno, msg, args, exc_info, func=None, sinfo=None
+        let args_tuple = (
+            name,
+            level,
+            fn_,
+            lno,
+            msg,
+            args,
+            exc_info,
+            py.None(), // func
+            py.None(), // sinfo
+        );
+
+        let record = log_record_cls.call1(args_tuple)?;
+        Ok(record.unbind())
     }
 
     fn handle(&self, record: Py<PyAny>) -> PyResult<()> {

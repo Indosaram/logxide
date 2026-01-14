@@ -54,7 +54,7 @@ pub fn get_logger(
     } else {
         get_root_logger()
     };
-    let pylogger = PyLogger::new(
+    let pylogger = PyLogger::with_params(
         inner,
         fast_logger::get_fast_logger(logger_name),
         manager.map(|m| m.clone_ref(py)),
@@ -161,6 +161,7 @@ pub fn add_handler_to_registry(
     handler: &Bound<PyAny>,
     logger_name: &str,
     local_handlers: &Mutex<Vec<Arc<dyn Handler + Send + Sync>>>,
+    local_python_handlers: &Mutex<Vec<PyObject>>,
 ) -> PyResult<bool> {
     let handler_arc: Option<Arc<dyn Handler + Send + Sync>> =
         if let Ok(file_handler) = handler.extract::<PyRef<PyFileHandler>>() {
@@ -204,11 +205,18 @@ pub fn add_handler_to_registry(
             .push(handler.clone().unbind());
         Ok(true)
     } else {
-        // Allow Python handlers but store them in keep alive
-        PYTHON_HANDLERS_KEEP_ALIVE
-            .lock()
-            .unwrap()
-            .push(handler.clone().unbind());
+        // Allow Python handlers
+        if logger_name == "root" {
+            PYTHON_HANDLERS_KEEP_ALIVE
+                .lock()
+                .unwrap()
+                .push(handler.clone().unbind());
+        } else {
+            local_python_handlers
+                .lock()
+                .unwrap()
+                .push(handler.clone().unbind());
+        }
         Ok(true)
     }
 }
