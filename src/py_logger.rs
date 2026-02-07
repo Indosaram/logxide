@@ -136,12 +136,12 @@ impl PyLogger {
 #[pymethods]
 impl PyLogger {
     fn emit_record(&self, record: LogRecord) {
-        let local_handlers = self.local_handlers.lock().unwrap();
+        let local_handlers = self.local_handlers.lock().expect("Logger handlers mutex poisoned");
 
         // 1. Handle Rust handlers
         if local_handlers.is_empty() {
             drop(local_handlers);
-            let global_handlers = HANDLERS.lock().unwrap();
+            let global_handlers = HANDLERS.lock().expect("Global handlers mutex poisoned");
             for handler in global_handlers.iter() {
                 let _ = futures::executor::block_on(handler.emit(&record));
             }
@@ -150,10 +150,10 @@ impl PyLogger {
                 let _ = futures::executor::block_on(handler.emit(&record));
             }
 
-            let should_propagate = *self.propagate.lock().unwrap();
+            let should_propagate = *self.propagate.lock().expect("Propagate flag mutex poisoned");
             if should_propagate {
                 drop(local_handlers);
-                let global_handlers = HANDLERS.lock().unwrap();
+                let global_handlers = HANDLERS.lock().expect("Global handlers mutex poisoned");
                 for handler in global_handlers.iter() {
                     let _ = futures::executor::block_on(handler.emit(&record));
                 }
@@ -162,8 +162,8 @@ impl PyLogger {
 
         // 2. Handle Python handlers (like pytest's caplog)
         Python::with_gil(|py| {
-            let local_py = self.local_python_handlers.lock().unwrap();
-            let global_py = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+            let local_py = self.local_python_handlers.lock().expect("Python handlers mutex poisoned");
+            let global_py = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().expect("Global Python handlers mutex poisoned");
 
             if local_py.is_empty() && global_py.is_empty() {
                 return;

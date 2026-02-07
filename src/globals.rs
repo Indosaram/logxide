@@ -45,7 +45,7 @@ pub fn get_logger(
 ) -> PyResult<PyLogger> {
     let logger_name = name.unwrap_or("root");
 
-    let mut alive = PY_LOGGER_KEEP_ALIVE.lock().unwrap();
+    let mut alive = PY_LOGGER_KEEP_ALIVE.lock().expect("Logger keep-alive mutex poisoned");
     if let Some(p) = alive.get(logger_name) {
         return Ok(p.bind(py).borrow().clone());
     }
@@ -75,7 +75,7 @@ pub fn basicConfig(_py: Python, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult
 
 #[pyfunction]
 pub fn flush(_py: Python) -> PyResult<()> {
-    let handlers = HANDLERS.lock().unwrap();
+    let handlers = HANDLERS.lock().expect("Handlers mutex poisoned during flush");
     for h in handlers.iter() {
         futures::executor::block_on(h.flush());
     }
