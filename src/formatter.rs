@@ -23,6 +23,14 @@
 //! providing both flexibility and reasonable performance for log formatting.
 
 use chrono::TimeZone;
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+// Pre-compiled regex patterns for Python formatter
+static LEVELNAME_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(levelname\)(-?)(\d*)s").unwrap());
+static THREADNAME_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(threadName\)(-?)(\d*)s").unwrap());
+static NAME_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(name\)(-?)(\d*)s").unwrap());
+static MSECS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(msecs\)0?(\d*)d").unwrap());
 
 /// Trait for converting log records to formatted strings.
 ///
@@ -213,11 +221,9 @@ impl Formatter for PythonFormatter {
         };
 
         // Replace Python logging format specifiers with regex for padding support
-        use regex::Regex;
 
         // Handle %(levelname)s with optional padding like %(levelname)-8s
-        let levelname_re = Regex::new(r"%\(levelname\)(-?)(\d*)s").unwrap();
-        result = levelname_re
+        result = LEVELNAME_RE
             .replace_all(&result, |caps: &regex::Captures| {
                 let left_align = caps.get(1).map_or("", |m| m.as_str()) == "-";
                 let width: usize = caps.get(2).map_or("", |m| m.as_str()).parse().unwrap_or(0);
@@ -235,8 +241,7 @@ impl Formatter for PythonFormatter {
             .to_string();
 
         // Handle %(threadName)s with optional padding like %(threadName)-10s
-        let threadname_re = Regex::new(r"%\(threadName\)(-?)(\d*)s").unwrap();
-        result = threadname_re
+        result = THREADNAME_RE
             .replace_all(&result, |caps: &regex::Captures| {
                 let left_align = caps.get(1).map_or("", |m| m.as_str()) == "-";
                 let width: usize = caps.get(2).map_or("", |m| m.as_str()).parse().unwrap_or(0);
@@ -254,8 +259,7 @@ impl Formatter for PythonFormatter {
             .to_string();
 
         // Handle %(name)s with optional padding like %(name)-15s
-        let name_re = Regex::new(r"%\(name\)(-?)(\d*)s").unwrap();
-        result = name_re
+        result = NAME_RE
             .replace_all(&result, |caps: &regex::Captures| {
                 let left_align = caps.get(1).map_or("", |m| m.as_str()) == "-";
                 let width: usize = caps.get(2).map_or("", |m| m.as_str()).parse().unwrap_or(0);
@@ -273,8 +277,7 @@ impl Formatter for PythonFormatter {
             .to_string();
 
         // Handle %(msecs)03d format with padding
-        let msecs_re = Regex::new(r"%\(msecs\)0?(\d*)d").unwrap();
-        result = msecs_re
+        result = MSECS_RE
             .replace_all(&result, |caps: &regex::Captures| {
                 let width: usize = caps.get(1).map_or("", |m| m.as_str()).parse().unwrap_or(0);
                 let msecs_val = record.msecs as i32;
