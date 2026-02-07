@@ -70,6 +70,8 @@ pip install logxide[dev]
 
 ## Documentation
 
+- **[Feature Comparison](PYTHON_LOGGING_FEATURE_COMPARISON.md)** - Complete comparison with Python's standard logging
+- **[Feature Analysis Summary](FEATURE_ANALYSIS_SUMMARY.md)** - Quick summary of supported features
 - **[Usage Guide](docs/usage.md)** - Complete usage examples and API guide
 - **[Integration Guide](docs/integration.md)** - Flask, Django, and FastAPI integration
 - **[Sentry Integration](docs/sentry.md)** - Automatic error tracking with Sentry
