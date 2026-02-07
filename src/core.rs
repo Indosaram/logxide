@@ -216,7 +216,10 @@ impl Logger {
             return self.level;
         }
         if let Some(ref parent) = self.parent {
-            return parent.lock().expect("Parent logger mutex poisoned - logging system in inconsistent state").get_effective_level();
+            return parent
+                .lock()
+                .expect("Parent logger mutex poisoned")
+                .get_effective_level();
         }
         LogLevel::Warning
     }
