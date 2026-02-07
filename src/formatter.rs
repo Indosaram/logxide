@@ -27,10 +27,22 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 // Pre-compiled regex patterns for Python formatter
-static LEVELNAME_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(levelname\)(-?)(\d*)s").unwrap());
-static THREADNAME_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(threadName\)(-?)(\d*)s").unwrap());
-static NAME_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(name\)(-?)(\d*)s").unwrap());
-static MSECS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(msecs\)0?(\d*)d").unwrap());
+static LEVELNAME_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"%\(levelname\)(-?)(\d*)s")
+        .expect("Failed to compile levelname regex pattern")
+});
+static THREADNAME_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"%\(threadName\)(-?)(\d*)s")
+        .expect("Failed to compile threadName regex pattern")
+});
+static NAME_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"%\(name\)(-?)(\d*)s")
+        .expect("Failed to compile name regex pattern")
+});
+static MSECS_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"%\(msecs\)0?(\d*)d")
+        .expect("Failed to compile msecs regex pattern")
+});
 
 /// Trait for converting log records to formatted strings.
 ///
