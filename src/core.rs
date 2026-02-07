@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use dashmap::DashMap;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -271,7 +272,7 @@ impl Logger {
 }
 
 pub struct LoggerManager {
-    pub loggers: Mutex<HashMap<String, Arc<Mutex<Logger>>>>,
+    pub loggers: DashMap<String, Arc<Mutex<Logger>>>,
     pub root: Arc<Mutex<Logger>>,
 }
 
@@ -285,31 +286,31 @@ impl LoggerManager {
     pub fn new() -> Self {
         let root_logger = Arc::new(Mutex::new(Logger::new("root")));
         LoggerManager {
-            loggers: Mutex::new(HashMap::new()),
+            loggers: DashMap::new(),
             root: root_logger.clone(),
         }
     }
 
     pub fn get_logger(&self, name: &str) -> Arc<Mutex<Logger>> {
-        {
-            let loggers = self.loggers.lock().unwrap();
-            if let Some(logger) = loggers.get(name) {
-                return logger.clone();
-            }
-        }
-        let parent_logger = if name != "root" {
-            let parent_name = name.rsplit_once('.').map(|x| x.0).unwrap_or("root");
-            Some(self.get_logger(parent_name))
-        } else {
-            None
-        };
-        let logger = Arc::new(Mutex::new(Logger::new(name)));
-        if let Some(parent) = parent_logger {
-            logger.lock().unwrap().parent = Some(parent);
-        }
-        let mut loggers = self.loggers.lock().unwrap();
-        loggers.insert(name.to_string(), logger.clone());
-        logger
+        // Use DashMap's entry API for atomic check-and-insert
+        self.loggers
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                // Get parent logger (may recursively call get_logger)
+                let parent_logger = if name != "root" {
+                    let parent_name = name.rsplit_once('.').map(|x| x.0).unwrap_or("root");
+                    Some(self.get_logger(parent_name))
+                } else {
+                    None
+                };
+                
+                let logger = Arc::new(Mutex::new(Logger::new(name)));
+                if let Some(parent) = parent_logger {
+                    logger.lock().unwrap().parent = Some(parent);
+                }
+                logger
+            })
+            .clone()
     }
 
     pub fn get_root_logger(&self) -> Arc<Mutex<Logger>> {
