@@ -196,35 +196,3 @@ class OTLPHandler(logging.Handler):
     def close(self):
         self._inner.shutdown()
         super().close()
-
-
-class MemoryHandler(logging.Handler):
-    """
-    High-performance memory handler for testing and log capture.
-    Stores records in Rust native memory for maximum performance.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self._inner = logxide.MemoryHandler()
-
-    def setLevel(self, level):
-        super().setLevel(level)
-        self._inner.setLevel(level)
-
-    def emit(self, record):
-        pass
-
-    def get_records(self):
-        """Returns all captured records as a list."""
-        return self._inner.getRecords()
-
-    def clear(self):
-        """Clears all captured records."""
-        self._inner.clear()
-
-    def flush(self):
-        pass
-
-    def close(self):
-        super().close()
