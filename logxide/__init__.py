@@ -1,5 +1,30 @@
 """
 LogXide: High-performance, Rust-powered drop-in replacement for Python's logging module.
+
+IMPORTANT: Import Order Requirements
+------------------------------------
+LogXide automatically replaces sys.modules["logging"] when imported (except during pytest).
+For correct behavior:
+
+1. Import logxide BEFORE any modules that use the logging module
+2. If other modules have already imported logging, they will retain references to
+   the standard library logging module, not LogXide
+
+Example (Correct):
+    from logxide import logging  # Import first
+    import myapp  # myapp will use LogXide
+
+Example (Incorrect):
+    import myapp  # myapp imports logging - gets stdlib
+    from logxide import logging  # Too late - myapp already has stdlib
+
+If you need explicit control over when the replacement happens, you can:
+    import logxide
+    # ... do other imports ...
+    logxide._install()  # Manually trigger installation
+
+Note: The automatic replacement is skipped when running under pytest to avoid
+conflicts with pytest's caplog fixture.
 """
 
 import os
@@ -41,7 +66,7 @@ _check_python_version()
 
 from . import logxide
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 from .compat_functions import (
     addLevelName,
@@ -100,6 +125,10 @@ PyLogger = logxide.logging.PyLogger
 Logger = PyLogger
 LogRecord = logxide.logging.LogRecord
 
+# Automatically replace stdlib logging with LogXide (unless running pytest)
+# WARNING: This must happen early in the import order. Any modules that have
+# already imported logging will retain references to the stdlib version.
+# See module docstring for detailed import order requirements.
 if "pytest" not in sys.modules and "PYTEST_CURRENT_TEST" not in os.environ:
     _install()
     sys.modules["logging"] = logging

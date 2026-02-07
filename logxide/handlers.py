@@ -37,6 +37,29 @@ class StreamHandler(logging.StreamHandler):
 
 
 class RotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """
+    File handler with size-based rotation support.
+    
+    **IMPORTANT LIMITATION**: File rotation is not yet implemented in the Rust backend.
+    The handler currently only appends to the file without performing rotation, even when
+    maxBytes is exceeded. The file will continue to grow indefinitely.
+    
+    **Workaround**: 
+    - Use external log rotation tools (e.g., logrotate on Linux)
+    - Implement rotation at the application level by periodically closing/reopening files
+    - Use FileHandler and handle rotation manually
+    
+    This limitation will be addressed in a future release.
+    
+    Args:
+        filename: Path to the log file
+        mode: File opening mode (default: 'a')
+        maxBytes: Maximum file size before rotation (NOT IMPLEMENTED - ignored)
+        backupCount: Number of backup files to keep (NOT IMPLEMENTED - ignored)
+        encoding: File encoding
+        delay: Delay file opening until first emit
+        errors: Error handling mode
+    """
     def __init__(
         self,
         filename,
@@ -195,36 +218,4 @@ class OTLPHandler(logging.Handler):
 
     def close(self):
         self._inner.shutdown()
-        super().close()
-
-
-class MemoryHandler(logging.Handler):
-    """
-    High-performance memory handler for testing and log capture.
-    Stores records in Rust native memory for maximum performance.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self._inner = logxide.MemoryHandler()
-
-    def setLevel(self, level):
-        super().setLevel(level)
-        self._inner.setLevel(level)
-
-    def emit(self, record):
-        pass
-
-    def get_records(self):
-        """Returns all captured records as a list."""
-        return self._inner.getRecords()
-
-    def clear(self):
-        """Clears all captured records."""
-        self._inner.clear()
-
-    def flush(self):
-        pass
-
-    def close(self):
         super().close()

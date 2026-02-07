@@ -82,7 +82,9 @@ pub struct PyHTTPHandler {
 }
 
 impl Drop for PyHTTPHandler {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        self.inner.shutdown();
+    }
 }
 
 fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
@@ -192,7 +194,9 @@ pub struct PyOTLPHandler {
 }
 
 impl Drop for PyOTLPHandler {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        self.inner.shutdown();
+    }
 }
 
 #[pymethods]

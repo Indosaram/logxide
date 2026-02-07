@@ -105,6 +105,22 @@ impl Handler for FileHandler {
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
+/// File handler with size-based rotation support.
+///
+/// **CURRENT LIMITATION**: Rotation is not yet implemented.
+/// The handler accepts `max_bytes` and `backup_count` parameters but currently
+/// only appends to the file without performing rotation. This will be implemented
+/// in a future release.
+///
+/// **Workaround**: Use external log rotation tools like `logrotate` on Linux or
+/// handle rotation at the application level by periodically closing and reopening
+/// the file with a new name.
+///
+/// # Planned Behavior (not yet implemented)
+/// - Monitor file size before each write
+/// - When file exceeds `max_bytes`, rotate to `filename.1`
+/// - Maintain `backup_count` backup files
+/// - Oldest backup is deleted when count is exceeded
 pub struct RotatingFileHandler {
     filename: PathBuf,
     #[allow(dead_code)] // TODO: implement rotation logic
