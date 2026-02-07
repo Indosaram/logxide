@@ -37,6 +37,29 @@ class StreamHandler(logging.StreamHandler):
 
 
 class RotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """
+    File handler with size-based rotation support.
+    
+    **IMPORTANT LIMITATION**: File rotation is not yet implemented in the Rust backend.
+    The handler currently only appends to the file without performing rotation, even when
+    maxBytes is exceeded. The file will continue to grow indefinitely.
+    
+    **Workaround**: 
+    - Use external log rotation tools (e.g., logrotate on Linux)
+    - Implement rotation at the application level by periodically closing/reopening files
+    - Use FileHandler and handle rotation manually
+    
+    This limitation will be addressed in a future release.
+    
+    Args:
+        filename: Path to the log file
+        mode: File opening mode (default: 'a')
+        maxBytes: Maximum file size before rotation (NOT IMPLEMENTED - ignored)
+        backupCount: Number of backup files to keep (NOT IMPLEMENTED - ignored)
+        encoding: File encoding
+        delay: Delay file opening until first emit
+        errors: Error handling mode
+    """
     def __init__(
         self,
         filename,
