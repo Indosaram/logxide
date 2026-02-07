@@ -216,7 +216,7 @@ impl Logger {
             return self.level;
         }
         if let Some(ref parent) = self.parent {
-            return parent.lock().unwrap().get_effective_level();
+            return parent.lock().expect("Parent logger mutex poisoned - logging system in inconsistent state").get_effective_level();
         }
         LogLevel::Warning
     }
@@ -306,7 +306,7 @@ impl LoggerManager {
                 
                 let logger = Arc::new(Mutex::new(Logger::new(name)));
                 if let Some(parent) = parent_logger {
-                    logger.lock().unwrap().parent = Some(parent);
+                    logger.lock().expect("Logger mutex poisoned during initialization").parent = Some(parent);
                 }
                 logger
             })
