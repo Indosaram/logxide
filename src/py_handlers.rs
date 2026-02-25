@@ -1,4 +1,4 @@
-//! Python wrapper types for Rust handlers
+//! Python wrapper types for Rust handlers and formatters
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -8,11 +8,95 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::{LogLevel, LogRecord};
+use crate::formatter::{ColorFormatter, Formatter, PythonFormatter};
 use crate::handler::{
     FileHandler, HTTPHandler, HTTPHandlerConfig, MemoryHandler, OTLPHandler, OTLPHandlerConfig,
     RotatingFileHandler, StreamHandler,
 };
 
+// ============================================================================
+// Formatter Bindings
+// ============================================================================
+
+/// Python binding for PythonFormatter.
+/// Standard Python logging-compatible formatter.
+#[pyclass(name = "Formatter")]
+pub struct PyFormatter {
+    pub(crate) inner: Arc<PythonFormatter>,
+}
+
+#[pymethods]
+impl PyFormatter {
+    /// Create a new Formatter with the specified format string.
+    ///
+    /// Args:
+    ///     fmt: Python-style format string with %(field)s placeholders
+    ///     datefmt: Optional strftime format for %(asctime)s
+    #[new]
+    #[pyo3(signature = (fmt="%(message)s".to_string(), datefmt=None))]
+    pub fn new(fmt: String, datefmt: Option<String>) -> Self {
+        let formatter = if let Some(df) = datefmt {
+            PythonFormatter::with_date_format(fmt, df)
+        } else {
+            PythonFormatter::new(fmt)
+        };
+        Self {
+            inner: Arc::new(formatter),
+        }
+    }
+
+    /// Format a log record.
+    pub fn format(&self, record: &LogRecord) -> String {
+        self.inner.format(record)
+    }
+}
+
+/// Python binding for ColorFormatter.
+/// Supports ANSI color codes for terminal output.
+///
+/// Additional format placeholders:
+/// - %(ansi_level_color)s: ANSI color code for the log level
+/// - %(ansi_reset_color)s: ANSI reset code
+///
+/// Example:
+///     formatter = ColorFormatter(
+///         "%(ansi_level_color)s%(levelname)s%(ansi_reset_color)s - %(message)s"
+///     )
+#[pyclass(name = "ColorFormatter")]
+pub struct PyColorFormatter {
+    pub(crate) inner: Arc<ColorFormatter>,
+}
+
+#[pymethods]
+impl PyColorFormatter {
+    /// Create a new ColorFormatter with ANSI color support.
+    ///
+    /// Args:
+    ///     fmt: Format string with %(field)s placeholders.
+    ///          Use %(ansi_level_color)s and %(ansi_reset_color)s for colors.
+    ///     datefmt: Optional strftime format for %(asctime)s
+    #[new]
+    #[pyo3(signature = (fmt="%(ansi_level_color)s%(levelname)s%(ansi_reset_color)s - %(message)s".to_string(), datefmt=None))]
+    pub fn new(fmt: String, datefmt: Option<String>) -> Self {
+        let formatter = if let Some(df) = datefmt {
+            ColorFormatter::with_date_format(fmt, df)
+        } else {
+            ColorFormatter::new(fmt)
+        };
+        Self {
+            inner: Arc::new(formatter),
+        }
+    }
+
+    /// Format a log record with ANSI colors.
+    pub fn format(&self, record: &LogRecord) -> String {
+        self.inner.format(record)
+    }
+}
+
+// ============================================================================
+// Handler Bindings
+// ============================================================================
 #[pyclass(name = "FileHandler")]
 pub struct PyFileHandler {
     pub(crate) inner: Arc<FileHandler>,
@@ -184,6 +268,21 @@ impl PyHTTPHandler {
         self.inner.shutdown();
         Ok(())
     }
+
+    /// Set the flush level. Records at or above this level trigger immediate flush.
+    /// Default is ERROR (40). Use logging.CRITICAL (50) to flush only on critical.
+    /// Use logging.DEBUG (10) to flush on every record.
+    #[pyo3(name = "setFlushLevel")]
+    fn set_flush_level(&self, level: u32) -> PyResult<()> {
+        self.inner.set_flush_level(LogLevel::from_usize(level as usize));
+        Ok(())
+    }
+
+    /// Get the current flush level.
+    #[pyo3(name = "getFlushLevel")]
+    fn get_flush_level(&self) -> PyResult<u32> {
+        Ok(self.inner.get_flush_level() as u32)
+    }
 }
 
 #[pyclass(name = "OTLPHandler")]
@@ -265,15 +364,39 @@ impl PyMemoryHandler {
         }
     }
 
-    pub fn getRecords(&self) -> Vec<LogRecord> {
+    /// Returns all captured log records.
+    #[pyo3(name = "getRecords")]
+    pub fn get_records(&self) -> Vec<LogRecord> {
         self.inner.get_records()
     }
 
+    /// Alias for getRecords() - Python naming convention.
+    #[getter]
+    pub fn records(&self) -> Vec<LogRecord> {
+        self.inner.get_records()
+    }
+
+    /// Returns all captured messages as a single newline-separated string.
+    /// Compatible with pytest caplog.text
+    #[getter]
+    pub fn text(&self) -> String {
+        self.inner.get_text()
+    }
+
+    /// Returns record tuples in pytest caplog format: (logger_name, level_num, message).
+    /// Compatible with pytest caplog.record_tuples
+    #[getter]
+    pub fn record_tuples(&self) -> Vec<(String, i32, String)> {
+        self.inner.get_record_tuples()
+    }
+
+    /// Clear all captured records.
     pub fn clear(&self) {
         self.inner.clear();
     }
 
-    pub fn setLevel(&self, level: u32) -> PyResult<()> {
+    #[pyo3(name = "setLevel")]
+    pub fn set_level(&self, level: u32) -> PyResult<()> {
         self.inner.set_level(LogLevel::from_usize(level as usize));
         Ok(())
     }

@@ -293,6 +293,28 @@ def _install(sentry=None):
 
         std_logger.addHandler = wrapped_add
 
+        # Wrap addFilter to forward to LogXide PyLogger
+        original_addFilter = std_logger.addFilter
+
+        def wrapped_addFilter(filter_obj):
+            original_addFilter(filter_obj)
+            target = getattr(std_logger, "_logxide_pylogger", logxide_logger)
+            if hasattr(target, "addFilter"):
+                target.addFilter(filter_obj)
+
+        std_logger.addFilter = wrapped_addFilter
+
+        # Wrap removeFilter to forward to LogXide PyLogger
+        original_removeFilter = std_logger.removeFilter
+
+        def wrapped_removeFilter(filter_obj):
+            original_removeFilter(filter_obj)
+            target = getattr(std_logger, "_logxide_pylogger", logxide_logger)
+            if hasattr(target, "removeFilter"):
+                target.removeFilter(filter_obj)
+
+        std_logger.removeFilter = wrapped_removeFilter
+
         return std_logger
 
     std_logging.getLogger = logxide_getLogger

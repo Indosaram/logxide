@@ -319,3 +319,123 @@ impl Formatter for PythonFormatter {
         result
     }
 }
+
+/// ANSI color codes for terminal output.
+pub mod ansi_colors {
+    /// ANSI color code for DEBUG level (white/gray)
+    pub const DEBUG: &str = "\x1b[37m";
+    /// ANSI color code for INFO level (green)
+    pub const INFO: &str = "\x1b[32m";
+    /// ANSI color code for WARNING level (yellow)
+    pub const WARNING: &str = "\x1b[33m";
+    /// ANSI color code for ERROR level (red)
+    pub const ERROR: &str = "\x1b[31m";
+    /// ANSI color code for CRITICAL level (magenta/bold red)
+    pub const CRITICAL: &str = "\x1b[35m";
+    /// ANSI reset code to clear formatting
+    pub const RESET: &str = "\x1b[0m";
+
+    /// Get the ANSI color code for a given log level.
+    pub fn get_level_color(levelname: &str) -> &'static str {
+        match levelname {
+            "DEBUG" => DEBUG,
+            "INFO" => INFO,
+            "WARNING" => WARNING,
+            "ERROR" => ERROR,
+            "CRITICAL" => CRITICAL,
+            _ => "",
+        }
+    }
+}
+
+/// Color-aware formatter that supports ANSI escape codes for terminal output.
+///
+/// Extends PythonFormatter with support for color placeholders:
+/// - `%(ansi_level_color)s` - ANSI color code for the current log level
+/// - `%(ansi_reset_color)s` - ANSI reset code to clear formatting
+///
+/// # Examples
+///
+/// ```text
+/// // Format: "%(ansi_level_color)s%(levelname)s%(ansi_reset_color)s - %(message)s"
+/// // Output: "\x1b[32mINFO\x1b[0m - Application started" (INFO in green)
+/// ```
+///
+/// # Color Mapping
+///
+/// | Level    | Color   | ANSI Code |
+/// |----------|---------|-----------|
+/// | DEBUG    | White   | \x1b[37m |
+/// | INFO     | Green   | \x1b[32m |
+/// | WARNING  | Yellow  | \x1b[33m |
+/// | ERROR    | Red     | \x1b[31m |
+/// | CRITICAL | Magenta | \x1b[35m |
+pub struct ColorFormatter {
+    /// The underlying format string with %(field)s placeholders
+    pub format_string: String,
+    /// Optional custom date format (strftime format)
+    pub date_format: Option<String>,
+}
+
+impl ColorFormatter {
+    /// Create a new ColorFormatter with the specified format string.
+    ///
+    /// Uses default date format ("%Y-%m-%d %H:%M:%S") for %(asctime)s.
+    ///
+    /// # Arguments
+    ///
+    /// * `format_string` - Python-style format string with %(field)s placeholders
+    ///                     Supports %(ansi_level_color)s and %(ansi_reset_color)s
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use logxide::formatter::ColorFormatter;
+    /// let formatter = ColorFormatter::new(
+    ///     "%(ansi_level_color)s[%(levelname)s]%(ansi_reset_color)s %(message)s".to_string()
+    /// );
+    /// ```
+    pub fn new(format_string: String) -> Self {
+        Self {
+            format_string,
+            date_format: None,
+        }
+    }
+
+    /// Create a new ColorFormatter with custom date formatting.
+    ///
+    /// # Arguments
+    ///
+    /// * `format_string` - Python-style format string with %(field)s placeholders
+    /// * `date_format` - strftime format string for date/time formatting
+    pub fn with_date_format(format_string: String, date_format: String) -> Self {
+        Self {
+            format_string,
+            date_format: Some(date_format),
+        }
+    }
+}
+
+impl Formatter for ColorFormatter {
+    /// Format a log record with ANSI color support.
+    ///
+    /// First replaces color placeholders with appropriate ANSI codes,
+    /// then delegates to PythonFormatter logic for remaining fields.
+    fn format(&self, record: &crate::core::LogRecord) -> String {
+        // Start with the format string
+        let mut result = self.format_string.clone();
+
+        // Replace color placeholders first
+        let level_color = ansi_colors::get_level_color(&record.levelname);
+        result = result.replace("%(ansi_level_color)s", level_color);
+        result = result.replace("%(ansi_reset_color)s", ansi_colors::RESET);
+
+        // Now use PythonFormatter logic for the rest
+        let python_formatter = PythonFormatter {
+            format_string: result,
+            date_format: self.date_format.clone(),
+        };
+
+        python_formatter.format(record)
+    }
+}
