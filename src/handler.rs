@@ -27,32 +27,58 @@ pub trait Handler: Send + Sync {
     fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>);
 }
 
+/// A handler that writes log records to stdout or stderr.
+///
+/// Supports custom formatters for controlling output format.
 pub struct StreamHandler {
     stream: Mutex<StreamDestination>,
     level: AtomicU8,
+    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
 }
+
 #[derive(Clone, Copy)]
 pub enum StreamDestination {
     Stdout,
     Stderr,
 }
+
 impl StreamHandler {
     pub fn stdout() -> Self {
         Self {
             stream: Mutex::new(StreamDestination::Stdout),
             level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: Mutex::new(None),
         }
     }
+
     pub fn stderr() -> Self {
         Self {
             stream: Mutex::new(StreamDestination::Stderr),
             level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: Mutex::new(None),
         }
     }
+
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
     }
+
+    /// Set a formatter for this handler.
+    /// Thread-safe: can be called while the handler is in use.
+    pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        *self.formatter.lock().unwrap() = Some(formatter);
+    }
+
+    /// Format a record using the configured formatter, or return the raw message.
+    fn format_record(&self, record: &LogRecord) -> String {
+        if let Some(ref formatter) = *self.formatter.lock().unwrap() {
+            formatter.format(record)
+        } else {
+            record.msg.clone()
+        }
+    }
 }
+
 #[async_trait]
 impl Handler for StreamHandler {
     async fn emit(&self, record: &LogRecord) {
@@ -60,33 +86,62 @@ impl Handler for StreamHandler {
         if record.levelno < level as i32 {
             return;
         }
+        let output = self.format_record(record);
         let dest = *self.stream.lock().unwrap();
         match dest {
-            StreamDestination::Stdout => println!("{}", record.msg),
-            StreamDestination::Stderr => eprintln!("{}", record.msg),
+            StreamDestination::Stdout => println!("{}", output),
+            StreamDestination::Stderr => eprintln!("{}", output),
         }
     }
+
     async fn flush(&self) {}
-    fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
+
+    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        *self.formatter.lock().unwrap() = Some(formatter);
+    }
+
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
+/// A handler that writes log records to a file.
+///
+/// Supports custom formatters for controlling output format.
 pub struct FileHandler {
     writer: Mutex<BufWriter<File>>,
     level: AtomicU8,
+    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
 }
+
 impl FileHandler {
     pub fn new<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let f = OpenOptions::new().create(true).append(true).open(path)?;
         Ok(Self {
             writer: Mutex::new(BufWriter::new(f)),
             level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: Mutex::new(None),
         })
     }
+
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
     }
+
+    /// Set a formatter for this handler.
+    /// Thread-safe: can be called while the handler is in use.
+    pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        *self.formatter.lock().unwrap() = Some(formatter);
+    }
+
+    /// Format a record using the configured formatter, or return the raw message.
+    fn format_record(&self, record: &LogRecord) -> String {
+        if let Some(ref formatter) = *self.formatter.lock().unwrap() {
+            formatter.format(record)
+        } else {
+            record.msg.clone()
+        }
+    }
 }
+
 #[async_trait]
 impl Handler for FileHandler {
     async fn emit(&self, record: &LogRecord) {
@@ -94,14 +149,20 @@ impl Handler for FileHandler {
         if record.levelno < level as i32 {
             return;
         }
+        let output = self.format_record(record);
         let mut w = self.writer.lock().unwrap();
-        let _ = writeln!(w, "{}", record.msg);
+        let _ = writeln!(w, "{}", output);
         let _ = w.flush();
     }
+
     async fn flush(&self) {
         let _ = self.writer.lock().unwrap().flush();
     }
-    fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
+
+    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        *self.formatter.lock().unwrap() = Some(formatter);
+    }
+
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
@@ -149,10 +210,15 @@ impl Handler for RotatingFileHandler {
 
 /// HTTP handler that sends log records as JSON to a remote endpoint.
 /// Uses internal buffering and batch processing for efficient network I/O.
+/// HTTP handler that sends log records as JSON to a remote endpoint.
+/// Uses internal buffering and batch processing for efficient network I/O.
+///
+/// Supports level-based flush: records at or above `flush_level` trigger immediate flush.
 pub struct HTTPHandler {
     sender: crossbeam_channel::Sender<LogRecord>,
     flush_signal: crossbeam_channel::Sender<()>,
     level: AtomicU8,
+    flush_level: AtomicU8,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -282,6 +348,7 @@ impl HTTPHandler {
             sender: s,
             flush_signal: flush_tx,
             level: AtomicU8::new(LogLevel::Debug as u8),
+            flush_level: AtomicU8::new(LogLevel::Error as u8),  // Default: ERROR+ triggers immediate flush
             shutdown,
         }
     }
@@ -403,6 +470,17 @@ impl HTTPHandler {
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
     }
+
+    /// Set the flush level. Records at or above this level trigger immediate flush.
+    /// Default is ERROR (40).
+    pub fn set_flush_level(&self, level: LogLevel) {
+        self.flush_level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Get the current flush level.
+    pub fn get_flush_level(&self) -> u8 {
+        self.flush_level.load(Ordering::Relaxed)
+    }
 }
 
 fn py_to_value(obj: &Bound<PyAny>) -> Value {
@@ -448,6 +526,12 @@ impl Handler for HTTPHandler {
         let _ = self
             .sender
             .send_timeout(record.clone(), std::time::Duration::from_millis(5));
+        
+        // Level-based flush: immediately flush if record level >= flush_level
+        let flush_level = self.flush_level.load(Ordering::Relaxed);
+        if record.levelno >= flush_level as i32 {
+            let _ = self.flush_signal.try_send(());
+        }
     }
     async fn flush(&self) {}
 
@@ -711,9 +795,26 @@ impl Handler for OTLPHandler {
 
 /// Handler that stores log records in memory.
 /// Highly efficient for testing and log capture.
+///
+/// Provides pytest-compatible access to captured logs:
+/// - `get_records()` - Returns all captured LogRecord objects
+/// - `get_text()` - Returns all captured messages as a single string
+/// - `get_record_tuples()` - Returns (logger_name, level, message) tuples
+///
+/// # Examples
+///
+/// ```rust
+/// use logxide::handler::MemoryHandler;
+///
+/// let handler = MemoryHandler::new();
+/// // ... emit some records ...
+/// let text = handler.get_text();  // All messages joined
+/// let tuples = handler.get_record_tuples();  // [("root", 20, "msg"), ...]
+/// ```
 pub struct MemoryHandler {
     records: Arc<Mutex<Vec<LogRecord>>>,
     level: AtomicU8,
+    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
 }
 
 impl MemoryHandler {
@@ -721,19 +822,66 @@ impl MemoryHandler {
         Self {
             records: Arc::new(Mutex::new(Vec::new())),
             level: AtomicU8::new(LogLevel::Debug as u8),
+            formatter: Mutex::new(None),
         }
     }
 
+    /// Returns all captured log records.
     pub fn get_records(&self) -> Vec<LogRecord> {
         self.records.lock().unwrap().clone()
     }
 
+    /// Returns all captured log messages as a single newline-separated string.
+    /// Uses the formatter if set, otherwise returns raw messages.
+    pub fn get_text(&self) -> String {
+        let records = self.records.lock().unwrap();
+        let formatter = self.formatter.lock().unwrap();
+        records
+            .iter()
+            .map(|r| {
+                if let Some(ref fmt) = *formatter {
+                    fmt.format(r)
+                } else {
+                    r.msg.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Returns record tuples in pytest caplog format: (logger_name, level_num, message).
+    pub fn get_record_tuples(&self) -> Vec<(String, i32, String)> {
+        self.records
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| (r.name.clone(), r.levelno, r.msg.clone()))
+            .collect()
+    }
+
+    /// Clear all captured records.
     pub fn clear(&self) {
         self.records.lock().unwrap().clear();
     }
 
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Set a formatter for this handler.
+    /// Thread-safe: can be called while the handler is in use.
+    pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        *self.formatter.lock().unwrap() = Some(formatter);
+    }
+
+    /// Format a record using the configured formatter, or return the raw message.
+    #[allow(dead_code)]
+    fn format_record(&self, record: &LogRecord) -> String {
+        if let Some(ref formatter) = *self.formatter.lock().unwrap() {
+            formatter.format(record)
+        } else {
+            record.msg.clone()
+        }
     }
 }
 
@@ -749,7 +897,10 @@ impl Handler for MemoryHandler {
 
     async fn flush(&self) {}
 
-    fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
+    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        *self.formatter.lock().unwrap() = Some(formatter);
+    }
+
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 

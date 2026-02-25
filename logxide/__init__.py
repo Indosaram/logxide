@@ -41,7 +41,7 @@ _check_python_version()
 
 from . import logxide
 
-__version__ = "0.1.5"
+__version__ = "0.1.7"
 
 from .compat_functions import (
     addLevelName,
@@ -81,6 +81,7 @@ from .handlers import (
 )
 from . import logxide as _logxide_ext
 
+# Rust handlers (direct access)
 RustFileHandler = _logxide_ext.FileHandler
 RustStreamHandler = _logxide_ext.StreamHandler
 RustRotatingFileHandler = _logxide_ext.RotatingFileHandler
@@ -88,6 +89,14 @@ RustHTTPHandler = _logxide_ext.HTTPHandler
 RustOTLPHandler = _logxide_ext.OTLPHandler
 RustMemoryHandler = _logxide_ext.MemoryHandler
 NullHandler = _CompatNullHandler
+
+# Rust formatters (direct access)
+try:
+    ColorFormatter = _logxide_ext.ColorFormatter
+    RustFormatter = _logxide_ext.Formatter
+except AttributeError:
+    # Fallback if not yet built with new formatters
+    pass
 
 from .logger_wrapper import basicConfig, getLogger
 from .module_system import _install, logging, uninstall
