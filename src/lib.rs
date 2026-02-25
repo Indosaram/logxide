@@ -14,10 +14,11 @@ mod py_logger;
 mod string_cache;
 
 pub use core::{create_log_record_with_extra, LogLevel, LogRecord};
+pub use formatter::{ColorFormatter, Formatter, PythonFormatter};
 pub use globals::{HANDLERS, THREAD_NAME};
 pub use py_handlers::{
-    PyFileHandler, PyHTTPHandler, PyMemoryHandler, PyOTLPHandler, PyRotatingFileHandler,
-    PyStreamHandler,
+    PyColorFormatter, PyFileHandler, PyFormatter, PyHTTPHandler, PyMemoryHandler, PyOTLPHandler,
+    PyRotatingFileHandler, PyStreamHandler,
 };
 pub use py_logger::PyLogger;
 
@@ -26,6 +27,8 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     let logging_module = PyModule::new(m.py(), "logging")?;
     logging_module.add_class::<PyLogger>()?;
     logging_module.add_class::<LogRecord>()?;
+    logging_module.add_class::<PyFormatter>()?;
+    logging_module.add_class::<PyColorFormatter>()?;
     logging_module.add_class::<PyFileHandler>()?;
     logging_module.add_class::<PyStreamHandler>()?;
     logging_module.add_class::<PyRotatingFileHandler>()?;
@@ -53,6 +56,8 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
 
     m.add_class::<PyLogger>()?;
     m.add_class::<LogRecord>()?;
+    m.add_class::<PyFormatter>()?;
+    m.add_class::<PyColorFormatter>()?;
     m.add_class::<PyFileHandler>()?;
     m.add_class::<PyStreamHandler>()?;
     m.add_class::<PyRotatingFileHandler>()?;

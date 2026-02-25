@@ -135,7 +135,81 @@ impl PyLogger {
 
 #[pymethods]
 impl PyLogger {
-    fn emit_record(&self, record: LogRecord) {
+    fn emit_record(&self, mut record: LogRecord) {
+        // Apply Python callable filters before emission
+        // Filters can modify the record (especially record.msg) and return False to suppress
+        let should_emit = Python::with_gil(|py| {
+            let filters = self.filters.lock().unwrap();
+            for filter_obj in filters.iter() {
+                let filter_bound = filter_obj.bind(py);
+                
+                // Try calling filter.filter(record) if it's a filter object
+                // Or call it directly if it's a callable
+                let result = if let Ok(filter_method) = filter_bound.getattr("filter") {
+                    // Create a mutable Python dict to represent the record
+                    let py_record = pyo3::types::PyDict::new(py);
+                    let _ = py_record.set_item("name", &record.name);
+                    let _ = py_record.set_item("levelno", record.levelno);
+                    let _ = py_record.set_item("levelname", &record.levelname);
+                    let _ = py_record.set_item("msg", &record.msg);
+                    let _ = py_record.set_item("pathname", &record.pathname);
+                    let _ = py_record.set_item("lineno", record.lineno);
+                    let _ = py_record.set_item("func_name", &record.func_name);
+                    
+                    // Call filter method with reference to dict
+                    let call_result = filter_method.call1((&py_record,));
+                    
+                    // Check if filter modified the msg (after the call)
+                    if let Ok(Some(new_msg)) = py_record.get_item("msg") {
+                        if let Ok(msg_str) = new_msg.extract::<String>() {
+                            record.msg = msg_str;
+                        }
+                    }
+                    
+                    match call_result {
+                        Ok(res) => res.is_truthy().unwrap_or(true),
+                        Err(_) => true,  // On error, allow the record
+                    }
+                } else if filter_bound.is_callable() {
+                    // Direct callable filter
+                    let py_record = pyo3::types::PyDict::new(py);
+                    let _ = py_record.set_item("name", &record.name);
+                    let _ = py_record.set_item("levelno", record.levelno);
+                    let _ = py_record.set_item("levelname", &record.levelname);
+                    let _ = py_record.set_item("msg", &record.msg);
+                    let _ = py_record.set_item("pathname", &record.pathname);
+                    let _ = py_record.set_item("lineno", record.lineno);
+                    let _ = py_record.set_item("func_name", &record.func_name);
+                    
+                    // Call filter with reference to dict
+                    let call_result = filter_bound.call1((&py_record,));
+                    
+                    // Check if filter modified the msg (after the call)
+                    if let Ok(Some(new_msg)) = py_record.get_item("msg") {
+                        if let Ok(msg_str) = new_msg.extract::<String>() {
+                            record.msg = msg_str;
+                        }
+                    }
+                    
+                    match call_result {
+                        Ok(res) => res.is_truthy().unwrap_or(true),
+                        Err(_) => true,
+                    }
+                } else {
+                    true  // Not a valid filter, allow the record
+                };
+                
+                if !result {
+                    return false;  // Filter rejected the record
+                }
+            }
+            true  // All filters passed
+        });
+        
+        if !should_emit {
+            return;
+        }
+        
         let local_handlers = self.local_handlers.lock().unwrap();
 
         // 1. Handle Rust handlers
@@ -318,6 +392,26 @@ impl PyLogger {
                 "LogXide only supports Rust native handlers.",
             ))
         }
+    }
+
+    /// Add a filter to this logger.
+    /// The filter can be:
+    /// - An object with a `filter(record)` method that returns True/False
+    /// - A callable that takes a record dict and returns True/False
+    /// 
+    /// The record dict has keys: name, levelno, levelname, msg, pathname, lineno, func_name
+    /// Filters can modify record['msg'] to transform the log message.
+    fn addFilter(&self, py: Python, filter_obj: Py<PyAny>) -> PyResult<()> {
+        let mut filters = self.filters.lock().unwrap();
+        filters.push(filter_obj.clone_ref(py));
+        Ok(())
+    }
+
+    /// Remove a filter from this logger.
+    fn removeFilter(&self, py: Python, filter_obj: &Bound<PyAny>) -> PyResult<()> {
+        let mut filters = self.filters.lock().unwrap();
+        filters.retain(|f| !f.bind(py).is(filter_obj));
+        Ok(())
     }
 
     fn format_message(&self, py: Python, msg: Py<PyAny>, args: &Bound<PyAny>) -> PyResult<String> {

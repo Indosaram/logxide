@@ -114,74 +114,43 @@ class HTTPHandler(logging.Handler):
         self._inner.shutdown()
         super().close()
 
+    def setFlushLevel(self, level):
+        """
+        Set the flush level. Records at or above this level trigger immediate flush.
+        Default is ERROR (40).
+        
+        Args:
+            level: Log level (e.g., logging.ERROR, logging.CRITICAL)
+        """
+        self._inner.setFlushLevel(level)
 
-class MemoryHandler(logging.Handler):
-    """
-    High-performance memory handler for testing and log capture.
-    Stores records in Rust native memory for maximum performance.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self._inner = logxide.MemoryHandler()
-
-    def setLevel(self, level):
-        super().setLevel(level)
-        self._inner.setLevel(level)
-
-    def emit(self, record):
-        pass
-
-    def get_records(self):
-        """Returns all captured records as a list."""
-        return self._inner.getRecords()
-
-    def clear(self):
-        """Clears all captured records."""
-        self._inner.clear()
-
-    def flush(self):
-        pass
-
-    def close(self):
-        super().close()
-
+    def getFlushLevel(self):
+        """
+        Get the current flush level.
+        
+        Returns:
+            int: Current flush level (e.g., 40 for ERROR)
+        """
+        return self._inner.getFlushLevel()
 
 class OTLPHandler(logging.Handler):
     """
-    High-performance OpenTelemetry OTLP (protobuf) handler with batching and background transmission.
-    Compatible with OTLP (OpenTelemetry Protocol) receivers.
-
+    High-performance OTLP (OpenTelemetry) handler for log export.
+    
     Args:
-        url: OTLP HTTP endpoint URL (e.g., "http://localhost:4318/v1/logs")
-        headers: HTTP headers dict (e.g., {"Authorization": "Bearer token"})
-        service_name: Service name for OTLP resource attribute (default: "unknown_service")
-        capacity: Max buffer capacity (default: 10000)
-        batch_size: Records per batch (default: 1000)
-        flush_interval: Seconds between auto-flush (default: 30)
-        error_callback: Callable(error_msg) for HTTP failure handling
+        url: OTLP endpoint URL (e.g., http://localhost:4318/v1/logs)
+        service_name: Service name for OTLP logs
+        headers: Optional HTTP headers dict
     """
 
     def __init__(
         self,
         url,
+        service_name,
         headers=None,
-        service_name="unknown_service",
-        capacity=10000,
-        batch_size=1000,
-        flush_interval=30,
-        error_callback=None,
     ):
         super().__init__()
-        self._inner = logxide.OTLPHandler(
-            url,
-            headers=headers,
-            service_name=service_name,
-            capacity=capacity,
-            batch_size=batch_size,
-            flush_interval=flush_interval,
-            error_callback=error_callback,
-        )
+        self._inner = logxide.OTLPHandler(url, service_name, headers=headers)
 
     def setLevel(self, level):
         super().setLevel(level)
@@ -202,6 +171,11 @@ class MemoryHandler(logging.Handler):
     """
     High-performance memory handler for testing and log capture.
     Stores records in Rust native memory for maximum performance.
+    
+    Provides pytest caplog-compatible properties:
+    - `.records`: List of LogRecord objects
+    - `.text`: All messages joined with newlines
+    - `.record_tuples`: List of (logger_name, level, message) tuples
     """
 
     def __init__(self):
@@ -216,11 +190,45 @@ class MemoryHandler(logging.Handler):
         pass
 
     def get_records(self):
-        """Returns all captured records as a list."""
-        return self._inner.getRecords()
+        """Returns all captured records as a list (deprecated: use .records property)."""
+        return self._inner.records
+
+    @property
+    def records(self):
+        """
+        All captured log records.
+        
+        Returns:
+            List of LogRecord objects.
+        """
+        return self._inner.records
+
+    @property
+    def text(self):
+        """
+        All captured log messages as a single newline-separated string.
+        
+        Compatible with pytest caplog.text.
+        
+        Returns:
+            str: All messages joined with newlines.
+        """
+        return self._inner.text
+
+    @property
+    def record_tuples(self):
+        """
+        Captured records as tuples.
+        
+        Compatible with pytest caplog.record_tuples.
+        
+        Returns:
+            List of (logger_name, level_number, message) tuples.
+        """
+        return self._inner.record_tuples
 
     def clear(self):
-        """Clears all captured records."""
+        """Clear all captured records."""
         self._inner.clear()
 
     def flush(self):
