@@ -91,36 +91,6 @@ class TestCaptureWarnings:
         captureWarnings(False)
         assert True
 
-    @pytest.mark.skip(
-        reason="Warning capture requires deeper stdlib logging integration"
-    )
-    def test_captureWarnings_with_actual_warning(self):
-        """Test that warnings are actually captured."""
-        import io
-
-        from logxide import Formatter, StreamHandler
-
-        # Create a handler to capture the warning
-        stream = io.StringIO()
-        handler = StreamHandler(stream)
-        handler.setFormatter(Formatter("%(levelname)s:%(name)s:%(message)s"))
-
-        # Get the warnings logger and add our handler
-        warnings_logger = logging.getLogger("py.warnings")
-        warnings_logger.addHandler(handler)
-        warnings_logger.setLevel(logging.WARNING)
-
-        captureWarnings(True)
-        try:
-            warnings.warn("Test warning message", stacklevel=2)
-            logging.flush()
-            output = stream.getvalue()
-            # Warning should have been captured by logging
-            assert "Test warning message" in output or len(output) > 0
-        finally:
-            captureWarnings(False)
-            warnings_logger.removeHandler(handler)
-
 
 class TestMakeLogRecord:
     """Test makeLogRecord function."""

@@ -36,18 +36,6 @@ class TestHandlerOutput:
 
         logxide.clear_handlers()
 
-    @pytest.mark.skip(
-        reason="StringIO not supported - LogXide uses Rust native handlers that write to OS streams"
-    )
-    def test_stream_handler_writes_to_stream(self):
-        """Verify StreamHandler actually writes to the target stream (via basicConfig).
-
-        Note: LogXide Rust native handlers write directly to OS-level stdout/stderr,
-        not Python-level sys.stdout/sys.stderr, so StringIO capture doesn't work.
-        Use file-based logging for testable output.
-        """
-        pass
-
     def test_file_handler_writes_to_file(self):
         """Verify FileHandler actually writes to a file (via basicConfig)."""
         import time
@@ -97,78 +85,6 @@ class TestHandlerOutput:
             if os.path.exists(temp_file):
                 os.unlink(temp_file)
 
-    @pytest.mark.skip(
-        reason="NullHandler cannot be tested with basicConfig - LogXide uses internal handlers"
-    )
-    def test_null_handler_produces_no_output(self):
-        """Verify NullHandler doesn't write anything.
-
-        Note: LogXide uses Rust native handlers internally and doesn't support
-        adding custom Python handlers. This test is skipped as NullHandler
-        behavior is tested internally.
-        """
-        pass
-
-    @pytest.mark.skip(
-        reason="Multiple handlers not supported - LogXide uses single internal Rust handler"
-    )
-    def test_multiple_handlers_all_receive_logs(self):
-        """Verify multiple handlers all receive the same log messages.
-
-        Note: LogXide uses a single Rust native handler internally and doesn't support
-        adding multiple custom Python handlers. This test is skipped.
-        """
-        pass
-
-    @pytest.mark.skip(
-        reason="Handler-level filtering not supported - LogXide uses logger-level filtering only"
-    )
-    def test_handler_level_filtering(self):
-        """Verify handler-level filtering works correctly.
-
-        Note: LogXide uses a single Rust native handler internally and doesn't support
-        per-handler level filtering. Use logger.setLevel() instead.
-        """
-        pass
-
-    @pytest.mark.skip(
-        reason="Custom formatters not supported - LogXide uses internal Rust formatters"
-    )
-    def test_formatter_with_all_fields(self):
-        """Verify formatter can access and format all record fields.
-
-        Note: LogXide uses Rust native formatters internally. Use basicConfig(format=...) instead.
-        """
-        pass
-
-    @pytest.mark.skip(
-        reason="Custom formatters with extra fields not supported via addHandler"
-    )
-    def test_structured_logging_with_extra(self):
-        """Verify extra parameters are captured and can be logged.
-
-        Note: LogXide supports extra fields but custom formatters must be configured via basicConfig.
-        """
-        pass
-
-    @pytest.mark.skip(
-        reason="Custom handlers not supported - LogXide uses basicConfig only"
-    )
-    def test_message_formatting_with_args(self):
-        """Verify % style message formatting works correctly.
-
-        Note: Message formatting works but handler setup via addHandler is not supported.
-        """
-        pass
-
-    @pytest.mark.skip(reason="Exception logging with custom handlers not supported")
-    def test_exception_logging_captures_traceback(self):
-        """Verify exception() method captures and logs traceback.
-
-        Note: LogXide supports exception logging but requires basicConfig for handler setup.
-        """
-        pass
-
     def test_basicConfig_creates_working_handler(self):
         """Verify basicConfig creates a handler that actually works."""
         from logxide import logging
@@ -202,12 +118,3 @@ class TestHandlerOutput:
         finally:
             if os.path.exists(temp_file):
                 os.unlink(temp_file)
-
-    @pytest.mark.skip(reason="Concurrent logging with custom handlers not supported")
-    def test_concurrent_logging_to_same_file(self):
-        """Verify concurrent logging to the same file works without corruption.
-
-        Note: LogXide handles concurrent logging internally with Rust handlers.
-        This test is skipped as it requires custom handler setup via addHandler.
-        """
-        pass

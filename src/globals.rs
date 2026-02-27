@@ -14,6 +14,7 @@ use once_cell::sync::Lazy;
 use crate::core::{get_logger as core_get_logger, get_root_logger, LogLevel};
 use crate::fast_logger;
 use crate::handler::{FileHandler, HTTPHandler, Handler, OverflowStrategy, RotatingFileHandler};
+use crate::formatter::PythonFormatter;
 use crate::py_handlers::{
     PyFileHandler, PyHTTPHandler, PyMemoryHandler, PyOTLPHandler, PyRotatingFileHandler,
     PyStreamHandler,
@@ -121,8 +122,14 @@ pub fn clear_handlers(_py: Python) -> PyResult<()> {
 }
 
 #[pyfunction(name = "register_file_handler")]
-#[pyo3(signature = (filename, level=None))]
-pub fn register_file_handler(_py: Python, filename: String, level: Option<u32>) -> PyResult<()> {
+#[pyo3(signature = (filename, level=None, format=None, datefmt=None))]
+pub fn register_file_handler(
+    _py: Python,
+    filename: String,
+    level: Option<u32>,
+    format: Option<String>,
+    datefmt: Option<String>,
+) -> PyResult<()> {
     use pyo3::exceptions::PyValueError;
 
     let log_level = LogLevel::from_usize(level.unwrap_or(10) as usize);
@@ -131,6 +138,16 @@ pub fn register_file_handler(_py: Python, filename: String, level: Option<u32>) 
         .map_err(|e| PyValueError::new_err(format!("Failed to create file handler: {}", e)))?;
 
     handler.set_level(log_level);
+
+    // Set formatter if format string is provided
+    if let Some(fmt) = format {
+        let formatter = match datefmt {
+            Some(df) => PythonFormatter::with_date_format(fmt, df),
+            None => PythonFormatter::new(fmt),
+        };
+        handler.set_formatter_instance(Arc::new(formatter));
+    }
+
     HANDLERS.lock().unwrap().push(Arc::new(handler));
     Ok(())
 }
@@ -158,15 +175,26 @@ pub fn register_rotating_file_handler(
 }
 
 #[pyfunction(name = "register_stream_handler")]
-#[pyo3(signature = (stream=None, level=None))]
+#[pyo3(signature = (stream=None, level=None, format=None, datefmt=None))]
 pub fn register_stream_handler(
     _py: Python,
     stream: Option<&Bound<PyAny>>,
     level: Option<u32>,
+    format: Option<String>,
+    datefmt: Option<String>,
 ) -> PyResult<()> {
     use pyo3::exceptions::PyValueError;
 
     let log_level = LogLevel::from_usize(level.unwrap_or(10) as usize);
+
+    // Create formatter if format string is provided
+    let formatter: Option<Arc<dyn crate::formatter::Formatter + Send + Sync>> = format.map(|fmt| {
+        let f: Arc<dyn crate::formatter::Formatter + Send + Sync> = match datefmt {
+            Some(df) => Arc::new(PythonFormatter::with_date_format(fmt, df)),
+            None => Arc::new(PythonFormatter::new(fmt)),
+        };
+        f
+    });
 
     if let Some(stream_obj) = stream {
         // Try to extract as string first
@@ -182,18 +210,27 @@ pub fn register_stream_handler(
                 }
             };
             handler.set_level(log_level);
+            if let Some(ref f) = formatter {
+                handler.set_formatter_instance(f.clone());
+            }
             HANDLERS.lock().unwrap().push(Arc::new(handler));
         } else {
             // For Python file-like objects, we use stderr as fallback
             // since we don't have PythonStreamHandler anymore
             let handler = crate::handler::StreamHandler::stderr();
             handler.set_level(log_level);
+            if let Some(ref f) = formatter {
+                handler.set_formatter_instance(f.clone());
+            }
             HANDLERS.lock().unwrap().push(Arc::new(handler));
         }
     } else {
         // Default to stderr
         let handler = crate::handler::StreamHandler::stderr();
         handler.set_level(log_level);
+        if let Some(ref f) = formatter {
+            handler.set_formatter_instance(f.clone());
+        }
         HANDLERS.lock().unwrap().push(Arc::new(handler));
     }
 

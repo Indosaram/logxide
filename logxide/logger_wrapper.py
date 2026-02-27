@@ -80,23 +80,27 @@ def basicConfig(**kwargs):
     stream = kwargs.get("stream")
     filename = kwargs.get("filename")
 
+    # Get format parameters
+    fmt = kwargs.get("format")
+    datefmt = kwargs.get("datefmt")
+
     # Register appropriate Rust native handler
     if filename:
         # File handler
-        logxide_module.logging.register_file_handler(filename, level)
+        logxide_module.logging.register_file_handler(filename, level, fmt, datefmt)
     else:
         # Stream handler (stdout, stderr, or Python object like StringIO)
         if stream is None:
             # Default to stderr
-            logxide_module.logging.register_stream_handler("stderr", level)
+            logxide_module.logging.register_stream_handler("stderr", level, fmt, datefmt)
         elif stream is sys.stdout:
-            logxide_module.logging.register_stream_handler("stdout", level)
+            logxide_module.logging.register_stream_handler("stdout", level, fmt, datefmt)
         elif stream is sys.stderr:
-            logxide_module.logging.register_stream_handler("stderr", level)
+            logxide_module.logging.register_stream_handler("stderr", level, fmt, datefmt)
         else:
             # Python file-like object (StringIO, file, etc.)
             # Pass the Python object directly to Rust
-            logxide_module.logging.register_stream_handler(stream, level)
+            logxide_module.logging.register_stream_handler(stream, level, fmt, datefmt)
 
     # Set root logger level
     root_logger = getLogger()
