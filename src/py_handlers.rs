@@ -182,10 +182,10 @@ fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
             .unwrap_or(Value::Null)
     } else if let Ok(s) = obj.extract::<String>() {
         Value::String(s)
-    } else if let Ok(list) = obj.downcast::<PyList>() {
+    } else if let Ok(list) = obj.cast::<PyList>() {
         let arr: Vec<Value> = list.iter().map(|item| py_to_json_value(&item)).collect();
         Value::Array(arr)
-    } else if let Ok(dict) = obj.downcast::<PyDict>() {
+    } else if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             if let Ok(key) = k.extract::<String>() {

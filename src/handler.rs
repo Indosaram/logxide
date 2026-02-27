@@ -368,12 +368,12 @@ impl HTTPHandler {
 
         let batch = std::mem::take(buffer);
 
-        let json_payload: Value = Python::with_gil(|py| {
+        let json_payload: Value = Python::attach(|py| {
             let dynamic_context: HashMap<String, Value> = context_provider
                 .as_ref()
                 .and_then(|cb| {
                     cb.call0(py).ok().and_then(|result| {
-                        let dict = result.downcast_bound::<PyDict>(py).ok()?;
+                        let dict = result.cast_bound::<PyDict>(py).ok()?;
                         let mut map = HashMap::new();
                         for (k, v) in dict.iter() {
                             if let Ok(key) = k.extract::<String>() {
@@ -451,7 +451,7 @@ impl HTTPHandler {
 
         if let Err(e) = result {
             if let Some(ref cb) = error_callback {
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     let _ = cb.call1(py, (e.to_string(),));
                 });
             }
@@ -498,10 +498,10 @@ fn py_to_value(obj: &Bound<PyAny>) -> Value {
             .unwrap_or(Value::Null)
     } else if let Ok(s) = obj.extract::<String>() {
         Value::String(s)
-    } else if let Ok(list) = obj.downcast::<PyList>() {
+    } else if let Ok(list) = obj.cast::<PyList>() {
         let arr: Vec<Value> = list.iter().map(|item| py_to_value(&item)).collect();
         Value::Array(arr)
-    } else if let Ok(dict) = obj.downcast::<PyDict>() {
+    } else if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             if let Ok(key) = k.extract::<String>() {
@@ -754,7 +754,7 @@ impl OTLPHandler {
 
         if let Err(e) = result {
             if let Some(ref cb) = error_callback {
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     let _ = cb.call1(py, (e.to_string(),));
                 });
             }

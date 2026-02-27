@@ -52,6 +52,10 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
         globals::register_rotating_file_handler,
         &logging_module
     )?)?;
+    logging_module.add_function(wrap_pyfunction!(
+        globals::register_stream_handler,
+        &logging_module
+    )?)?;
     m.add_submodule(&logging_module)?;
 
     m.add_class::<PyLogger>()?;
@@ -75,5 +79,6 @@ fn logxide(_py: Python, m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
         globals::register_rotating_file_handler,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(globals::register_stream_handler, m)?)?;
     Ok(())
 }
