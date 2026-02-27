@@ -46,6 +46,9 @@ Documentation = "https://Indosaram.readthedocs.io/logxide"
 Changelog = "https://github.com/Indosaram/logxide/blob/main/CHANGELOG.md"
 "Source Code" = "https://github.com/Indosaram/logxide"
 
+[project.entry-points.pytest11]
+logxide = "logxide.pytest_plugin"
+
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"

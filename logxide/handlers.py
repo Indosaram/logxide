@@ -10,9 +10,13 @@ from . import logxide
 
 class FileHandler(logging.FileHandler):
     def __init__(self, filename, mode="a", encoding=None, delay=False, errors=None):
-        super().__init__(filename, mode, encoding, delay, errors)
-        self.close()
+        # Initialize inner handler first (before parent creates file handle)
         self._inner = logxide.FileHandler(filename)
+        super().__init__(filename, mode, encoding, delay, errors)
+        # Close parent's file handle since we use Rust handler
+        if hasattr(self, 'stream') and self.stream:
+            self.stream.close()
+            self.stream = None
 
     def setLevel(self, level):
         super().setLevel(level)
@@ -20,6 +24,29 @@ class FileHandler(logging.FileHandler):
 
     def emit(self, record):
         pass
+
+    def setFlushLevel(self, level):
+        """
+        Set the flush level. Records at or above this level trigger immediate flush.
+        Default is ERROR (40).
+        """
+        self._inner.setFlushLevel(level)
+
+    def getFlushLevel(self):
+        """
+        Get the current flush level.
+        """
+        return self._inner.getFlushLevel()
+
+    def setErrorCallback(self, callback):
+        """
+        Set error callback for write failures.
+        """
+        self._inner.setErrorCallback(callback)
+
+    def flush(self):
+        """Flush the handler."""
+        self._inner.flush()
 
 
 class StreamHandler(logging.StreamHandler):
@@ -35,6 +62,12 @@ class StreamHandler(logging.StreamHandler):
     def emit(self, record):
         pass
 
+    def setErrorCallback(self, callback):
+        """
+        Set error callback for write failures.
+        """
+        self._inner.setErrorCallback(callback)
+
 
 class RotatingFileHandler(logging.handlers.RotatingFileHandler):
     def __init__(
@@ -47,9 +80,13 @@ class RotatingFileHandler(logging.handlers.RotatingFileHandler):
         delay=False,
         errors=None,
     ):
-        super().__init__(filename, mode, maxBytes, backupCount, encoding, delay)
-        self.close()
+        # Initialize inner handler first (before parent creates file handle)
         self._inner = logxide.RotatingFileHandler(filename, maxBytes, backupCount)
+        super().__init__(filename, mode, maxBytes, backupCount, encoding, delay)
+        # Close parent's file handle since we use Rust handler
+        if hasattr(self, 'stream') and self.stream:
+            self.stream.close()
+            self.stream = None
 
     def setLevel(self, level):
         super().setLevel(level)
@@ -57,6 +94,29 @@ class RotatingFileHandler(logging.handlers.RotatingFileHandler):
 
     def emit(self, record):
         pass
+
+    def setFlushLevel(self, level):
+        """
+        Set the flush level. Records at or above this level trigger immediate flush.
+        Default is ERROR (40).
+        """
+        self._inner.setFlushLevel(level)
+
+    def getFlushLevel(self):
+        """
+        Get the current flush level.
+        """
+        return self._inner.getFlushLevel()
+
+    def setErrorCallback(self, callback):
+        """
+        Set error callback for write failures.
+        """
+        self._inner.setErrorCallback(callback)
+
+    def flush(self):
+        """Flush the handler."""
+        self._inner.flush()
 
 
 class HTTPHandler(logging.Handler):

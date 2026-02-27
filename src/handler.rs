@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -34,6 +34,7 @@ pub struct StreamHandler {
     stream: Mutex<StreamDestination>,
     level: AtomicU8,
     formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
+    error_callback: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -48,6 +49,7 @@ impl StreamHandler {
             stream: Mutex::new(StreamDestination::Stdout),
             level: AtomicU8::new(LogLevel::Debug as u8),
             formatter: Mutex::new(None),
+            error_callback: Mutex::new(None),
         }
     }
 
@@ -56,11 +58,26 @@ impl StreamHandler {
             stream: Mutex::new(StreamDestination::Stderr),
             level: AtomicU8::new(LogLevel::Debug as u8),
             formatter: Mutex::new(None),
+            error_callback: Mutex::new(None),
         }
     }
 
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Set an error callback for this handler.
+    pub fn set_error_callback(&self, callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {
+        *self.error_callback.lock().unwrap() = callback;
+    }
+
+    /// Report an error via callback and stderr.
+    #[allow(dead_code)]
+    fn report_error(&self, msg: String) {
+        if let Some(cb) = self.error_callback.lock().unwrap().as_ref() {
+            cb(msg.clone());
+        }
+        eprintln!("[LogXide Error] {}", msg);
     }
 
     /// Set a formatter for this handler.
@@ -109,7 +126,9 @@ impl Handler for StreamHandler {
 pub struct FileHandler {
     writer: Mutex<BufWriter<File>>,
     level: AtomicU8,
+    flush_level: AtomicU8,
     formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
+    error_callback: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
 }
 
 impl FileHandler {
@@ -118,12 +137,38 @@ impl FileHandler {
         Ok(Self {
             writer: Mutex::new(BufWriter::new(f)),
             level: AtomicU8::new(LogLevel::Debug as u8),
+            flush_level: AtomicU8::new(LogLevel::Error as u8),
             formatter: Mutex::new(None),
+            error_callback: Mutex::new(None),
         })
     }
 
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Set the flush level. Records at or above this level trigger immediate flush.
+    /// Default is ERROR (40).
+    pub fn set_flush_level(&self, level: LogLevel) {
+        self.flush_level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Get the current flush level.
+    pub fn get_flush_level(&self) -> u8 {
+        self.flush_level.load(Ordering::Relaxed)
+    }
+
+    /// Set an error callback for this handler.
+    pub fn set_error_callback(&self, callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {
+        *self.error_callback.lock().unwrap() = callback;
+    }
+
+    /// Report an error via callback and stderr.
+    fn report_error(&self, msg: String) {
+        if let Some(cb) = self.error_callback.lock().unwrap().as_ref() {
+            cb(msg.clone());
+        }
+        eprintln!("[LogXide Error] {}", msg);
     }
 
     /// Set a formatter for this handler.
@@ -151,12 +196,24 @@ impl Handler for FileHandler {
         }
         let output = self.format_record(record);
         let mut w = self.writer.lock().unwrap();
-        let _ = writeln!(w, "{}", output);
-        let _ = w.flush();
+        if let Err(e) = writeln!(w, "{}", output) {
+            self.report_error(format!("FileHandler write failed: {}", e));
+        }
+        
+        // Level-based flush: only flush if record level >= flush_level
+        let flush_level = self.flush_level.load(Ordering::Relaxed);
+        if record.levelno >= flush_level as i32 {
+            if let Err(e) = w.flush() {
+                self.report_error(format!("FileHandler flush failed: {}", e));
+            }
+        }
     }
 
     async fn flush(&self) {
-        let _ = self.writer.lock().unwrap().flush();
+        // Manual flush always executes regardless of flush_level
+        if let Err(e) = self.writer.lock().unwrap().flush() {
+            self.report_error(format!("FileHandler flush failed: {}", e));
+        }
     }
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
@@ -166,27 +223,168 @@ impl Handler for FileHandler {
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
+/// A handler that writes log records to a file with size-based rotation.
+///
+/// When the log file exceeds `max_bytes`, it rotates:
+/// - app.log -> app.log.1
+/// - app.log.1 -> app.log.2
+/// - ... up to backup_count
 pub struct RotatingFileHandler {
     filename: PathBuf,
-    #[allow(dead_code)] // TODO: implement rotation logic
     max_bytes: u64,
-    #[allow(dead_code)] // TODO: implement rotation logic
     backup_count: u32,
     level: AtomicU8,
+    flush_level: AtomicU8,
+    writer: Mutex<BufWriter<File>>,
+    current_size: AtomicU64,
+    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
+    error_callback: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
 }
+
 impl RotatingFileHandler {
-    pub fn new(filename: String, max_bytes: u64, backup_count: u32) -> Self {
-        Self {
-            filename: PathBuf::from(filename),
+    pub fn new(filename: String, max_bytes: u64, backup_count: u32) -> std::io::Result<Self> {
+        let path = PathBuf::from(&filename);
+        
+        // Get initial file size if exists
+        let current_size = std::fs::metadata(&path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        
+        // Open file for appending
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+        
+        Ok(Self {
+            filename: path,
             max_bytes,
             backup_count,
             level: AtomicU8::new(LogLevel::Debug as u8),
-        }
+            flush_level: AtomicU8::new(LogLevel::Error as u8),
+            writer: Mutex::new(BufWriter::new(file)),
+            current_size: AtomicU64::new(current_size),
+            formatter: Mutex::new(None),
+            error_callback: Mutex::new(None),
+        })
     }
+
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
     }
+
+    /// Set the flush level. Records at or above this level trigger immediate flush.
+    pub fn set_flush_level(&self, level: LogLevel) {
+        self.flush_level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Get the current flush level.
+    pub fn get_flush_level(&self) -> u8 {
+        self.flush_level.load(Ordering::Relaxed)
+    }
+
+    /// Set a formatter for this handler.
+    pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        *self.formatter.lock().unwrap() = Some(formatter);
+    }
+
+    /// Set an error callback for this handler.
+    pub fn set_error_callback(&self, callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {
+        *self.error_callback.lock().unwrap() = callback;
+    }
+
+    /// Report an error via callback and stderr.
+    fn report_error(&self, msg: String) {
+        if let Some(cb) = self.error_callback.lock().unwrap().as_ref() {
+            cb(msg.clone());
+        }
+        eprintln!("[LogXide Error] {}", msg);
+    }
+
+    /// Format a record using the configured formatter, or return the raw message.
+    fn format_record(&self, record: &LogRecord) -> String {
+        if let Some(ref formatter) = *self.formatter.lock().unwrap() {
+            formatter.format(record)
+        } else {
+            record.msg.clone()
+        }
+    }
+
+    /// Check if rotation is needed based on current size and message size.
+    fn should_rotate(&self, message_bytes: usize) -> bool {
+        let current = self.current_size.load(Ordering::Relaxed);
+        current + message_bytes as u64 > self.max_bytes && self.max_bytes > 0
+    }
+
+    /// Generate backup filename for given index (e.g., app.log.1, app.log.2)
+    fn backup_filename(&self, index: u32) -> PathBuf {
+        let mut path = self.filename.clone();
+        let filename = path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("app.log");
+        path.set_file_name(format!("{}.{}", filename, index));
+        path
+    }
+
+    /// Perform rotation while holding the writer lock.
+    /// IMPORTANT: This method assumes the caller already holds the writer lock.
+    fn do_rotation_locked(&self, writer: &mut BufWriter<File>) {
+        // Flush before rotation
+        let _ = writer.flush();
+
+        // Handle backup_count=0: just truncate, no backups
+        if self.backup_count == 0 {
+            if let Ok(f) = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&self.filename)
+            {
+                *writer = BufWriter::new(f);
+                self.current_size.store(0, Ordering::Relaxed);
+            }
+            return;
+        }
+
+        // Delete excess backup files (if they exist beyond backup_count)
+        for i in self.backup_count..self.backup_count + 10 {
+            let path = self.backup_filename(i);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            } else {
+                break;
+            }
+        }
+
+        // Rotate existing backups: .N -> .N+1 (in reverse order)
+        for i in (1..self.backup_count).rev() {
+            let src = self.backup_filename(i);
+            let dst = self.backup_filename(i + 1);
+            if src.exists() {
+                let _ = std::fs::rename(&src, &dst);
+            }
+        }
+
+        // Rename current file to .1
+        let _ = std::fs::rename(&self.filename, self.backup_filename(1));
+
+        // Create new file
+        match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.filename)
+        {
+            Ok(f) => {
+                *writer = BufWriter::new(f);
+                self.current_size.store(0, Ordering::Relaxed);
+            }
+            Err(e) => {
+                self.report_error(format!("RotatingFileHandler: failed to create new file: {}", e));
+            }
+        }
+    }
 }
+
 #[async_trait]
 impl Handler for RotatingFileHandler {
     async fn emit(&self, record: &LogRecord) {
@@ -194,17 +392,45 @@ impl Handler for RotatingFileHandler {
         if record.levelno < level as i32 {
             return;
         }
-        if let Ok(f) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.filename)
-        {
-            let mut w = BufWriter::new(f);
-            let _ = writeln!(w, "{}", record.msg);
+
+        // Format BEFORE acquiring lock to minimize lock time
+        let output = self.format_record(record);
+        let message_bytes = output.len() + 1; // +1 for newline
+
+        // Acquire writer lock
+        let mut writer = self.writer.lock().unwrap();
+
+        // Double-check rotation (TOCTOU prevention)
+        if self.should_rotate(message_bytes) {
+            self.do_rotation_locked(&mut writer);
+        }
+
+        // Write message
+        if let Err(e) = writeln!(writer, "{}", output) {
+            self.report_error(format!("RotatingFileHandler write failed: {}", e));
+        } else {
+            self.current_size.fetch_add(message_bytes as u64, Ordering::Relaxed);
+        }
+
+        // Level-based flush
+        let flush_level = self.flush_level.load(Ordering::Relaxed);
+        if record.levelno >= flush_level as i32 {
+            if let Err(e) = writer.flush() {
+                self.report_error(format!("RotatingFileHandler flush failed: {}", e));
+            }
         }
     }
-    async fn flush(&self) {}
-    fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
+
+    async fn flush(&self) {
+        if let Err(e) = self.writer.lock().unwrap().flush() {
+            self.report_error(format!("RotatingFileHandler flush failed: {}", e));
+        }
+    }
+
+    fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
+        *self.formatter.lock().unwrap() = Some(formatter);
+    }
+
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 

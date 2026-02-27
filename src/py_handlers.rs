@@ -114,6 +114,45 @@ impl PyFileHandler {
         self.inner.set_level(LogLevel::from_usize(level as usize));
         Ok(())
     }
+
+    /// Set the flush level. Records at or above this level trigger immediate flush.
+    /// Default is ERROR (40).
+    #[pyo3(name = "setFlushLevel")]
+    fn set_flush_level(&self, level: u32) -> PyResult<()> {
+        self.inner.set_flush_level(LogLevel::from_usize(level as usize));
+        Ok(())
+    }
+
+    /// Get the current flush level.
+    #[pyo3(name = "getFlushLevel")]
+    fn get_flush_level(&self) -> PyResult<u32> {
+        Ok(self.inner.get_flush_level() as u32)
+    }
+
+    /// Set an error callback function.
+    #[pyo3(name = "setErrorCallback")]
+    fn set_error_callback(&self, py: Python, callback: Option<Py<PyAny>>) -> PyResult<()> {
+        match callback {
+            Some(cb) => {
+                let cb = cb.clone_ref(py);
+                self.inner.set_error_callback(Some(Arc::new(move |msg: String| {
+                    Python::attach(|py| {
+                        let _ = cb.call1(py, (msg,));
+                    });
+                })));
+            }
+            None => {
+                self.inner.set_error_callback(None);
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> PyResult<()> {
+        use crate::handler::Handler;
+        futures::executor::block_on(self.inner.flush());
+        Ok(())
+    }
 }
 
 #[pyclass(name = "StreamHandler")]
@@ -137,6 +176,25 @@ impl PyStreamHandler {
         self.inner.set_level(LogLevel::from_usize(level as usize));
         Ok(())
     }
+
+    /// Set an error callback function.
+    #[pyo3(name = "setErrorCallback")]
+    fn set_error_callback(&self, py: Python, callback: Option<Py<PyAny>>) -> PyResult<()> {
+        match callback {
+            Some(cb) => {
+                let cb = cb.clone_ref(py);
+                self.inner.set_error_callback(Some(Arc::new(move |msg: String| {
+                    Python::attach(|py| {
+                        let _ = cb.call1(py, (msg,));
+                    });
+                })));
+            }
+            None => {
+                self.inner.set_error_callback(None);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[pyclass(name = "RotatingFileHandler")]
@@ -149,13 +207,51 @@ impl PyRotatingFileHandler {
     #[new]
     #[pyo3(signature = (filename, max_bytes=10485760, backup_count=5))]
     fn new(filename: String, max_bytes: u64, backup_count: u32) -> PyResult<Self> {
-        Ok(Self {
-            inner: Arc::new(RotatingFileHandler::new(filename, max_bytes, backup_count)),
-        })
+        let h = RotatingFileHandler::new(filename, max_bytes, backup_count)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner: Arc::new(h) })
     }
 
     fn setLevel(&self, level: u32) -> PyResult<()> {
         self.inner.set_level(LogLevel::from_usize(level as usize));
+        Ok(())
+    }
+
+    /// Set the flush level. Records at or above this level trigger immediate flush.
+    #[pyo3(name = "setFlushLevel")]
+    fn set_flush_level(&self, level: u32) -> PyResult<()> {
+        self.inner.set_flush_level(LogLevel::from_usize(level as usize));
+        Ok(())
+    }
+
+    /// Get the current flush level.
+    #[pyo3(name = "getFlushLevel")]
+    fn get_flush_level(&self) -> PyResult<u32> {
+        Ok(self.inner.get_flush_level() as u32)
+    }
+
+    /// Set an error callback function.
+    #[pyo3(name = "setErrorCallback")]
+    fn set_error_callback(&self, py: Python, callback: Option<Py<PyAny>>) -> PyResult<()> {
+        match callback {
+            Some(cb) => {
+                let cb = cb.clone_ref(py);
+                self.inner.set_error_callback(Some(Arc::new(move |msg: String| {
+                    Python::attach(|py| {
+                        let _ = cb.call1(py, (msg,));
+                    });
+                })));
+            }
+            None => {
+                self.inner.set_error_callback(None);
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> PyResult<()> {
+        use crate::handler::Handler;
+        futures::executor::block_on(self.inner.flush());
         Ok(())
     }
 }
