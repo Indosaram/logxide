@@ -39,7 +39,7 @@ impl LogLevel {
 }
 
 /// Complete log record structure for compatibility with Python logging.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogRecord {
     #[pyo3(get, set)]

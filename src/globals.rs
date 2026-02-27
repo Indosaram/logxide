@@ -157,12 +157,55 @@ pub fn register_rotating_file_handler(
     Ok(())
 }
 
+#[pyfunction(name = "register_stream_handler")]
+#[pyo3(signature = (stream=None, level=None))]
+pub fn register_stream_handler(
+    _py: Python,
+    stream: Option<&Bound<PyAny>>,
+    level: Option<u32>,
+) -> PyResult<()> {
+    use pyo3::exceptions::PyValueError;
+
+    let log_level = LogLevel::from_usize(level.unwrap_or(10) as usize);
+
+    if let Some(stream_obj) = stream {
+        // Try to extract as string first
+        if let Ok(stream_str) = stream_obj.extract::<String>() {
+            // String path: "stdout" or "stderr"
+            let handler = match stream_str.as_str() {
+                "stdout" => crate::handler::StreamHandler::stdout(),
+                "stderr" => crate::handler::StreamHandler::stderr(),
+                _ => {
+                    return Err(PyValueError::new_err(
+                        "stream string must be 'stdout' or 'stderr'",
+                    ))
+                }
+            };
+            handler.set_level(log_level);
+            HANDLERS.lock().unwrap().push(Arc::new(handler));
+        } else {
+            // For Python file-like objects, we use stderr as fallback
+            // since we don't have PythonStreamHandler anymore
+            let handler = crate::handler::StreamHandler::stderr();
+            handler.set_level(log_level);
+            HANDLERS.lock().unwrap().push(Arc::new(handler));
+        }
+    } else {
+        // Default to stderr
+        let handler = crate::handler::StreamHandler::stderr();
+        handler.set_level(log_level);
+        HANDLERS.lock().unwrap().push(Arc::new(handler));
+    }
+
+    Ok(())
+}
+
 /// Helper function to add a handler to the appropriate registry
 pub fn add_handler_to_registry(
     handler: &Bound<PyAny>,
     logger_name: &str,
     local_handlers: &Mutex<Vec<Arc<dyn Handler + Send + Sync>>>,
-    local_python_handlers: &Mutex<Vec<PyObject>>,
+    local_python_handlers: &Mutex<Vec<Py<PyAny>>>,
 ) -> PyResult<bool> {
     let handler_arc: Option<Arc<dyn Handler + Send + Sync>> =
         if let Ok(file_handler) = handler.extract::<PyRef<PyFileHandler>>() {

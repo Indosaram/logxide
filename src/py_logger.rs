@@ -28,10 +28,10 @@ fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
             .unwrap_or(Value::Null)
     } else if let Ok(s) = obj.extract::<String>() {
         Value::String(s)
-    } else if let Ok(list) = obj.downcast::<PyList>() {
+    } else if let Ok(list) = obj.cast::<PyList>() {
         let arr: Vec<Value> = list.iter().map(|item| py_to_json_value(&item)).collect();
         Value::Array(arr)
-    } else if let Ok(dict) = obj.downcast::<PyDict>() {
+    } else if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             if let Ok(key) = k.str() {
@@ -46,13 +46,13 @@ fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 pub struct PyLogger {
     pub(crate) inner: Arc<Mutex<Logger>>,
     pub(crate) fast_logger: Arc<FastLogger>,
     pub(crate) local_handlers: Arc<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>>,
-    pub(crate) local_python_handlers: Arc<Mutex<Vec<PyObject>>>,
-    pub(crate) filters: Arc<Mutex<Vec<PyObject>>>,
+    pub(crate) local_python_handlers: Arc<Mutex<Vec<Py<PyAny>>>>,
+    pub(crate) filters: Arc<Mutex<Vec<Py<PyAny>>>>,
     pub(crate) propagate: Arc<Mutex<bool>>,
     pub(crate) parent: Arc<Mutex<Option<Py<PyAny>>>>,
     pub(crate) manager: Arc<Mutex<Option<Py<PyAny>>>>,
@@ -117,7 +117,7 @@ impl PyLogger {
     ) -> Option<HashMap<String, Value>> {
         kwargs.and_then(|dict| {
             if let Ok(Some(extra_bound)) = dict.get_item("extra") {
-                if let Ok(extra_dict) = extra_bound.downcast::<PyDict>() {
+                if let Ok(extra_dict) = extra_bound.cast::<PyDict>() {
                     let mut extra_map = HashMap::new();
                     for (key, value) in extra_dict.iter() {
                         if let Ok(key_str) = key.str() {
@@ -138,7 +138,7 @@ impl PyLogger {
     fn emit_record(&self, mut record: LogRecord) {
         // Apply Python callable filters before emission
         // Filters can modify the record (especially record.msg) and return False to suppress
-        let should_emit = Python::with_gil(|py| {
+        let should_emit = Python::attach(|py| {
             let filters = self.filters.lock().unwrap();
             for filter_obj in filters.iter() {
                 let filter_bound = filter_obj.bind(py);
@@ -235,7 +235,7 @@ impl PyLogger {
         }
 
         // 2. Handle Python handlers (like pytest's caplog)
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let local_py = self.local_python_handlers.lock().unwrap();
             let global_py = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
 
@@ -353,7 +353,7 @@ impl PyLogger {
     }
 
     fn filter(&self, record: Py<PyAny>) -> PyResult<bool> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let record_bound = record.bind(py);
             let rust_record = record_bound.extract::<LogRecord>()?;
             let inner_logger = self.inner.lock().unwrap();
@@ -416,7 +416,7 @@ impl PyLogger {
 
     fn format_message(&self, py: Python, msg: Py<PyAny>, args: &Bound<PyAny>) -> PyResult<String> {
         let msg_str = msg.bind(py);
-        if let Ok(args_tuple) = args.downcast::<PyTuple>() {
+        if let Ok(args_tuple) = args.cast::<PyTuple>() {
             if !args_tuple.is_empty() {
                 let formatted = msg_str.call_method1("__mod__", (args_tuple,))?;
                 return Ok(formatted.str()?.to_string());
@@ -620,7 +620,7 @@ impl PyLogger {
         msg: Py<PyAny>,
         args: Py<PyAny>,
         exc_info: Option<Py<PyAny>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let logging = py.import("logging")?;
         let log_record_cls = logging.getattr("LogRecord")?;
 
@@ -643,7 +643,7 @@ impl PyLogger {
     }
 
     fn handle(&self, record: Py<PyAny>) -> PyResult<()> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let handlers = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
             for handler in handlers.iter() {
                 let _ = handler.call_method1(py, "handle", (record.clone_ref(py),));
