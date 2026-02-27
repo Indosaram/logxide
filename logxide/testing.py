@@ -2,21 +2,39 @@
 LogXide Testing Utilities
 
 Provides pytest-compatible fixtures and utilities for capturing and testing log output.
-Designed to be a drop-in replacement for pytest's caplog fixture.
+Designed as an alternative to pytest's caplog fixture for logxide.
 
 Usage:
-    # In conftest.py
-    from logxide.testing import caplog
-
-    # Or use LogCaptureFixture directly
+    # In your conftest.py, add:
+    import pytest
+    from logxide import logging
     from logxide.testing import LogCaptureFixture
 
-    def test_example(caplog):
-        logger = logging.getLogger("test")
-        logger.info("Hello, World!")
+    @pytest.fixture
+    def caplog_logxide():
+        fixture = LogCaptureFixture()
+        fixture.set_level(logging.DEBUG)
+        yield fixture
+        fixture.clear()
 
-        assert "Hello, World!" in caplog.text
-        assert ("test", logging.INFO, "Hello, World!") in caplog.record_tuples
+    # Then use in tests:
+    def test_example(caplog_logxide):
+        logger = logging.getLogger("test")
+        logger.addHandler(caplog_logxide.handler)
+        logger.info("Hello!")
+
+        assert "Hello!" in caplog_logxide.text
+        assert ("test", 20, "Hello!") in caplog_logxide.record_tuples
+
+    # Or use capture_logs context manager directly (no conftest needed):
+    from logxide.testing import capture_logs
+
+    def test_example():
+        logger = logging.getLogger("test")
+        with capture_logs() as caplog:
+            logger.addHandler(caplog.handler)
+            logger.info("test")
+        assert "test" in caplog.text
 """
 
 from contextlib import contextmanager
@@ -24,6 +42,9 @@ from typing import Generator, List, Optional, Tuple
 
 from . import logxide as _logxide_ext
 from .handlers import MemoryHandler
+
+# Get logging module
+logging = _logxide_ext.logging
 
 
 class LogCaptureFixture:
@@ -38,8 +59,9 @@ class LogCaptureFixture:
 
     Example:
         fixture = LogCaptureFixture()
-        with fixture.at_level(logging.DEBUG):
-            logger.debug("test message")
+        logger = logging.getLogger("test")
+        logger.addHandler(fixture.handler)
+        logger.info("test message")
         assert "test message" in fixture.text
     """
 
@@ -105,12 +127,13 @@ class LogCaptureFixture:
         if self._handler is not None:
             self._handler.clear()
 
-    def set_level(self, level: int) -> None:
+    def set_level(self, level: int, logger: Optional[str] = None) -> None:
         """
         Set the minimum logging level for capture.
 
         Args:
             level: Logging level (e.g., logging.DEBUG, logging.INFO)
+            logger: Logger name (optional, for compatibility)
         """
         self._ensure_handler().setLevel(level)
 
@@ -129,7 +152,6 @@ class LogCaptureFixture:
             None
         """
         handler = self._ensure_handler()
-        # Store current level if possible
         try:
             old_level = handler._inner.level if hasattr(handler, "_inner") else None
         except:
@@ -155,26 +177,22 @@ def capture_logs(level: int = 10) -> Generator[LogCaptureFixture, None, None]:
         LogCaptureFixture with captured logs
 
     Example:
+        from logxide import logging
+        from logxide.testing import capture_logs
+
+        logger = logging.getLogger("mytest")
+        logger.setLevel(logging.DEBUG)
+
         with capture_logs(logging.INFO) as captured:
-            logger.info("test")
-        assert "test" in captured.text
+            logger.addHandler(captured.handler)
+            logger.info("test message")
+
+        assert "test message" in captured.text
     """
     fixture = LogCaptureFixture()
     fixture.set_level(level)
     yield fixture
-
-
-# Note: pytest fixture integration is deferred to avoid import conflicts.
-# When pytest imports this module, it may conflict with logxide's module replacement.
-# Users should define the caplog fixture in their conftest.py if needed:
-#
-# from logxide.testing import LogCaptureFixture
-#
-# @pytest.fixture
-# def caplog():
-#     fixture = LogCaptureFixture()
-#     yield fixture
-#     fixture.clear()
+    fixture.clear()
 
 
 __all__ = [
