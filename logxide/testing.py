@@ -120,37 +120,43 @@ class LogCaptureFixture:
         Returns:
             List of message strings.
         """
-        return [r.msg for r in self.records]
+        return [r.getMessage() for r in self.records]
 
     def clear(self) -> None:
         """Clear all captured records."""
         if self._handler is not None:
             self._handler.clear()
 
-    def set_level(self, level: int, logger: Optional[str] = None) -> None:
+    def set_level(self, level, logger: Optional[str] = None) -> None:
         """
         Set the minimum logging level for capture.
 
         Args:
-            level: Logging level (e.g., logging.DEBUG, logging.INFO)
+            level: Logging level (int or str, e.g., logging.DEBUG or 'DEBUG')
             logger: Logger name (optional, for compatibility)
         """
+        if isinstance(level, str):
+            import logging as _logging
+            level = getattr(_logging, level.upper())
         self._ensure_handler().setLevel(level)
 
     @contextmanager
     def at_level(
-        self, level: int, logger: Optional[str] = None
+        self, level, logger: Optional[str] = None
     ) -> Generator[None, None, None]:
         """
         Context manager to temporarily set capture level.
 
         Args:
-            level: Logging level to capture at
+            level: Logging level to capture at (int or str)
             logger: Logger name (currently ignored, captures all)
 
         Yields:
             None
         """
+        if isinstance(level, str):
+            import logging as _logging
+            level = getattr(_logging, level.upper())
         handler = self._ensure_handler()
         try:
             old_level = handler._inner.level if hasattr(handler, "_inner") else None
