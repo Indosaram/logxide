@@ -268,6 +268,11 @@ impl PyLogger {
                 }
             };
 
+            // Set exc_text on the Python LogRecord so stdlib Formatter.format() appends it
+            if let Some(ref exc_text) = record.exc_text {
+                let _ = py_record.bind(py).setattr("exc_text", exc_text.as_str());
+            }
+
             // Call local Python handlers
             for handler in local_py.iter() {
                 let b_handler = handler.bind(py);
@@ -571,34 +576,23 @@ impl PyLogger {
         let extra_fields = self.extract_extra_fields(kwargs);
         let msg_str = msg.bind(py).str()?.to_string();
         let serialized_args = self.serialize_args(py, args);
-        // For exception, eagerly format and append traceback
-        let mut formatted = if serialized_args.is_some() {
-            // Build a temp record to use get_message()
-            let mut temp = create_log_record_with_extra(
-                self.fast_logger.name.to_string(),
-                LogLevel::Error,
-                msg_str,
-                extra_fields.clone(),
-            );
-            temp.args = serialized_args;
-            temp.get_message()
-        } else {
-            msg_str
-        };
+
+        // Capture traceback separately — do NOT bake into msg
         let traceback = py
             .import("traceback")
             .and_then(|m| m.call_method0("format_exc"))
             .map(|s| s.to_string())
-            .unwrap_or_else(|_| "No traceback available".to_string());
-        formatted.push('\n');
-        formatted.push_str(&traceback);
-        let record = create_log_record_with_extra(
+            .ok()
+            .filter(|s| s != "NoneType: None\n" && !s.is_empty());
+
+        let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Error,
-            formatted,
+            msg_str,
             extra_fields,
         );
-        // args already consumed in formatting, record.args stays None
+        record.args = serialized_args;
+        record.exc_text = traceback;
         self.emit_record(record);
         Ok(())
     }

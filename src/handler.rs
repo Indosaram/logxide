@@ -1068,7 +1068,11 @@ impl MemoryHandler {
                 if let Some(ref fmt) = *formatter {
                     fmt.format(r)
                 } else {
-                    format!("{} {} {}\n", r.name, r.levelname, r.get_message())
+                    let mut s = format!("{} {} {}\n", r.name, r.levelname, r.get_message());
+                    if let Some(ref exc_text) = r.exc_text {
+                        s.push_str(exc_text);
+                    }
+                    s
                 }
             })
             .collect::<Vec<_>>()
