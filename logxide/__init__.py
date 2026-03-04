@@ -41,7 +41,7 @@ _check_python_version()
 
 from . import logxide
 
-__version__ = "0.1.9"
+__version__ = "0.1.10"
 
 from .compat_functions import (
     addLevelName,
