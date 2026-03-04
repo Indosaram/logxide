@@ -15,7 +15,7 @@ use crate::fast_logger::FastLogger;
 use crate::globals::{add_handler_to_registry, HANDLERS};
 use crate::handler::Handler;
 
-fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
+pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
     if obj.is_none() {
         Value::Null
     } else if let Ok(b) = obj.extract::<bool>() {
@@ -30,6 +30,9 @@ fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
         Value::String(s)
     } else if let Ok(list) = obj.cast::<PyList>() {
         let arr: Vec<Value> = list.iter().map(|item| py_to_json_value(&item)).collect();
+        Value::Array(arr)
+    } else if let Ok(tuple) = obj.cast::<PyTuple>() {
+        let arr: Vec<Value> = tuple.iter().map(|item| py_to_json_value(&item)).collect();
         Value::Array(arr)
     } else if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
@@ -250,13 +253,8 @@ impl PyLogger {
                 record.levelno,
                 record.pathname.clone(),
                 record.lineno as i32,
-                record.msg.clone().into_py_any(py).unwrap().into(),
-                record
-                    .args
-                    .clone()
-                    .into_py_any(py)
-                    .unwrap_or_else(|_| py.None())
-                    .into(),
+                record.get_message().into_py_any(py).expect("Failed to convert getMessage to PyAny").into(),
+                py.None().into(),
                 record
                     .exc_info
                     .clone()
@@ -414,15 +412,24 @@ impl PyLogger {
         Ok(())
     }
 
-    fn format_message(&self, py: Python, msg: Py<PyAny>, args: &Bound<PyAny>) -> PyResult<String> {
-        let msg_str = msg.bind(py);
-        if let Ok(args_tuple) = args.cast::<PyTuple>() {
-            if !args_tuple.is_empty() {
-                let formatted = msg_str.call_method1("__mod__", (args_tuple,))?;
-                return Ok(formatted.str()?.to_string());
+    fn serialize_args(&self, _py: Python, args: &Bound<PyAny>) -> Option<String> {
+        let args_tuple = match args.cast::<PyTuple>() {
+            Ok(t) if !t.is_empty() => t,
+            _ => return None,
+        };
+        // If args is a single dict (e.g., `log("%(key)s", {"key": "v"})`) unwrap it
+        // so that `msg % args` works correctly (dict, not tuple-of-dict).
+        let json_val = if args_tuple.len() == 1 {
+            let first = args_tuple.get_item(0).expect("Failed to get first arg");
+            if first.cast::<PyDict>().is_ok() {
+                py_to_json_value(&first)
+            } else {
+                py_to_json_value(args_tuple.as_any())
             }
-        }
-        Ok(msg_str.str()?.to_string())
+        } else {
+            py_to_json_value(args_tuple.as_any())
+        };
+        Some(serde_json::to_string(&json_val).expect("Failed to serialize args to JSON"))
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]
@@ -437,15 +444,15 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let formatted_msg = self
-            .format_message(py, msg.clone_ref(py), args)
-            .unwrap_or_default();
-        let record = create_log_record_with_extra(
+        let msg_str = msg.bind(py).str()?.to_string();
+        let serialized_args = self.serialize_args(py, args);
+        let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Debug,
-            formatted_msg,
+            msg_str,
             extra_fields,
         );
+        record.args = serialized_args;
         self.emit_record(record);
         Ok(())
     }
@@ -462,15 +469,15 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let formatted_msg = self
-            .format_message(py, msg.clone_ref(py), args)
-            .unwrap_or_default();
-        let record = create_log_record_with_extra(
+        let msg_str = msg.bind(py).str()?.to_string();
+        let serialized_args = self.serialize_args(py, args);
+        let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Info,
-            formatted_msg,
+            msg_str,
             extra_fields,
         );
+        record.args = serialized_args;
         self.emit_record(record);
         Ok(())
     }
@@ -487,15 +494,15 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let formatted_msg = self
-            .format_message(py, msg.clone_ref(py), args)
-            .unwrap_or_default();
-        let record = create_log_record_with_extra(
+        let msg_str = msg.bind(py).str()?.to_string();
+        let serialized_args = self.serialize_args(py, args);
+        let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Warning,
-            formatted_msg,
+            msg_str,
             extra_fields,
         );
+        record.args = serialized_args;
         self.emit_record(record);
         Ok(())
     }
@@ -512,15 +519,15 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let formatted_msg = self
-            .format_message(py, msg.clone_ref(py), args)
-            .unwrap_or_default();
-        let record = create_log_record_with_extra(
+        let msg_str = msg.bind(py).str()?.to_string();
+        let serialized_args = self.serialize_args(py, args);
+        let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Error,
-            formatted_msg,
+            msg_str,
             extra_fields,
         );
+        record.args = serialized_args;
         self.emit_record(record);
         Ok(())
     }
@@ -537,15 +544,15 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let formatted_msg = self
-            .format_message(py, msg.clone_ref(py), args)
-            .unwrap_or_default();
-        let record = create_log_record_with_extra(
+        let msg_str = msg.bind(py).str()?.to_string();
+        let serialized_args = self.serialize_args(py, args);
+        let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Critical,
-            formatted_msg,
+            msg_str,
             extra_fields,
         );
+        record.args = serialized_args;
         self.emit_record(record);
         Ok(())
     }
@@ -562,22 +569,36 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let mut formatted_msg = self
-            .format_message(py, msg.clone_ref(py), args)
-            .unwrap_or_default();
+        let msg_str = msg.bind(py).str()?.to_string();
+        let serialized_args = self.serialize_args(py, args);
+        // For exception, eagerly format and append traceback
+        let mut formatted = if serialized_args.is_some() {
+            // Build a temp record to use get_message()
+            let mut temp = create_log_record_with_extra(
+                self.fast_logger.name.to_string(),
+                LogLevel::Error,
+                msg_str,
+                extra_fields.clone(),
+            );
+            temp.args = serialized_args;
+            temp.get_message()
+        } else {
+            msg_str
+        };
         let traceback = py
             .import("traceback")
             .and_then(|m| m.call_method0("format_exc"))
             .map(|s| s.to_string())
             .unwrap_or_else(|_| "No traceback available".to_string());
-        formatted_msg.push('\n');
-        formatted_msg.push_str(&traceback);
+        formatted.push('\n');
+        formatted.push_str(&traceback);
         let record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Error,
-            formatted_msg,
+            formatted,
             extra_fields,
         );
+        // args already consumed in formatting, record.args stays None
         self.emit_record(record);
         Ok(())
     }
@@ -596,15 +617,15 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let formatted_msg = self
-            .format_message(py, msg.clone_ref(py), args)
-            .unwrap_or_default();
-        let record = create_log_record_with_extra(
+        let msg_str = msg.bind(py).str()?.to_string();
+        let serialized_args = self.serialize_args(py, args);
+        let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             log_level,
-            formatted_msg,
+            msg_str,
             extra_fields,
         );
+        record.args = serialized_args;
         self.emit_record(record);
         Ok(())
     }

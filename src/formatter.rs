@@ -81,7 +81,7 @@ impl Formatter for DefaultFormatter {
     /// Formatted string in the format: `[LEVELNAME] logger_name: message`
     fn format(&self, record: &crate::core::LogRecord) -> String {
         // Simple format: "[LEVELNAME] logger_name: msg"
-        format!("[{}] {}: {}", record.levelname, record.name, record.msg)
+        format!("[{}] {}: {}", record.levelname, record.name, record.get_message())
     }
 }
 
@@ -300,7 +300,7 @@ impl Formatter for PythonFormatter {
         result = result.replace("%(thread)d", &record.thread.to_string());
         result = result.replace("%(processName)s", &record.process_name);
         result = result.replace("%(process)d", &record.process.to_string());
-        result = result.replace("%(message)s", &record.msg);
+        result = result.replace("%(message)s", &record.get_message());
         result = result.replace("%(asctime)s", &asctime);
 
         // Handle extra fields from the 'extra' parameter

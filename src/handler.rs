@@ -91,7 +91,7 @@ impl StreamHandler {
         if let Some(ref formatter) = *self.formatter.lock().unwrap() {
             formatter.format(record)
         } else {
-            record.msg.clone()
+            record.get_message()
         }
     }
 }
@@ -182,7 +182,7 @@ impl FileHandler {
         if let Some(ref formatter) = *self.formatter.lock().unwrap() {
             formatter.format(record)
         } else {
-            record.msg.clone()
+            record.get_message()
         }
     }
 }
@@ -306,7 +306,7 @@ impl RotatingFileHandler {
         if let Some(ref formatter) = *self.formatter.lock().unwrap() {
             formatter.format(record)
         } else {
-            record.msg.clone()
+            record.get_message()
         }
     }
 
@@ -1068,7 +1068,7 @@ impl MemoryHandler {
                 if let Some(ref fmt) = *formatter {
                     fmt.format(r)
                 } else {
-                    r.msg.clone()
+                    format!("{} {} {}\n", r.name, r.levelname, r.get_message())
                 }
             })
             .collect::<Vec<_>>()
@@ -1081,7 +1081,7 @@ impl MemoryHandler {
             .lock()
             .unwrap()
             .iter()
-            .map(|r| (r.name.clone(), r.levelno, r.msg.clone()))
+            .map(|r| (r.name.clone(), r.levelno, r.get_message()))
             .collect()
     }
 
@@ -1106,7 +1106,7 @@ impl MemoryHandler {
         if let Some(ref formatter) = *self.formatter.lock().unwrap() {
             formatter.format(record)
         } else {
-            record.msg.clone()
+            record.get_message()
         }
     }
 }
