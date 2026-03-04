@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
+use pyo3::IntoPyObjectExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -34,6 +36,41 @@ impl LogLevel {
             40 => LogLevel::Error,
             50 => LogLevel::Critical,
             _ => LogLevel::NotSet,
+        }
+    }
+}
+
+/// Convert a serde_json::Value to a Python object.
+/// Arrays become PyTuple (needed for `msg % args` formatting).
+/// Objects become PyDict. Primitives map to their Python equivalents.
+pub fn json_value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
+    match value {
+        Value::Null => Ok(py.None()),
+        Value::Bool(b) => b.into_py_any(py),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i.into_py_any(py)
+            } else if let Some(f) = n.as_f64() {
+                f.into_py_any(py)
+            } else {
+                Ok(py.None())
+            }
+        }
+        Value::String(s) => s.clone().into_py_any(py),
+        Value::Array(arr) => {
+            let items: Vec<Py<PyAny>> = arr
+                .iter()
+                .map(|v| json_value_to_py(py, v))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PyTuple::new(py, &items).expect("Failed to create PyTuple").into_any().unbind())
+        }
+        Value::Object(map) => {
+            let dict = PyDict::new(py);
+            for (k, v) in map {
+                let py_val = json_value_to_py(py, v)?;
+                dict.set_item(k, py_val).expect("Failed to set dict item");
+            }
+            Ok(dict.into_any().unbind())
         }
     }
 }
@@ -74,7 +111,6 @@ pub struct LogRecord {
     pub process: u32,
     #[pyo3(get, set)]
     pub msg: String,
-    #[pyo3(get, set)]
     pub args: Option<String>,
     #[pyo3(get, set)]
     pub exc_info: Option<String>,
@@ -127,6 +163,89 @@ impl LogRecord {
             stack_info,
             task_name: None,
             extra: None,
+        }
+    }
+
+    #[getter]
+    fn args(&self, py: Python) -> PyResult<Py<PyAny>> {
+        match &self.args {
+            None => Ok(py.None()),
+            Some(json_str) => {
+                let value: Value = serde_json::from_str(json_str)
+                    .expect("LogRecord.args contains invalid JSON");
+                json_value_to_py(py, &value)
+            }
+        }
+    }
+
+    #[setter]
+    fn set_args(&mut self, py: Python, value: Py<PyAny>) -> PyResult<()> {
+        let bound = value.bind(py);
+        if bound.is_none() {
+            self.args = None;
+        } else {
+            let json_val = crate::py_logger::py_to_json_value(bound);
+            self.args = Some(serde_json::to_string(&json_val)
+                .expect("Failed to serialize args to JSON"));
+        }
+        Ok(())
+    }
+
+    fn getMessage(&self, py: Python) -> PyResult<String> {
+        match &self.args {
+            None => Ok(self.msg.clone()),
+            Some(json_str) => {
+                let value: Value = serde_json::from_str(json_str)
+                    .expect("LogRecord.args contains invalid JSON");
+                let py_args = json_value_to_py(py, &value)?;
+                let py_msg = self.msg.as_str().into_pyobject(py)?;
+                let formatted = py_msg.call_method1("__mod__", (py_args,))?;
+                Ok(formatted.str()?.to_string())
+            }
+        }
+    }
+
+    #[getter]
+    fn message(&self, py: Python) -> PyResult<String> {
+        self.getMessage(py)
+    }
+
+    fn __getattr__(&self, py: Python, name: &str) -> PyResult<Py<PyAny>> {
+        if let Some(ref extra) = self.extra {
+            if let Some(value) = extra.get(name) {
+                return json_value_to_py(py, value);
+            }
+        }
+        Err(pyo3::exceptions::PyAttributeError::new_err(
+            format!("'LogRecord' object has no attribute '{}'", name)
+        ))
+    }
+
+    #[getter(funcName)]
+    fn func_name_alias(&self) -> String {
+        self.func_name.clone()
+    }
+}
+
+impl LogRecord {
+    pub fn get_message(&self) -> String {
+        match &self.args {
+            None => self.msg.clone(),
+            Some(json_str) => {
+                Python::attach(|py| {
+                    let value: Value = serde_json::from_str(json_str)
+                        .expect("LogRecord.args contains invalid JSON");
+                    let py_args = json_value_to_py(py, &value)
+                        .expect("Failed to convert args to Python object");
+                    let py_msg = self.msg.as_str().into_pyobject(py)
+                        .expect("Failed to convert msg to Python string");
+                    let formatted = py_msg.call_method1("__mod__", (py_args,))
+                        .expect("String formatting (msg % args) failed");
+                    formatted.str()
+                        .expect("Formatted result is not a string")
+                        .to_string()
+                })
+            }
         }
     }
 }
