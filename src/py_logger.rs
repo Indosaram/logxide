@@ -134,6 +134,133 @@ impl PyLogger {
             None
         })
     }
+
+    /// Extract exc_info from kwargs and format it as traceback text.
+    /// `default_exc_info`: if true, capture current exception when exc_info kwarg is absent.
+    /// Handles: exc_info=True, exc_info=False, exc_info=(type, value, tb), exc_info=<exception>.
+    fn extract_exc_info_text(
+        &self,
+        py: Python,
+        kwargs: Option<&Bound<PyDict>>,
+        default_exc_info: bool,
+    ) -> Option<String> {
+        let exc_info_val = kwargs.and_then(|dict| {
+            dict.get_item("exc_info").ok().flatten()
+        });
+
+        match exc_info_val {
+            None => {
+                if !default_exc_info {
+                    return None;
+                }
+                self.capture_current_exception(py)
+            }
+            Some(val) => {
+                // Check if it's a tuple (type, value, tb)
+                if let Ok(tuple) = val.cast::<PyTuple>() {
+                    if tuple.len() == 3 {
+                        let val_item = tuple.get_item(1).ok();
+                        if val_item.map(|v| !v.is_none()).unwrap_or(false) {
+                            return self.format_exception_tuple(py, tuple);
+                        }
+                    }
+                    // (None, None, None) or wrong-length tuple
+                    return None;
+                }
+
+                // Check if it's an exception instance
+                if let Ok(base_exc) = py.import("builtins").and_then(|m| m.getattr("BaseException")) {
+                    if val.is_instance(&base_exc).unwrap_or(false) {
+                        return self.format_exception_instance(py, &val);
+                    }
+                }
+
+                // Otherwise check truthiness (handles True, False, 0, 1, etc.)
+                if val.is_truthy().unwrap_or(false) {
+                    self.capture_current_exception(py)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Capture the current active exception via traceback.format_exc().
+    fn capture_current_exception(&self, py: Python) -> Option<String> {
+        py.import("traceback")
+            .and_then(|m| m.call_method0("format_exc"))
+            .map(|s| s.to_string())
+            .ok()
+            .filter(|s| s != "NoneType: None\n" && !s.is_empty())
+    }
+
+    /// Format a (type, value, tb) tuple into traceback text.
+    fn format_exception_tuple(&self, py: Python, tuple: &Bound<PyTuple>) -> Option<String> {
+        let tb_mod = py.import("traceback").ok()?;
+        let formatted = tb_mod.call_method1(
+            "format_exception",
+            (tuple.get_item(0).ok()?, tuple.get_item(1).ok()?, tuple.get_item(2).ok()?),
+        ).ok()?;
+        let empty_str = "".into_pyobject(py).ok()?;
+        let joined = empty_str.call_method1("join", (&formatted,)).ok()?;
+        let result = joined.to_string();
+        if result.is_empty() { None } else { Some(result) }
+    }
+
+    /// Format an exception instance into traceback text.
+    fn format_exception_instance(&self, py: Python, exc: &Bound<PyAny>) -> Option<String> {
+        let exc_type = exc.get_type();
+        let tb = exc.getattr("__traceback__").ok()?;
+        let tb_mod = py.import("traceback").ok()?;
+        let formatted = tb_mod.call_method1(
+            "format_exception",
+            (exc_type, exc, tb),
+        ).ok()?;
+        let empty_str = "".into_pyobject(py).ok()?;
+        let joined = empty_str.call_method1("join", (&formatted,)).ok()?;
+        let result = joined.to_string();
+        if result.is_empty() { None } else { Some(result) }
+    }
+
+    /// Populate pathname, filename, lineno, func_name on record via Python frame introspection.
+    /// Uses sys._getframe(0) from Rust — which gives the last Python frame (the caller).
+    fn populate_caller_info(py: Python, record: &mut LogRecord) {
+        let Ok(sys) = py.import("sys") else { return };
+        // _getframe(0) from Rust returns the most recent Python frame,
+        // which is the frame that called logger.debug/info/etc.
+        let Ok(frame) = sys.call_method1("_getframe", (0i32,)) else { return };
+
+        // Extract f_code.co_filename → pathname, filename
+        if let Ok(code) = frame.getattr("f_code") {
+            if let Ok(co_filename) = code.getattr("co_filename") {
+                if let Ok(path) = co_filename.extract::<String>() {
+                    // filename = basename of pathname
+                    let filename = path.rsplit_once(std::path::MAIN_SEPARATOR)
+                        .map(|(_, name)| name.to_string())
+                        .unwrap_or_else(|| path.clone());
+                    // module = filename without extension
+                    let module_name = filename.rsplit_once('.')
+                        .map(|(base, _)| base.to_string())
+                        .unwrap_or_else(|| filename.clone());
+                    record.pathname = path;
+                    record.filename = filename;
+                    record.module = module_name;
+                }
+            }
+            if let Ok(co_name) = code.getattr("co_name") {
+                if let Ok(func) = co_name.extract::<String>() {
+                    record.func_name = func;
+                }
+            }
+        }
+
+        // Extract f_lineno → lineno
+        if let Ok(lineno) = frame.getattr("f_lineno") {
+            if let Ok(line) = lineno.extract::<u32>() {
+                record.lineno = line;
+            }
+        }
+    }
 }
 
 #[pymethods]
@@ -271,6 +398,12 @@ impl PyLogger {
             // Set exc_text on the Python LogRecord so stdlib Formatter.format() appends it
             if let Some(ref exc_text) = record.exc_text {
                 let _ = py_record.bind(py).setattr("exc_text", exc_text.as_str());
+            }
+
+            // Set func_name/funcName on the Python LogRecord from Rust record's caller info
+            if !record.func_name.is_empty() {
+                let _ = py_record.bind(py).setattr("func_name", record.func_name.as_str());
+                let _ = py_record.bind(py).setattr("funcName", record.func_name.as_str());
             }
 
             // Call local Python handlers
@@ -457,7 +590,9 @@ impl PyLogger {
             msg_str,
             extra_fields,
         );
+        PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         self.emit_record(record);
         Ok(())
     }
@@ -482,7 +617,9 @@ impl PyLogger {
             msg_str,
             extra_fields,
         );
+        PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         self.emit_record(record);
         Ok(())
     }
@@ -507,7 +644,9 @@ impl PyLogger {
             msg_str,
             extra_fields,
         );
+        PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         self.emit_record(record);
         Ok(())
     }
@@ -532,7 +671,9 @@ impl PyLogger {
             msg_str,
             extra_fields,
         );
+        PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         self.emit_record(record);
         Ok(())
     }
@@ -557,7 +698,9 @@ impl PyLogger {
             msg_str,
             extra_fields,
         );
+        PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         self.emit_record(record);
         Ok(())
     }
@@ -576,23 +719,15 @@ impl PyLogger {
         let extra_fields = self.extract_extra_fields(kwargs);
         let msg_str = msg.bind(py).str()?.to_string();
         let serialized_args = self.serialize_args(py, args);
-
-        // Capture traceback separately — do NOT bake into msg
-        let traceback = py
-            .import("traceback")
-            .and_then(|m| m.call_method0("format_exc"))
-            .map(|s| s.to_string())
-            .ok()
-            .filter(|s| s != "NoneType: None\n" && !s.is_empty());
-
         let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
             LogLevel::Error,
             msg_str,
             extra_fields,
         );
+        PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
-        record.exc_text = traceback;
+        record.exc_text = self.extract_exc_info_text(py, kwargs, true);
         self.emit_record(record);
         Ok(())
     }
@@ -619,7 +754,9 @@ impl PyLogger {
             msg_str,
             extra_fields,
         );
+        PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         self.emit_record(record);
         Ok(())
     }

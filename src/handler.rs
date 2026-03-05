@@ -1076,7 +1076,7 @@ impl MemoryHandler {
                 }
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("")
     }
 
     /// Returns record tuples in pytest caplog format: (logger_name, level_num, message).

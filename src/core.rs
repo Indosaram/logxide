@@ -225,6 +225,106 @@ impl LogRecord {
     fn func_name_alias(&self) -> String {
         self.func_name.clone()
     }
+
+    #[getter(relativeCreated)]
+    fn relative_created_alias(&self) -> f64 {
+        self.relative_created
+    }
+
+    #[getter(threadName)]
+    fn thread_name_alias(&self) -> String {
+        self.thread_name.clone()
+    }
+
+    #[getter(processName)]
+    fn process_name_alias(&self) -> String {
+        self.process_name.clone()
+    }
+
+    fn __setattr__(&mut self, py: Python, name: &str, value: Py<PyAny>) -> PyResult<()> {
+        let bound = value.bind(py);
+        match name {
+            "name" => self.name = bound.extract()?,
+            "levelno" => self.levelno = bound.extract()?,
+            "levelname" => self.levelname = bound.extract()?,
+            "pathname" => self.pathname = bound.extract()?,
+            "filename" => self.filename = bound.extract()?,
+            "module" => self.module = bound.extract()?,
+            "lineno" => self.lineno = bound.extract()?,
+            "func_name" | "funcName" => self.func_name = bound.extract()?,
+            "created" => self.created = bound.extract()?,
+            "msecs" => self.msecs = bound.extract()?,
+            "relative_created" | "relativeCreated" => self.relative_created = bound.extract()?,
+            "thread" => self.thread = bound.extract()?,
+            "thread_name" | "threadName" => self.thread_name = bound.extract()?,
+            "process_name" | "processName" => self.process_name = bound.extract()?,
+            "process" => self.process = bound.extract()?,
+            "msg" => self.msg = bound.extract()?,
+            "args" => {
+                if bound.is_none() {
+                    self.args = None;
+                } else {
+                    let json_val = crate::py_logger::py_to_json_value(bound);
+                    self.args = Some(serde_json::to_string(&json_val)
+                        .expect("Failed to serialize args to JSON"));
+                }
+            }
+            "exc_info" => self.exc_info = bound.extract()?,
+            "exc_text" => self.exc_text = bound.extract()?,
+            "stack_info" => self.stack_info = bound.extract()?,
+            "task_name" => self.task_name = bound.extract()?,
+            _ => {
+                let json_val = crate::py_logger::py_to_json_value(bound);
+                let extra = self.extra.get_or_insert_with(HashMap::new);
+                extra.insert(name.to_string(), json_val);
+            }
+        }
+        Ok(())
+    }
+
+    #[getter(__dict__)]
+    fn get_dict(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let dict = PyDict::new(py);
+        dict.set_item("name", &self.name)?;
+        dict.set_item("levelno", self.levelno)?;
+        dict.set_item("levelname", &self.levelname)?;
+        dict.set_item("pathname", &self.pathname)?;
+        dict.set_item("filename", &self.filename)?;
+        dict.set_item("module", &self.module)?;
+        dict.set_item("lineno", self.lineno)?;
+        dict.set_item("func_name", &self.func_name)?;
+        dict.set_item("funcName", &self.func_name)?;
+        dict.set_item("created", self.created)?;
+        dict.set_item("msecs", self.msecs)?;
+        dict.set_item("relative_created", self.relative_created)?;
+        dict.set_item("relativeCreated", self.relative_created)?;
+        dict.set_item("thread", self.thread)?;
+        dict.set_item("thread_name", &self.thread_name)?;
+        dict.set_item("threadName", &self.thread_name)?;
+        dict.set_item("process_name", &self.process_name)?;
+        dict.set_item("processName", &self.process_name)?;
+        dict.set_item("process", self.process)?;
+        dict.set_item("msg", &self.msg)?;
+        dict.set_item("message", &self.msg)?;
+        match &self.args {
+            None => dict.set_item("args", py.None())?,
+            Some(json_str) => {
+                let value: Value = serde_json::from_str(json_str)
+                    .expect("LogRecord.args contains invalid JSON");
+                dict.set_item("args", json_value_to_py(py, &value)?)?;
+            }
+        }
+        dict.set_item("exc_info", &self.exc_info)?;
+        dict.set_item("exc_text", &self.exc_text)?;
+        dict.set_item("stack_info", &self.stack_info)?;
+        dict.set_item("task_name", &self.task_name)?;
+        if let Some(ref extra) = self.extra {
+            for (key, value) in extra {
+                dict.set_item(key, json_value_to_py(py, value)?)?;
+            }
+        }
+        Ok(dict.into_any().unbind())
+    }
 }
 
 impl LogRecord {
