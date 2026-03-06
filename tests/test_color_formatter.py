@@ -149,7 +149,7 @@ class TestPythonFormatter:
     def test_formatter_basic(self):
         """Test basic formatter functionality."""
         try:
-            from logxide import RustFormatter, LogRecord
+            from logxide import LogRecord, RustFormatter
 
             formatter = RustFormatter("%(levelname)s - %(message)s")
 
@@ -246,7 +246,7 @@ class TestFilterCallback:
 
     def test_filter_can_suppress_record(self):
         """Test that filter returning False suppresses the record."""
-        from logxide import logging, MemoryHandler
+        from logxide import MemoryHandler, logging
 
         logger = logging.getLogger("test_filter_suppress")
         handler = MemoryHandler()
@@ -272,7 +272,7 @@ class TestFilterCallback:
 
     def test_filter_can_modify_message(self):
         """Test that filter can modify record.msg."""
-        from logxide import logging, MemoryHandler
+        from logxide import MemoryHandler, logging
 
         logger = logging.getLogger("test_filter_modify")
         handler = MemoryHandler()
@@ -303,7 +303,7 @@ class TestFilterCallback:
 
     def test_callable_filter(self):
         """Test that a plain callable works as a filter."""
-        from logxide import logging, MemoryHandler
+        from logxide import MemoryHandler, logging
 
         logger = logging.getLogger("test_callable_filter")
         handler = MemoryHandler()

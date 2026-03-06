@@ -6,6 +6,7 @@ Python's standard logging module, but delegates actual logging to
 Rust native handlers for maximum performance.
 """
 
+import contextlib
 import re
 import string
 import sys
@@ -51,7 +52,7 @@ class PercentStyle:
         try:
             return self._format(record)
         except KeyError as e:
-            raise ValueError(f"Formatting field not found in record: {e}")
+            raise ValueError(f"Formatting field not found in record: {e}") from e
 
 
 class StrFormatStyle(PercentStyle):
@@ -442,11 +443,7 @@ class Filter:
             record_name = record.get("name", "")
         else:
             record_name = getattr(record, "name", "")
-        if self.name == record_name:
-            return True
-        elif record_name.startswith(self.name + "."):
-            return True
-        return False
+        return bool(self.name == record_name or record_name.startswith(self.name + "."))
 
 
 class LogRecord:
@@ -483,8 +480,8 @@ class LogRecord:
         self.msecs = (ct - int(ct)) * 1000
         self.relativeCreated = (ct - _start_time) * 1000
 
-        import threading
         import os
+        import threading
 
         self.thread = threading.current_thread().ident
         self.threadName = threading.current_thread().name
@@ -504,14 +501,15 @@ class LogRecord:
     def getMessage(self):
         msg = str(self.msg)
         if self.args:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 msg = msg % self.args
-            except (TypeError, ValueError):
-                pass
         return msg
 
     def __repr__(self):
-        return f"<LogRecord: {self.name}, {self.levelno}, {self.pathname}, {self.lineno}, {self.msg!r}>"
+        return (
+            f"<LogRecord: {self.name}, {self.levelno},"
+            f" {self.pathname}, {self.lineno}, {self.msg!r}>"
+        )
 
 
 _start_time = time.time()
@@ -601,4 +599,4 @@ class LoggerAdapter:
     def __repr__(self):
         logger = self.logger
         level = getLevelName(logger.getEffectiveLevel())
-        return '<%s %s (%s)>' % (self.__class__.__name__, logger.name, level)
+        return f'<{self.__class__.__name__} {logger.name} ({level})>'

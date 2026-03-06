@@ -6,9 +6,7 @@ functions to ensure they work correctly and maintain compatibility with
 the standard library logging module.
 """
 
-import warnings
 
-import pytest
 
 from logxide import logging
 from logxide.compat_functions import (
@@ -314,7 +312,6 @@ class TestIntegration:
 
     def test_all_functions_importable(self):
         """Test that all compatibility functions can be imported from logging."""
-        from logxide import logging
 
         assert hasattr(logging, "captureWarnings")
         assert hasattr(logging, "makeLogRecord")
@@ -326,7 +323,6 @@ class TestIntegration:
 
     def test_all_functions_callable(self):
         """Test that all compatibility functions are callable."""
-        from logxide import logging
 
         assert callable(logging.captureWarnings)
         assert callable(logging.makeLogRecord)
@@ -338,7 +334,6 @@ class TestIntegration:
 
     def test_makeLogRecord_with_real_logger(self):
         """Test makeLogRecord integration with actual logging."""
-        from logxide import logging
 
         record_dict = {
             "name": "test.integration",

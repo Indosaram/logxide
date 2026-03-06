@@ -5,11 +5,10 @@ Module system and installation logic for LogXide.
 import builtins
 import contextlib
 import logging as _std_logging
-import types
-import threading
-import weakref
 import sys
-import os
+import threading
+import types
+import weakref
 
 try:
     from . import logxide
@@ -52,26 +51,27 @@ from .compat_functions import (
     setLogRecordFactory,
 )
 from .compat_handlers import (
+    _STYLES,
     BASIC_FORMAT,
     CRITICAL,
     DEBUG,
     ERROR,
     FATAL,
-    Filter,
     INFO,
-    LogRecord as PyLogRecord,
-    LoggingManager,
     NOTSET,
-    PercentStyle,
-    StrFormatStyle,
-    StringTemplateStyle,
     WARN,
     WARNING,
+    Filter,
     Formatter,
     Handler,
     LoggerAdapter,
     NullHandler,
-    _STYLES,
+    PercentStyle,
+    StrFormatStyle,
+    StringTemplateStyle,
+)
+from .compat_handlers import (
+    LogRecord as PyLogRecord,
 )
 from .compat_handlers import StreamHandler as _StreamHandler
 from .logger_wrapper import _migrate_existing_loggers, basicConfig, getLogger
@@ -157,7 +157,8 @@ class _LoggingModule(types.ModuleType):
         self.OTLPHandler = _ext.OTLPHandler
         self.lastResort, self.raiseExceptions = _std_logging.lastResort, True
 
-        import logging.config, logging.handlers
+        import logging.config
+        import logging.handlers
 
         self.config, self.handlers = logging.config, logging.handlers
 
@@ -289,10 +290,8 @@ def _install(sentry=None):
             if hasattr(hdlr, "_inner"):
                 target.addHandler(hdlr._inner)
             else:
-                try:
+                with contextlib.suppress(Exception):
                     target.addHandler(hdlr)
-                except Exception:
-                    pass
 
         std_logger.addHandler = wrapped_add
 
