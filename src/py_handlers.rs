@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::{LogLevel, LogRecord};
+use crate::py_logger::check_level;
 use crate::formatter::{ColorFormatter, Formatter, PythonFormatter};
 use crate::handler::{
     FileHandler, HTTPHandler, HTTPHandlerConfig, MemoryHandler, OTLPHandler, OTLPHandlerConfig,
@@ -97,7 +98,7 @@ impl PyColorFormatter {
 // ============================================================================
 // Handler Bindings
 // ============================================================================
-#[pyclass(name = "FileHandler")]
+#[pyclass(name = "FileHandler", subclass)]
 pub struct PyFileHandler {
     pub(crate) inner: Arc<FileHandler>,
 }
@@ -110,8 +111,9 @@ impl PyFileHandler {
         Ok(Self { inner: Arc::new(h) })
     }
 
-    fn setLevel(&self, level: u32) -> PyResult<()> {
-        self.inner.set_level(LogLevel::from_usize(level as usize));
+    fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
+        let level_int = check_level(py, level)?;
+        self.inner.set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -155,7 +157,7 @@ impl PyFileHandler {
     }
 }
 
-#[pyclass(name = "StreamHandler")]
+#[pyclass(name = "StreamHandler", subclass)]
 pub struct PyStreamHandler {
     pub(crate) inner: Arc<StreamHandler>,
 }
@@ -172,8 +174,9 @@ impl PyStreamHandler {
         Ok(Self { inner: Arc::new(h) })
     }
 
-    fn setLevel(&self, level: u32) -> PyResult<()> {
-        self.inner.set_level(LogLevel::from_usize(level as usize));
+    fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
+        let level_int = check_level(py, level)?;
+        self.inner.set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -197,7 +200,7 @@ impl PyStreamHandler {
     }
 }
 
-#[pyclass(name = "RotatingFileHandler")]
+#[pyclass(name = "RotatingFileHandler", subclass)]
 pub struct PyRotatingFileHandler {
     pub(crate) inner: Arc<RotatingFileHandler>,
 }
@@ -212,8 +215,9 @@ impl PyRotatingFileHandler {
         Ok(Self { inner: Arc::new(h) })
     }
 
-    fn setLevel(&self, level: u32) -> PyResult<()> {
-        self.inner.set_level(LogLevel::from_usize(level as usize));
+    fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
+        let level_int = check_level(py, level)?;
+        self.inner.set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -256,7 +260,7 @@ impl PyRotatingFileHandler {
     }
 }
 
-#[pyclass(name = "HTTPHandler")]
+#[pyclass(name = "HTTPHandler", subclass)]
 pub struct PyHTTPHandler {
     pub(crate) inner: Arc<HTTPHandler>,
 }
@@ -350,8 +354,9 @@ impl PyHTTPHandler {
         Ok(Self { inner: Arc::new(h) })
     }
 
-    fn setLevel(&self, level: u32) -> PyResult<()> {
-        self.inner.set_level(LogLevel::from_usize(level as usize));
+    fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
+        let level_int = check_level(py, level)?;
+        self.inner.set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -381,7 +386,7 @@ impl PyHTTPHandler {
     }
 }
 
-#[pyclass(name = "OTLPHandler")]
+#[pyclass(name = "OTLPHandler", subclass)]
 pub struct PyOTLPHandler {
     pub(crate) inner: Arc<OTLPHandler>,
 }
@@ -426,8 +431,9 @@ impl PyOTLPHandler {
         Ok(Self { inner: Arc::new(h) })
     }
 
-    fn setLevel(&self, level: u32) -> PyResult<()> {
-        self.inner.set_level(LogLevel::from_usize(level as usize));
+    fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
+        let level_int = check_level(py, level)?;
+        self.inner.set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -442,7 +448,7 @@ impl PyOTLPHandler {
     }
 }
 
-#[pyclass(name = "MemoryHandler")]
+#[pyclass(name = "MemoryHandler", subclass)]
 pub struct PyMemoryHandler {
     pub(crate) inner: Arc<MemoryHandler>,
 }
@@ -492,8 +498,9 @@ impl PyMemoryHandler {
     }
 
     #[pyo3(name = "setLevel")]
-    pub fn set_level(&self, level: u32) -> PyResult<()> {
-        self.inner.set_level(LogLevel::from_usize(level as usize));
+    pub fn set_level(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
+        let level_int = check_level(py, level)?;
+        self.inner.set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 

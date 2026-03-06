@@ -524,3 +524,81 @@ _level_to_name = {
     DEBUG: "DEBUG",
     NOTSET: "NOTSET",
 }
+
+
+class LoggerAdapter:
+    """An adapter for loggers which makes it easier to specify contextual
+    information in logging output.
+    """
+
+    def __init__(self, logger, extra=None, merge_extra=False):
+        self.logger = logger
+        self.extra = extra
+        self.merge_extra = merge_extra
+
+    def process(self, msg, kwargs):
+        if self.merge_extra and "extra" in kwargs:
+            kwargs["extra"] = {**self.extra, **kwargs["extra"]}
+        else:
+            kwargs["extra"] = self.extra
+        return msg, kwargs
+
+    def debug(self, msg, *args, **kwargs):
+        self.log(DEBUG, msg, *args, **kwargs)
+
+    def info(self, msg, *args, **kwargs):
+        self.log(INFO, msg, *args, **kwargs)
+
+    def warning(self, msg, *args, **kwargs):
+        self.log(WARNING, msg, *args, **kwargs)
+
+    def warn(self, msg, *args, **kwargs):
+        import warnings
+        warnings.warn("The 'warn' method is deprecated, "
+            "use 'warning' instead", DeprecationWarning, 2)
+        self.warning(msg, *args, **kwargs)
+
+    def error(self, msg, *args, **kwargs):
+        self.log(ERROR, msg, *args, **kwargs)
+
+    def exception(self, msg, *args, exc_info=True, **kwargs):
+        self.log(ERROR, msg, *args, exc_info=exc_info, **kwargs)
+
+    def critical(self, msg, *args, **kwargs):
+        self.log(CRITICAL, msg, *args, **kwargs)
+
+    fatal = critical
+
+    def log(self, level, msg, *args, **kwargs):
+        if self.isEnabledFor(level):
+            msg, kwargs = self.process(msg, kwargs)
+            self.logger.log(level, msg, *args, **kwargs)
+
+    def isEnabledFor(self, level):
+        return self.logger.isEnabledFor(level)
+
+    def setLevel(self, level):
+        self.logger.setLevel(level)
+
+    def getEffectiveLevel(self):
+        return self.logger.getEffectiveLevel()
+
+    def hasHandlers(self):
+        return self.logger.hasHandlers()
+
+    @property
+    def manager(self):
+        return self.logger.manager
+
+    @manager.setter
+    def manager(self, value):
+        self.logger.manager = value
+
+    @property
+    def name(self):
+        return self.logger.name
+
+    def __repr__(self):
+        logger = self.logger
+        level = getLevelName(logger.getEffectiveLevel())
+        return '<%s %s (%s)>' % (self.__class__.__name__, logger.name, level)
