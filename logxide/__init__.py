@@ -32,7 +32,9 @@ def _check_python_version():
         runtime_version = sys.version_info[:2]
         if compiled_version != runtime_version:
             sys.stderr.write(
-                f"❌ FATAL: Python Version Mismatch\nCompiled: {compiled_version}, Runtime: {runtime_version}\n"
+                "\u274c FATAL: Python Version Mismatch\n"
+                f"Compiled: {compiled_version},"
+                f" Runtime: {runtime_version}\n"
             )
             sys.exit(1)
 
@@ -43,44 +45,98 @@ from . import logxide
 
 __version__ = "0.1.13"
 
+from . import logxide as _logxide_ext
 from .compat_functions import (
-    addLevelName,
-    captureWarnings,
-    disable,
-    getHandlerByName,
-    getHandlerNames,
-    getLevelName,
-    getLevelNamesMapping,
-    getLoggerClass,
-    getLogRecordFactory,
-    makeLogRecord,
-    setLoggerClass,
-    setLogRecordFactory,
+    addLevelName as addLevelName,
+)
+from .compat_functions import (
+    captureWarnings as captureWarnings,
+)
+from .compat_functions import (
+    disable as disable,
+)
+from .compat_functions import (
+    getHandlerByName as getHandlerByName,
+)
+from .compat_functions import (
+    getHandlerNames as getHandlerNames,
+)
+from .compat_functions import (
+    getLevelName as getLevelName,
+)
+from .compat_functions import (
+    getLevelNamesMapping as getLevelNamesMapping,
+)
+from .compat_functions import (
+    getLoggerClass as getLoggerClass,
+)
+from .compat_functions import (
+    getLogRecordFactory as getLogRecordFactory,
+)
+from .compat_functions import (
+    makeLogRecord as makeLogRecord,
+)
+from .compat_functions import (
+    setLoggerClass as setLoggerClass,
+)
+from .compat_functions import (
+    setLogRecordFactory as setLogRecordFactory,
 )
 from .compat_handlers import (
-    CRITICAL,
-    DEBUG,
-    ERROR,
-    FATAL,
-    INFO,
-    NOTSET,
-    WARN,
-    WARNING,
-    Formatter,
-    Handler,
-    LoggerAdapter,
-    LoggingManager,
+    CRITICAL as CRITICAL,
+)
+from .compat_handlers import (
+    DEBUG as DEBUG,
+)
+from .compat_handlers import (
+    ERROR as ERROR,
+)
+from .compat_handlers import (
+    FATAL as FATAL,
+)
+from .compat_handlers import (
+    INFO as INFO,
+)
+from .compat_handlers import (
+    NOTSET as NOTSET,
+)
+from .compat_handlers import (
+    WARN as WARN,
+)
+from .compat_handlers import (
+    WARNING as WARNING,
+)
+from .compat_handlers import (
+    Formatter as Formatter,
+)
+from .compat_handlers import (
+    Handler as Handler,
+)
+from .compat_handlers import (
+    LoggerAdapter as LoggerAdapter,
+)
+from .compat_handlers import (
+    LoggingManager as LoggingManager,
 )
 from .compat_handlers import NullHandler as _CompatNullHandler
 from .handlers import (
-    FileHandler,
-    StreamHandler,
-    RotatingFileHandler,
-    HTTPHandler,
-    OTLPHandler,
-    MemoryHandler,
+    FileHandler as FileHandler,
 )
-from . import logxide as _logxide_ext
+from .handlers import (
+    HTTPHandler as HTTPHandler,
+)
+from .handlers import (
+    MemoryHandler as MemoryHandler,
+)
+from .handlers import (
+    OTLPHandler as OTLPHandler,
+)
+from .handlers import (
+    RotatingFileHandler as RotatingFileHandler,
+)
+from .handlers import (
+    StreamHandler as StreamHandler,
+)
 
 # Rust handlers (direct access)
 RustFileHandler = _logxide_ext.FileHandler
@@ -99,8 +155,21 @@ except AttributeError:
     # Fallback if not yet built with new formatters
     pass
 
-from .logger_wrapper import basicConfig, getLogger
-from .module_system import _install, logging, uninstall
+from .logger_wrapper import (
+    basicConfig as basicConfig,
+)
+from .logger_wrapper import (
+    getLogger as getLogger,
+)
+from .module_system import (
+    _install as _install,
+)
+from .module_system import (
+    logging as logging,
+)
+from .module_system import (
+    uninstall as uninstall,
+)
 
 clear_handlers = logxide.logging.clear_handlers
 

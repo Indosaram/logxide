@@ -6,10 +6,10 @@ Auto-registered via pyproject.toml entry point.
 """
 import pytest
 
-from .testing import LogCaptureFixture
-
 # Import logging from logxide
 from . import logxide as _logxide_ext
+from .testing import LogCaptureFixture
+
 logging = _logxide_ext.logging
 
 

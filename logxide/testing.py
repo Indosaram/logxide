@@ -37,8 +37,9 @@ Usage:
         assert "test" in caplog.text
 """
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator, List, Optional, Tuple
+from typing import Optional
 
 from . import logxide as _logxide_ext
 from .handlers import MemoryHandler
@@ -82,7 +83,7 @@ class LogCaptureFixture:
         return self._ensure_handler()
 
     @property
-    def records(self) -> List:
+    def records(self) -> list:
         """
         Get all captured log records.
 
@@ -102,7 +103,7 @@ class LogCaptureFixture:
         return self._ensure_handler().text
 
     @property
-    def record_tuples(self) -> List[Tuple[str, int, str]]:
+    def record_tuples(self) -> list[tuple[str, int, str]]:
         """
         Get captured records as tuples.
 
@@ -113,7 +114,7 @@ class LogCaptureFixture:
         return self._ensure_handler().record_tuples
 
     @property
-    def messages(self) -> List[str]:
+    def messages(self) -> list[str]:
         """
         Get just the message strings from all captured records.
 
@@ -160,7 +161,7 @@ class LogCaptureFixture:
         handler = self._ensure_handler()
         try:
             old_level = handler._inner.level if hasattr(handler, "_inner") else None
-        except:
+        except Exception:
             old_level = None
 
         handler.setLevel(level)

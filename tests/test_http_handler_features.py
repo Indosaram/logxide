@@ -1,14 +1,13 @@
-import sys
-import time
 import json
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import logxide
 from logxide import HTTPHandler
 
 logxide._install()
-import logging
+import logging  # noqa: E402
 
 RECEIVED_PAYLOADS = []
 ERROR_MESSAGES = []

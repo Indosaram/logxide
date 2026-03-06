@@ -5,6 +5,7 @@ Compatibility handlers for LogXide.
 import logging
 import logging.handlers
 import sys
+
 from . import logxide
 
 
@@ -250,7 +251,10 @@ class MemoryHandler(logging.Handler):
         pass
 
     def get_records(self):
-        """Returns all captured records as a list (deprecated: use .records property)."""
+        """Returns all captured records as a list.
+
+        Deprecated: use .records property.
+        """
         return self._inner.records
 
     @property
