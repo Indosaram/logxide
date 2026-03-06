@@ -5,8 +5,8 @@ Tests that caplog fixture is automatically available
 via pytest plugin registration in pyproject.toml.
 """
 import pytest
-from logxide import logging
 
+from logxide import logging
 
 # NOTE: caplog fixture is provided automatically by logxide.testing plugin
 # registered in pyproject.toml [project.entry-points.pytest11]

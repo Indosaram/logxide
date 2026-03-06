@@ -1,17 +1,15 @@
+import logging
 import sys
-import os
 
 # AGGRESSIVE REPLACEMENT BEFORE ANY LOGGING IMPORTS
 import logxide
-import logging
 
 sys.modules["logging"] = logxide.logging
 logxide._install()
 
-import time
-import threading
-import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading  # noqa: E402
+import time  # noqa: E402
+from http.server import BaseHTTPRequestHandler, HTTPServer  # noqa: E402
 
 # 전역 변수로 핸들러와 로거 유지 (GC 방지)
 AUTH_HANDLER = None
@@ -46,7 +44,6 @@ IMMORTAL_STORAGE = []
 def test_http_auth():
     print("Python: Importing logxide and standard logging...")
     import logxide
-    import logging
     from logxide import HTTPHandler
 
     # 0. 강제 설치
@@ -65,7 +62,7 @@ def test_http_auth():
     )
     IMMORTAL_STORAGE.append(handler)
 
-    print(f"Python: Creating logger via standard logging...")
+    print("Python: Creating logger via standard logging...")
     logger = logging.getLogger("auth_test")
     IMMORTAL_STORAGE.append(logger)
 
