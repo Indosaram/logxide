@@ -41,7 +41,7 @@ _check_python_version()
 
 from . import logxide
 
-__version__ = "0.1.12"
+__version__ = "0.1.13"
 
 from .compat_functions import (
     addLevelName,
@@ -68,6 +68,7 @@ from .compat_handlers import (
     WARNING,
     Formatter,
     Handler,
+    LoggerAdapter,
     LoggingManager,
 )
 from .compat_handlers import NullHandler as _CompatNullHandler

@@ -2,7 +2,6 @@
 
 #![allow(non_snake_case)]
 
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
 use pyo3::IntoPyObjectExt;
@@ -15,6 +14,45 @@ use crate::fast_logger::FastLogger;
 use crate::globals::{add_handler_to_registry, HANDLERS};
 use crate::handler::Handler;
 
+/// Check and resolve a log level from either an integer or a string name.
+/// Handles: int passthrough, string lookup (CRITICAL/FATAL/ERROR/WARN/WARNING/INFO/DEBUG/NOTSET).
+/// Raises TypeError for unsupported types, ValueError for unknown level names.
+pub fn check_level(py: Python, level: &Bound<PyAny>) -> PyResult<u32> {
+    // Try int first
+    if let Ok(i) = level.extract::<u32>() {
+        return Ok(i);
+    }
+    // Try i64 for negative or large values, then cast
+    if let Ok(i) = level.extract::<i64>() {
+        return Ok(i as u32);
+    }
+    // Try string
+    if let Ok(s) = level.extract::<String>() {
+        let upper = s.to_uppercase();
+        return match upper.as_str() {
+            "CRITICAL" | "FATAL" => Ok(50),
+            "ERROR" => Ok(40),
+            "WARN" | "WARNING" => Ok(30),
+            "INFO" => Ok(20),
+            "DEBUG" => Ok(10),
+            "NOTSET" => Ok(0),
+            _ => {
+                // Try Python-side _nameToLevel lookup for custom levels
+                let compat = py.import("logxide.compat_functions")?;
+                let name_to_level = compat.getattr("_nameToLevel")?;
+                match name_to_level.call_method1("get", (upper.as_str(),)) {
+                    Ok(val) if !val.is_none() => val.extract::<u32>(),
+                    _ => Err(pyo3::exceptions::PyValueError::new_err(
+                        format!("Unknown level: '{}'", s),
+                    )),
+                }
+            }
+        };
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        format!("Level not an integer or a valid string: {}", level.repr()?.to_string()),
+    ))
+}
 pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
     if obj.is_none() {
         Value::Null
@@ -185,6 +223,77 @@ impl PyLogger {
         }
     }
 
+    /// Extract the raw exc_info Python object from kwargs for passing to Python handlers.
+    /// Returns the original (type, value, tb) tuple, sys.exc_info() result, or None.
+    fn extract_exc_info_raw(
+        &self,
+        py: Python,
+        kwargs: Option<&Bound<PyDict>>,
+        default_exc_info: bool,
+    ) -> Option<Py<PyAny>> {
+        let exc_info_val = kwargs.and_then(|dict| {
+            dict.get_item("exc_info").ok().flatten()
+        });
+
+        match exc_info_val {
+            None => {
+                if !default_exc_info {
+                    return None;
+                }
+                // Capture current exception as sys.exc_info() tuple
+                py.import("sys")
+                    .and_then(|m| m.call_method0("exc_info"))
+                    .ok()
+                    .and_then(|info| {
+                        // Check if there's an actual exception (info[1] is not None)
+                        let tuple = info.cast::<PyTuple>().ok()?;
+                        let val_item = tuple.get_item(1).ok()?;
+                        if val_item.is_none() { None } else { Some(info.unbind()) }
+                    })
+            }
+            Some(val) => {
+                // Already a tuple — pass through directly
+                if let Ok(tuple) = val.cast::<PyTuple>() {
+                    if tuple.len() == 3 {
+                        let val_item = tuple.get_item(1).ok();
+                        if val_item.map(|v| !v.is_none()).unwrap_or(false) {
+                            return Some(val.unbind());
+                        }
+                    }
+                    return None;
+                }
+
+                // Exception instance — build (type, value, tb) tuple
+                if let Ok(base_exc) = py.import("builtins").and_then(|m| m.getattr("BaseException")) {
+                    if val.is_instance(&base_exc).unwrap_or(false) {
+                        let exc_type = val.get_type();
+                        let tb = val.getattr("__traceback__").ok();
+                        let tuple = PyTuple::new(py, &[
+                            exc_type.into_any(),
+                            val.clone(),
+                            tb.unwrap_or_else(|| py.None().into_bound(py)),
+                        ]).ok()?;
+                        return Some(tuple.unbind().into());
+                    }
+                }
+
+                // True → capture sys.exc_info()
+                if val.is_truthy().unwrap_or(false) {
+                    py.import("sys")
+                        .and_then(|m| m.call_method0("exc_info"))
+                        .ok()
+                        .and_then(|info| {
+                            let tuple = info.cast::<PyTuple>().ok()?;
+                            let val_item = tuple.get_item(1).ok()?;
+                            if val_item.is_none() { None } else { Some(info.unbind()) }
+                        })
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     /// Capture the current active exception via traceback.format_exc().
     fn capture_current_exception(&self, py: Python) -> Option<String> {
         py.import("traceback")
@@ -265,7 +374,7 @@ impl PyLogger {
 
 #[pymethods]
 impl PyLogger {
-    fn emit_record(&self, mut record: LogRecord) {
+    fn emit_record(&self, mut record: LogRecord, exc_info_py: Option<Py<PyAny>>) {
         // Apply Python callable filters before emission
         // Filters can modify the record (especially record.msg) and return False to suppress
         let should_emit = Python::attach(|py| {
@@ -382,12 +491,7 @@ impl PyLogger {
                 record.lineno as i32,
                 record.get_message().into_py_any(py).expect("Failed to convert getMessage to PyAny").into(),
                 py.None().into(),
-                record
-                    .exc_info
-                    .clone()
-                    .into_py_any(py)
-                    .unwrap_or_else(|_| py.None())
-                    .into(),
+                exc_info_py.as_ref().map(|e| e.clone_ref(py)),
             ) {
                 Ok(r) => r,
                 Err(_) => {
@@ -502,32 +606,28 @@ impl PyLogger {
         })
     }
 
-    fn setLevel(&mut self, level: u32) -> PyResult<()> {
-        let level = LogLevel::from_usize(level as usize);
+    fn setLevel(&mut self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
+        let level_int = check_level(py, level)?;
+        let level = LogLevel::from_usize(level_int as usize);
         self.fast_logger.set_level(level);
         self.inner.lock().unwrap().set_level(level);
+        crate::fast_logger::propagate_all_effective_levels();
         Ok(())
     }
 
     fn getEffectiveLevel(&self) -> PyResult<u32> {
-        Ok(self.fast_logger.get_level() as u32)
+        Ok(self.fast_logger.get_effective_level())
     }
 
     fn addHandler(&self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
-        let added = add_handler_to_registry(
+        add_handler_to_registry(
             handler,
             &self.fast_logger.name,
             &self.local_handlers,
             &self.local_python_handlers,
         )?;
 
-        if added {
-            Ok(())
-        } else {
-            Err(PyValueError::new_err(
-                "LogXide only supports Rust native handlers.",
-            ))
-        }
+        Ok(())
     }
 
     /// Add a filter to this logger.
@@ -593,7 +693,8 @@ impl PyLogger {
         PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
-        self.emit_record(record);
+        let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
+        self.emit_record(record, exc_info_py);
         Ok(())
     }
 
@@ -620,7 +721,8 @@ impl PyLogger {
         PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
-        self.emit_record(record);
+        let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
+        self.emit_record(record, exc_info_py);
         Ok(())
     }
 
@@ -647,7 +749,8 @@ impl PyLogger {
         PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
-        self.emit_record(record);
+        let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
+        self.emit_record(record, exc_info_py);
         Ok(())
     }
 
@@ -674,7 +777,8 @@ impl PyLogger {
         PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
-        self.emit_record(record);
+        let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
+        self.emit_record(record, exc_info_py);
         Ok(())
     }
 
@@ -701,7 +805,8 @@ impl PyLogger {
         PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
-        self.emit_record(record);
+        let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
+        self.emit_record(record, exc_info_py);
         Ok(())
     }
 
@@ -728,7 +833,8 @@ impl PyLogger {
         PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, true);
-        self.emit_record(record);
+        let exc_info_py = self.extract_exc_info_raw(py, kwargs, true);
+        self.emit_record(record, exc_info_py);
         Ok(())
     }
 
@@ -757,7 +863,8 @@ impl PyLogger {
         PyLogger::populate_caller_info(py, &mut record);
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
-        self.emit_record(record);
+        let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
+        self.emit_record(record, exc_info_py);
         Ok(())
     }
 
