@@ -69,6 +69,7 @@ from .compat_handlers import (
     WARNING,
     Formatter,
     Handler,
+    LoggerAdapter,
     NullHandler,
     _STYLES,
 )
@@ -123,6 +124,7 @@ class _LoggingModule(types.ModuleType):
             self.Logger,
             self.LogRecord,
             self.Filter,
+            self.LoggerAdapter,
         ) = (
             NullHandler,
             Formatter,
@@ -131,6 +133,7 @@ class _LoggingModule(types.ModuleType):
             PyLogger,
             PyLogRecord,
             Filter,
+            LoggerAdapter,
         )
 
         self.PercentStyle = PercentStyle

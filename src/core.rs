@@ -41,9 +41,9 @@ impl LogLevel {
 }
 
 /// Convert a serde_json::Value to a Python object.
-/// Arrays become PyTuple (needed for `msg % args` formatting).
-/// Objects become PyDict. Primitives map to their Python equivalents.
-pub fn json_value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
+/// When `as_tuple` is true, top-level arrays become PyTuple (for `msg % args` formatting).
+/// When `as_tuple` is false, arrays become PyList (for nested data like extra fields).
+fn json_value_to_py_inner(py: Python, value: &Value, as_tuple: bool) -> PyResult<Py<PyAny>> {
     match value {
         Value::Null => Ok(py.None()),
         Value::Bool(b) => b.into_py_any(py),
@@ -60,19 +60,36 @@ pub fn json_value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
         Value::Array(arr) => {
             let items: Vec<Py<PyAny>> = arr
                 .iter()
-                .map(|v| json_value_to_py(py, v))
+                .map(|v| json_value_to_py_inner(py, v, false)) // nested arrays always PyList
                 .collect::<PyResult<Vec<_>>>()?;
-            Ok(PyTuple::new(py, &items).expect("Failed to create PyTuple").into_any().unbind())
+            if as_tuple {
+                Ok(PyTuple::new(py, &items).expect("Failed to create PyTuple").into_any().unbind())
+            } else {
+                Ok(pyo3::types::PyList::new(py, &items).expect("Failed to create PyList").into_any().unbind())
+            }
         }
         Value::Object(map) => {
             let dict = PyDict::new(py);
             for (k, v) in map {
-                let py_val = json_value_to_py(py, v)?;
+                let py_val = json_value_to_py_inner(py, v, false)?;
                 dict.set_item(k, py_val).expect("Failed to set dict item");
             }
             Ok(dict.into_any().unbind())
         }
     }
+}
+
+/// Convert a serde_json::Value to a Python object.
+/// Top-level arrays become PyTuple (needed for `msg % args` formatting).
+/// Nested arrays become PyList. Objects become PyDict.
+pub fn json_value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
+    json_value_to_py_inner(py, value, true)
+}
+
+/// Convert a serde_json::Value to a Python object.
+/// ALL arrays become PyList (for extra fields, __dict__, etc.).
+pub fn json_value_to_py_as_list(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
+    json_value_to_py_inner(py, value, false)
 }
 
 /// Complete log record structure for compatibility with Python logging.
@@ -213,7 +230,7 @@ impl LogRecord {
     fn __getattr__(&self, py: Python, name: &str) -> PyResult<Py<PyAny>> {
         if let Some(ref extra) = self.extra {
             if let Some(value) = extra.get(name) {
-                return json_value_to_py(py, value);
+                return json_value_to_py_as_list(py, value);
             }
         }
         Err(pyo3::exceptions::PyAttributeError::new_err(
@@ -320,7 +337,7 @@ impl LogRecord {
         dict.set_item("task_name", &self.task_name)?;
         if let Some(ref extra) = self.extra {
             for (key, value) in extra {
-                dict.set_item(key, json_value_to_py(py, value)?)?;
+                dict.set_item(key, json_value_to_py_as_list(py, value)?)?;
             }
         }
         Ok(dict.into_any().unbind())
