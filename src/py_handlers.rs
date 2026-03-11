@@ -10,9 +10,41 @@ use std::sync::Arc;
 use crate::core::{LogLevel, LogRecord};
 use crate::formatter::{ColorFormatter, Formatter, PythonFormatter};
 use crate::handler::{
-    FileHandler, HTTPHandler, HTTPHandlerConfig, MemoryHandler, OTLPHandler, OTLPHandlerConfig,
+    FileHandler, HTTPHandler, HTTPHandlerConfig, Handler, MemoryHandler, OTLPHandler, OTLPHandlerConfig,
     RotatingFileHandler, StreamHandler,
 };
+
+/// Extract a formatter instance from a Python object.
+/// Accepts:
+///   - Rust-native PyFormatter or PyColorFormatter
+///   - Any Python object with a `fmt` attribute (e.g., compat_handlers.Formatter)
+///     → creates a PythonFormatter from fmt + optional datefmt
+fn extract_formatter(formatter: &Bound<PyAny>) -> PyResult<Arc<dyn crate::formatter::Formatter + Send + Sync>> {
+    if let Ok(f) = formatter.extract::<PyRef<PyFormatter>>() {
+        return Ok(f.inner.clone());
+    }
+    if let Ok(f) = formatter.extract::<PyRef<PyColorFormatter>>() {
+        return Ok(f.inner.clone());
+    }
+    // Fallback: accept any Python object with a `fmt` attribute (compat Formatter)
+    if let Ok(fmt_attr) = formatter.getattr("fmt") {
+        if let Ok(fmt_str) = fmt_attr.extract::<String>() {
+            let datefmt: Option<String> = formatter
+                .getattr("datefmt")
+                .ok()
+                .and_then(|d| d.extract::<String>().ok());
+            let pf = if let Some(df) = datefmt {
+                PythonFormatter::with_date_format(fmt_str, df)
+            } else {
+                PythonFormatter::new(fmt_str)
+            };
+            return Ok(Arc::new(pf));
+        }
+    }
+    Err(PyValueError::new_err(
+        "setFormatter requires a Formatter or ColorFormatter instance"
+    ))
+}
 
 // ============================================================================
 // Formatter Bindings
@@ -115,6 +147,15 @@ impl PyFileHandler {
         Ok(())
     }
 
+
+    /// Set a formatter for this handler.
+    /// Accepts a Formatter, ColorFormatter, or any Python object with a `fmt` attribute.
+    fn setFormatter(&self, formatter: &Bound<PyAny>) -> PyResult<()> {
+        let f = extract_formatter(formatter)?;
+        self.inner.set_formatter_instance(f);
+        Ok(())
+    }
+
     /// Set the flush level. Records at or above this level trigger immediate flush.
     /// Default is ERROR (40).
     #[pyo3(name = "setFlushLevel")]
@@ -177,6 +218,15 @@ impl PyStreamHandler {
         Ok(())
     }
 
+
+    /// Set a formatter for this handler.
+    /// Accepts a Formatter, ColorFormatter, or any Python object with a `fmt` attribute.
+    fn setFormatter(&self, formatter: &Bound<PyAny>) -> PyResult<()> {
+        let f = extract_formatter(formatter)?;
+        self.inner.set_formatter_instance(f);
+        Ok(())
+    }
+
     /// Set an error callback function.
     #[pyo3(name = "setErrorCallback")]
     fn set_error_callback(&self, py: Python, callback: Option<Py<PyAny>>) -> PyResult<()> {
@@ -214,6 +264,15 @@ impl PyRotatingFileHandler {
 
     fn setLevel(&self, level: u32) -> PyResult<()> {
         self.inner.set_level(LogLevel::from_usize(level as usize));
+        Ok(())
+    }
+
+
+    /// Set a formatter for this handler.
+    /// Accepts a Formatter, ColorFormatter, or any Python object with a `fmt` attribute.
+    fn setFormatter(&self, formatter: &Bound<PyAny>) -> PyResult<()> {
+        let f = extract_formatter(formatter)?;
+        self.inner.set_formatter_instance(f);
         Ok(())
     }
 
@@ -491,6 +550,11 @@ impl PyMemoryHandler {
         self.inner.clear();
     }
 
+
+    /// Emit a LogRecord to this handler, storing it in memory.
+    pub fn emit(&self, record: LogRecord) {
+        futures::executor::block_on(self.inner.emit(&record));
+    }
     #[pyo3(name = "setLevel")]
     pub fn set_level(&self, level: u32) -> PyResult<()> {
         self.inner.set_level(LogLevel::from_usize(level as usize));

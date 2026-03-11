@@ -137,7 +137,7 @@ impl FileHandler {
         Ok(Self {
             writer: Mutex::new(BufWriter::new(f)),
             level: AtomicU8::new(LogLevel::Debug as u8),
-            flush_level: AtomicU8::new(LogLevel::Error as u8),
+            flush_level: AtomicU8::new(LogLevel::Debug as u8),
             formatter: Mutex::new(None),
             error_callback: Mutex::new(None),
         })
@@ -261,7 +261,7 @@ impl RotatingFileHandler {
             max_bytes,
             backup_count,
             level: AtomicU8::new(LogLevel::Debug as u8),
-            flush_level: AtomicU8::new(LogLevel::Error as u8),
+            flush_level: AtomicU8::new(LogLevel::Debug as u8),
             writer: Mutex::new(BufWriter::new(file)),
             current_size: AtomicU64::new(current_size),
             formatter: Mutex::new(None),

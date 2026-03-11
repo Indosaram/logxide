@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::core::{create_log_record_with_extra, LogLevel, LogRecord, Logger};
-use crate::fast_logger::FastLogger;
+use crate::fast_logger::{FastLogger, set_level_and_propagate};
 use crate::globals::{add_handler_to_registry, HANDLERS};
 use crate::handler::Handler;
 
@@ -33,7 +33,11 @@ pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
         Value::Array(arr)
     } else if let Ok(tuple) = obj.cast::<PyTuple>() {
         let arr: Vec<Value> = tuple.iter().map(|item| py_to_json_value(&item)).collect();
-        Value::Array(arr)
+        // Tag tuple so json_value_to_py can restore it as PyTuple (not PyList)
+        let mut map = serde_json::Map::new();
+        map.insert("__logxide_type__".to_string(), Value::String("tuple".to_string()));
+        map.insert("__logxide_items__".to_string(), Value::Array(arr));
+        Value::Object(map)
     } else if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
@@ -42,10 +46,20 @@ pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
             }
         }
         Value::Object(map)
-    } else if let Ok(s) = obj.str() {
-        Value::String(s.to_string())
     } else {
-        Value::Null
+        // Non-JSON-serializable Python object (e.g. exceptions, custom classes).
+        // Store both str() and repr() so that %s and %r format correctly later.
+        let str_val = obj.str()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let repr_val = obj.repr()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|_| str_val.clone());
+        let mut map = serde_json::Map::new();
+        map.insert("__logxide_type__".to_string(), Value::String("pyobj".to_string()));
+        map.insert("__logxide_str__".to_string(), Value::String(str_val));
+        map.insert("__logxide_repr__".to_string(), Value::String(repr_val));
+        Value::Object(map)
     }
 }
 
@@ -134,19 +148,46 @@ impl PyLogger {
             None
         })
     }
+
+    /// Extract exc_info from kwargs. If exc_info=True, capture current exception traceback.
+    /// If exc_info is a tuple (exception info), format it. Returns formatted traceback string.
+    fn extract_exc_info(
+        &self,
+        py: Python,
+        kwargs: Option<&Bound<PyDict>>,
+    ) -> Option<String> {
+        let dict = kwargs?;
+        let exc_info_val = dict.get_item("exc_info").ok()??;
+        
+        // Check if exc_info is truthy
+        if !exc_info_val.is_truthy().unwrap_or(false) {
+            return None;
+        }
+        
+        // Capture traceback using traceback.format_exc()
+        py.import("traceback")
+            .and_then(|m| m.call_method0("format_exc"))
+            .map(|s| s.to_string())
+            .ok()
+            .filter(|s| s != "NoneType: None\n" && !s.is_empty())
+    }
 }
 
 #[pymethods]
 impl PyLogger {
     fn emit_record(&self, mut record: LogRecord) {
         // Apply Python callable filters before emission
-        // Filters can modify the record (especially record.msg) and return False to suppress
+        // CRITICAL: Clone filters out of the lock to avoid holding Mutex during Python calls.
+        // Holding a Mutex while calling Python code can deadlock in multi-threaded contexts
+        // (Thread A holds Mutex, waits for GIL; Thread B holds GIL, waits for Mutex).
         let should_emit = Python::attach(|py| {
-            let filters = self.filters.lock().unwrap();
+            let filters: Vec<Py<PyAny>> = {
+                let lock = self.filters.lock().unwrap();
+                lock.iter().map(|f| f.clone_ref(py)).collect()
+            };
+            // Lock is dropped — safe to call Python now
             for filter_obj in filters.iter() {
                 let filter_bound = filter_obj.bind(py);
-                
-                // Try calling filter.filter(record) if it's a filter object
                 // Or call it directly if it's a callable
                 let result = if let Ok(filter_method) = filter_bound.getattr("filter") {
                     // Create a mutable Python dict to represent the record
@@ -158,10 +199,8 @@ impl PyLogger {
                     let _ = py_record.set_item("pathname", &record.pathname);
                     let _ = py_record.set_item("lineno", record.lineno);
                     let _ = py_record.set_item("func_name", &record.func_name);
-                    
                     // Call filter method with reference to dict
                     let call_result = filter_method.call1((&py_record,));
-                    
                     // Check if filter modified the msg (after the call)
                     if let Ok(Some(new_msg)) = py_record.get_item("msg") {
                         if let Ok(msg_str) = new_msg.extract::<String>() {
@@ -183,10 +222,8 @@ impl PyLogger {
                     let _ = py_record.set_item("pathname", &record.pathname);
                     let _ = py_record.set_item("lineno", record.lineno);
                     let _ = py_record.set_item("func_name", &record.func_name);
-                    
                     // Call filter with reference to dict
                     let call_result = filter_bound.call1((&py_record,));
-                    
                     // Check if filter modified the msg (after the call)
                     if let Ok(Some(new_msg)) = py_record.get_item("msg") {
                         if let Ok(msg_str) = new_msg.extract::<String>() {
@@ -201,51 +238,58 @@ impl PyLogger {
                 } else {
                     true  // Not a valid filter, allow the record
                 };
-                
                 if !result {
                     return false;  // Filter rejected the record
                 }
             }
             true  // All filters passed
         });
-        
         if !should_emit {
             return;
         }
         
-        let local_handlers = self.local_handlers.lock().unwrap();
-
+        // CRITICAL: Clone handler lists out of locks before emitting.
+        // This prevents holding any Mutex while calling handler.emit() which may
+        // involve I/O, Python callbacks, or other blocking operations.
+        let local_handlers_snapshot: Vec<Arc<dyn Handler + Send + Sync>> = {
+            self.local_handlers.lock().unwrap().clone()
+        };
         // 1. Handle Rust handlers
-        if local_handlers.is_empty() {
-            drop(local_handlers);
-            let global_handlers = HANDLERS.lock().unwrap();
-            for handler in global_handlers.iter() {
+        if local_handlers_snapshot.is_empty() {
+            let global_handlers_snapshot: Vec<Arc<dyn Handler + Send + Sync>> = {
+                HANDLERS.lock().unwrap().clone()
+            };
+            for handler in global_handlers_snapshot.iter() {
                 let _ = futures::executor::block_on(handler.emit(&record));
             }
         } else {
-            for handler in local_handlers.iter() {
+            for handler in local_handlers_snapshot.iter() {
                 let _ = futures::executor::block_on(handler.emit(&record));
             }
-
             let should_propagate = *self.propagate.lock().unwrap();
             if should_propagate {
-                drop(local_handlers);
-                let global_handlers = HANDLERS.lock().unwrap();
-                for handler in global_handlers.iter() {
+                let global_handlers_snapshot: Vec<Arc<dyn Handler + Send + Sync>> = {
+                    HANDLERS.lock().unwrap().clone()
+                };
+                for handler in global_handlers_snapshot.iter() {
                     let _ = futures::executor::block_on(handler.emit(&record));
                 }
             }
         }
-
         // 2. Handle Python handlers (like pytest's caplog)
+        // CRITICAL: Clone handler lists out of locks before calling Python.
         Python::attach(|py| {
-            let local_py = self.local_python_handlers.lock().unwrap();
-            let global_py = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
-
+            let local_py: Vec<Py<PyAny>> = {
+                let lock = self.local_python_handlers.lock().unwrap();
+                lock.iter().map(|h| h.clone_ref(py)).collect()
+            };
+            let global_py: Vec<Py<PyAny>> = {
+                let lock = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+                lock.iter().map(|h| h.clone_ref(py)).collect()
+            };
             if local_py.is_empty() && global_py.is_empty() {
                 return;
             }
-
             // Create a proper Python LogRecord
             let py_record = match self.makeRecord(
                 py,
@@ -267,12 +311,10 @@ impl PyLogger {
                     return;
                 }
             };
-
             // Set exc_text on the Python LogRecord so stdlib Formatter.format() appends it
             if let Some(ref exc_text) = record.exc_text {
                 let _ = py_record.bind(py).setattr("exc_text", exc_text.as_str());
             }
-
             // Call local Python handlers
             for handler in local_py.iter() {
                 let b_handler = handler.bind(py);
@@ -369,15 +411,33 @@ impl PyLogger {
         })
     }
 
-    fn setLevel(&mut self, level: u32) -> PyResult<()> {
-        let level = LogLevel::from_usize(level as usize);
-        self.fast_logger.set_level(level);
-        self.inner.lock().unwrap().set_level(level);
+    fn setLevel(&mut self, level: &Bound<'_, PyAny>) -> PyResult<()> {
+        let level_int: u32 = if let Ok(s) = level.extract::<String>() {
+            match s.as_str() {
+                "CRITICAL" | "FATAL" => 50,
+                "ERROR" => 40,
+                "WARNING" | "WARN" => 30,
+                "INFO" => 20,
+                "DEBUG" => 10,
+                "NOTSET" => 0,
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        format!("Unknown level: '{}'", s),
+                    ));
+                }
+            }
+        } else {
+            level.extract::<u32>()?
+        };
+        let log_level = LogLevel::from_usize(level_int as usize);
+        // Use the manager to propagate effective level to child loggers
+        set_level_and_propagate(&self.fast_logger.name, log_level);
+        self.inner.lock().unwrap().set_level(log_level);
         Ok(())
     }
-
     fn getEffectiveLevel(&self) -> PyResult<u32> {
-        Ok(self.fast_logger.get_level() as u32)
+        // Return the effective level (may be inherited from parent)
+        Ok(self.fast_logger.get_effective_level())
     }
 
     fn addHandler(&self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
@@ -397,6 +457,17 @@ impl PyLogger {
         }
     }
 
+
+    fn removeHandler(&self, py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
+        crate::globals::remove_handler_from_registry(
+            py,
+            handler,
+            &self.fast_logger.name,
+            &self.local_handlers,
+            &self.local_python_handlers,
+        );
+        Ok(())
+    }
     /// Add a filter to this logger.
     /// The filter can be:
     /// - An object with a `filter(record)` method that returns True/False
@@ -458,6 +529,7 @@ impl PyLogger {
             extra_fields,
         );
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info(py, kwargs);
         self.emit_record(record);
         Ok(())
     }
@@ -483,6 +555,7 @@ impl PyLogger {
             extra_fields,
         );
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info(py, kwargs);
         self.emit_record(record);
         Ok(())
     }
@@ -508,6 +581,7 @@ impl PyLogger {
             extra_fields,
         );
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info(py, kwargs);
         self.emit_record(record);
         Ok(())
     }
@@ -533,6 +607,7 @@ impl PyLogger {
             extra_fields,
         );
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info(py, kwargs);
         self.emit_record(record);
         Ok(())
     }
@@ -558,6 +633,7 @@ impl PyLogger {
             extra_fields,
         );
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info(py, kwargs);
         self.emit_record(record);
         Ok(())
     }
@@ -620,6 +696,7 @@ impl PyLogger {
             extra_fields,
         );
         record.args = serialized_args;
+        record.exc_text = self.extract_exc_info(py, kwargs);
         self.emit_record(record);
         Ok(())
     }
@@ -659,7 +736,11 @@ impl PyLogger {
 
     fn handle(&self, record: Py<PyAny>) -> PyResult<()> {
         Python::attach(|py| {
-            let handlers = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+            // Clone handler list out of lock to avoid deadlock
+            let handlers: Vec<Py<PyAny>> = {
+                let lock = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+                lock.iter().map(|h| h.clone_ref(py)).collect()
+            };
             for handler in handlers.iter() {
                 let _ = handler.call_method1(py, "handle", (record.clone_ref(py),));
             }
