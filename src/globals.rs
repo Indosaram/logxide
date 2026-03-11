@@ -305,3 +305,66 @@ pub fn add_handler_to_registry(
         Ok(true)
     }
 }
+
+/// Remove a handler from the appropriate registry
+pub fn remove_handler_from_registry(
+    py: Python,
+    handler: &Bound<PyAny>,
+    logger_name: &str,
+    local_handlers: &Mutex<Vec<Arc<dyn Handler + Send + Sync>>>,
+    local_python_handlers: &Mutex<Vec<Py<PyAny>>>,
+) {
+    // Try to extract Rust handler Arc for identity-based removal
+    let handler_arc: Option<Arc<dyn Handler + Send + Sync>> =
+        if let Ok(memory_handler) = handler.extract::<PyRef<PyMemoryHandler>>() {
+            Some(memory_handler.inner.clone())
+        } else if let Ok(file_handler) = handler.extract::<PyRef<PyFileHandler>>() {
+            Some(file_handler.inner.clone())
+        } else if let Ok(stream_handler) = handler.extract::<PyRef<PyStreamHandler>>() {
+            Some(stream_handler.inner.clone())
+        } else if let Ok(rotating_handler) = handler.extract::<PyRef<PyRotatingFileHandler>>() {
+            Some(rotating_handler.inner.clone())
+        } else if let Ok(inner) = handler.getattr("_inner") {
+            if let Ok(memory_handler) = inner.extract::<PyRef<PyMemoryHandler>>() {
+                Some(memory_handler.inner.clone())
+            } else if let Ok(file_handler) = inner.extract::<PyRef<PyFileHandler>>() {
+                Some(file_handler.inner.clone())
+            } else if let Ok(stream_handler) = inner.extract::<PyRef<PyStreamHandler>>() {
+                Some(stream_handler.inner.clone())
+            } else if let Ok(rotating_handler) = inner.extract::<PyRef<PyRotatingFileHandler>>() {
+                Some(rotating_handler.inner.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+    // Remove Rust handler by Arc pointer equality
+    if let Some(ref target_arc) = handler_arc {
+        let target_ptr = Arc::as_ptr(target_arc) as *const () as usize;
+        if logger_name == "root" {
+            HANDLERS.lock().unwrap().retain(|h| {
+                let h_ptr = Arc::as_ptr(h) as *const () as usize;
+                h_ptr != target_ptr
+            });
+        } else {
+            local_handlers.lock().unwrap().retain(|h| {
+                let h_ptr = Arc::as_ptr(h) as *const () as usize;
+                h_ptr != target_ptr
+            });
+        }
+    }
+
+    // Remove from PYTHON_HANDLERS_KEEP_ALIVE by Python identity
+    PYTHON_HANDLERS_KEEP_ALIVE
+        .lock()
+        .unwrap()
+        .retain(|h| !h.bind(py).is(handler));
+
+    // Remove from local_python_handlers by Python identity
+    local_python_handlers
+        .lock()
+        .unwrap()
+        .retain(|h| !h.bind(py).is(handler));
+}

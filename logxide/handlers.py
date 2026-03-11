@@ -247,7 +247,23 @@ class MemoryHandler(logging.Handler):
         self._inner.setLevel(level)
 
     def emit(self, record):
-        pass
+        """Forward stdlib LogRecord to Rust MemoryHandler for capture."""
+        try:
+            from . import logxide as _ext
+            # Convert stdlib logging.LogRecord to Rust LogRecord
+            rust_record = _ext.LogRecord(
+                name=getattr(record, 'name', ''),
+                levelno=getattr(record, 'levelno', 0),
+                pathname=getattr(record, 'pathname', ''),
+                lineno=getattr(record, 'lineno', 0),
+                msg=record.getMessage() if hasattr(record, 'getMessage') else str(getattr(record, 'msg', '')),
+            )
+            rust_record.levelname = getattr(record, 'levelname', '')
+            rust_record.func_name = getattr(record, 'funcName', '')
+            rust_record.exc_text = getattr(record, 'exc_text', None)
+            self._inner.emit(rust_record)
+        except Exception:
+            pass
 
     def get_records(self):
         """Returns all captured records as a list (deprecated: use .records property)."""

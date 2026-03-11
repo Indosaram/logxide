@@ -224,3 +224,4 @@ def _unregisterHandler(name):
     """
     if name in _handlers:
         del _handlers[name]
+

@@ -60,6 +60,7 @@ from .compat_handlers import (
     Filter,
     INFO,
     LogRecord as PyLogRecord,
+    LoggerAdapter,
     LoggingManager,
     NOTSET,
     PercentStyle,
@@ -132,6 +133,7 @@ class _LoggingModule(types.ModuleType):
             PyLogRecord,
             Filter,
         )
+        self.LoggerAdapter = LoggerAdapter
 
         self.PercentStyle = PercentStyle
         self.StrFormatStyle = StrFormatStyle
@@ -274,6 +276,9 @@ def _install(sentry=None):
             original_setLevel(level)
             target = getattr(std_logger, "_logxide_pylogger", logxide_logger)
             if hasattr(target, "setLevel"):
+                if isinstance(level, str):
+                    import logging as _std_logging
+                    level = _std_logging.getLevelNamesMapping().get(level, 0)
                 target.setLevel(level)
 
         std_logger.setLevel = wrapped_setLevel
@@ -315,6 +320,30 @@ def _install(sentry=None):
 
         std_logger.removeFilter = wrapped_removeFilter
 
+
+        # Wrap getChild to ensure child loggers also get logxide patching
+        original_getChild = std_logger.getChild
+
+        def wrapped_getChild(suffix):
+            child_name = f"{std_logger.name}.{suffix}" if std_logger.name else suffix
+            # Use logxide_getLogger to ensure the child is patched
+            return logxide_getLogger(child_name)
+
+        std_logger.getChild = wrapped_getChild
+
+        # Wrap removeHandler to forward to LogXide PyLogger
+        original_removeHandler = std_logger.removeHandler
+
+        def wrapped_removeHandler(hdlr):
+            original_removeHandler(hdlr)
+            target = getattr(std_logger, '_logxide_pylogger', logxide_logger)
+            if hasattr(target, 'removeHandler'):
+                try:
+                    target.removeHandler(hdlr)
+                except Exception:
+                    pass
+
+        std_logger.removeHandler = wrapped_removeHandler
         return std_logger
 
     std_logging.getLogger = logxide_getLogger

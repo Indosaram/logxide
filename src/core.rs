@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::IntoPyObjectExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,8 +40,34 @@ impl LogLevel {
     }
 }
 
-/// Convert a serde_json::Value to a Python object.
-/// Arrays become PyTuple (needed for `msg % args` formatting).
+/// Proxy object that preserves both __str__ and __repr__ for non-JSON-serializable Python objects.
+/// Defined as a Rust pyclass to avoid importing Python modules at runtime (which can deadlock
+/// in multi-threaded contexts).
+#[pyclass]
+#[derive(Debug, Clone)]
+pub struct ReprProxy {
+    str_val: String,
+    repr_val: String,
+}
+
+#[pymethods]
+impl ReprProxy {
+    #[new]
+    fn new(str_val: String, repr_val: String) -> Self {
+        ReprProxy { str_val, repr_val }
+    }
+
+    fn __str__(&self) -> &str {
+        &self.str_val
+    }
+
+    fn __repr__(&self) -> &str {
+        &self.repr_val
+    }
+}
+
+/// Convert a serde_json::Value to a Python object, preserving list types.
+/// Arrays become PyList (preserves Python list semantics for str() representation).
 /// Objects become PyDict. Primitives map to their Python equivalents.
 pub fn json_value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
     match value {
@@ -62,9 +88,26 @@ pub fn json_value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
                 .iter()
                 .map(|v| json_value_to_py(py, v))
                 .collect::<PyResult<Vec<_>>>()?;
-            Ok(PyTuple::new(py, &items).expect("Failed to create PyTuple").into_any().unbind())
+            Ok(PyList::new(py, &items).expect("Failed to create PyList").into_any().unbind())
         }
         Value::Object(map) => {
+            // Check for tagged tuple (preserved from py_to_json_value)
+            if map.get("__logxide_type__").and_then(|v| v.as_str()) == Some("tuple") {
+                if let Some(Value::Array(items)) = map.get("__logxide_items__") {
+                    let py_items: Vec<Py<PyAny>> = items
+                        .iter()
+                        .map(|v| json_value_to_py(py, v))
+                        .collect::<PyResult<Vec<_>>>()?;
+                    return Ok(PyTuple::new(py, &py_items).expect("Failed to create PyTuple").into_any().unbind());
+                }
+            }
+            // Check for tagged non-serializable Python object
+            if map.get("__logxide_type__").and_then(|v| v.as_str()) == Some("pyobj") {
+                let str_val = map.get("__logxide_str__").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let repr_val = map.get("__logxide_repr__").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let proxy = ReprProxy::new(str_val, repr_val);
+                return proxy.into_py_any(py);
+            }
             let dict = PyDict::new(py);
             for (k, v) in map {
                 let py_val = json_value_to_py(py, v)?;
@@ -72,6 +115,23 @@ pub fn json_value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
             }
             Ok(dict.into_any().unbind())
         }
+    }
+}
+
+/// Convert a serde_json::Value to a Python object for use as top-level `msg % args`.
+/// Top-level arrays become PyTuple (needed for `msg % args` positional formatting).
+/// Nested arrays within dicts/lists are PyList (preserves Python list semantics).
+pub fn json_value_to_py_as_args(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
+    match value {
+        Value::Array(arr) => {
+            let items: Vec<Py<PyAny>> = arr
+                .iter()
+                .map(|v| json_value_to_py(py, v))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PyTuple::new(py, &items).expect("Failed to create PyTuple").into_any().unbind())
+        }
+        // For non-array top-level args, use the standard converter
+        _ => json_value_to_py(py, value),
     }
 }
 
@@ -173,7 +233,7 @@ impl LogRecord {
             Some(json_str) => {
                 let value: Value = serde_json::from_str(json_str)
                     .expect("LogRecord.args contains invalid JSON");
-                json_value_to_py(py, &value)
+                json_value_to_py_as_args(py, &value)
             }
         }
     }
@@ -197,7 +257,7 @@ impl LogRecord {
             Some(json_str) => {
                 let value: Value = serde_json::from_str(json_str)
                     .expect("LogRecord.args contains invalid JSON");
-                let py_args = json_value_to_py(py, &value)?;
+                let py_args = json_value_to_py_as_args(py, &value)?;
                 let py_msg = self.msg.as_str().into_pyobject(py)?;
                 let formatted = py_msg.call_method1("__mod__", (py_args,))?;
                 Ok(formatted.str()?.to_string())
@@ -235,7 +295,7 @@ impl LogRecord {
                 Python::attach(|py| {
                     let value: Value = serde_json::from_str(json_str)
                         .expect("LogRecord.args contains invalid JSON");
-                    let py_args = json_value_to_py(py, &value)
+                    let py_args = json_value_to_py_as_args(py, &value)
                         .expect("Failed to convert args to Python object");
                     let py_msg = self.msg.as_str().into_pyobject(py)
                         .expect("Failed to convert msg to Python string");
