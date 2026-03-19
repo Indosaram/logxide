@@ -4,6 +4,7 @@ Test logxide.testing pytest plugin
 Tests that caplog fixture is automatically available
 via pytest plugin registration in pyproject.toml.
 """
+
 import pytest
 
 from logxide import logging
@@ -17,13 +18,13 @@ class TestCaplogLogxideFixture:
 
     def test_fixture_available(self, caplog):
         """fixture가 존재하고 기본 속성이 있는지 확인"""
-        assert hasattr(caplog, 'records')
-        assert hasattr(caplog, 'text')
-        assert hasattr(caplog, 'record_tuples')
-        assert hasattr(caplog, 'messages')
-        assert hasattr(caplog, 'handler')
-        assert hasattr(caplog, 'clear')
-        assert hasattr(caplog, 'set_level')
+        assert hasattr(caplog, "records")
+        assert hasattr(caplog, "text")
+        assert hasattr(caplog, "record_tuples")
+        assert hasattr(caplog, "messages")
+        assert hasattr(caplog, "handler")
+        assert hasattr(caplog, "clear")
+        assert hasattr(caplog, "set_level")
 
     def test_captures_info(self, caplog):
         """INFO 레벨 로그 캡처"""

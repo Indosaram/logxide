@@ -6,8 +6,6 @@ functions to ensure they work correctly and maintain compatibility with
 the standard library logging module.
 """
 
-
-
 from logxide import logging
 from logxide.compat_functions import (
     _registerHandler,

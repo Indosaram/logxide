@@ -138,6 +138,7 @@ class LogCaptureFixture:
         """
         if isinstance(level, str):
             import logging as _logging
+
             level = getattr(_logging, level.upper())
         self._ensure_handler().setLevel(level)
 
@@ -157,6 +158,7 @@ class LogCaptureFixture:
         """
         if isinstance(level, str):
             import logging as _logging
+
             level = getattr(_logging, level.upper())
         handler = self._ensure_handler()
         try:
