@@ -11,7 +11,7 @@ use crate::core::{LogLevel, LogRecord};
 use crate::py_logger::check_level;
 use crate::formatter::{ColorFormatter, Formatter, PythonFormatter};
 use crate::handler::{
-    FileHandler, HTTPHandler, HTTPHandlerConfig, MemoryHandler, OTLPHandler, OTLPHandlerConfig,
+    FileHandler, Handler, HTTPHandler, HTTPHandlerConfig, MemoryHandler, OTLPHandler, OTLPHandlerConfig,
     RotatingFileHandler, StreamHandler,
 };
 
@@ -151,8 +151,7 @@ impl PyFileHandler {
     }
 
     fn flush(&self) -> PyResult<()> {
-        use crate::handler::Handler;
-        futures::executor::block_on(self.inner.flush());
+        self.inner.flush();
         Ok(())
     }
 }
@@ -254,8 +253,7 @@ impl PyRotatingFileHandler {
     }
 
     fn flush(&self) -> PyResult<()> {
-        use crate::handler::Handler;
-        futures::executor::block_on(self.inner.flush());
+        self.inner.flush();
         Ok(())
     }
 }

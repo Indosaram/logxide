@@ -26,13 +26,13 @@ LogXide is **NOT** a drop-in replacement for Python's logging module. It priorit
 | Custom Python handlers | ❌ | Not supported - use Rust handlers only |
 | Subclassing `LogRecord` | ❌ | Rust type, not subclassable |
 | Subclassing `Logger` | ❌ | Rust type, not subclassable |
-| pytest `caplog` | ❌ | Not compatible |
+| pytest `caplog` | ⚠️ | Use `caplog_logxide` fixture |
 | StringIO capture | ❌ | Use file-based logging |
 
 **If your project requires:**
 - Subclassing `LogRecord` or `Logger`
 - Custom Python handlers
-- pytest `caplog` fixture
+- pytest `caplog` fixture (use `caplog_logxide` instead)
 - Full stdlib logging compatibility
 
 **→ Use standard Python logging instead.**
@@ -71,8 +71,8 @@ pip install logxide[dev]
 ## Documentation
 
 - **[Usage Guide](docs/usage.md)** - Complete usage examples and API guide
-- **[Integration Guide](docs/integration.md)** - Flask, Django, and FastAPI integration
-- **[Sentry Integration](docs/sentry.md)** - Automatic error tracking with Sentry
+- **[Integration Guide](docs/integrations/index.md)** - Flask, Django, and FastAPI integration
+- **[Sentry Integration](docs/integrations/sentry.md)** - Automatic error tracking with Sentry
 - **[Performance Benchmarks](docs/benchmarks.md)** - Comprehensive performance analysis
 - **[Architecture](docs/architecture.md)** - Technical architecture and design
 - **[Installation](docs/installation.md)** - Installation and setup guide
@@ -131,7 +131,7 @@ LogXide uses **Rust-native handlers only** for maximum performance:
 - **No custom Python handlers**: `logger.addHandler()` rejects Python `logging.Handler` subclasses
 - **No subclassing**: `LogRecord`, `Logger` are Rust types (not subclassable)
 - **No StringIO capture**: Use file-based logging for tests
-- **No pytest caplog**: Not compatible with Rust native architecture
+- **No pytest caplog**: Use `caplog_logxide` fixture instead
 
 ### Alternatives to LogRecord Subclassing
 
@@ -210,7 +210,7 @@ handler = OTLPHandler(
 | Flask | ✅ | Works with `app.logger` |
 | Django | ✅ | Works with Django logging |
 | FastAPI | ✅ | Works with Uvicorn |
-| pytest | ⚠️ | `caplog` not supported, use file-based testing |
+| pytest | ⚠️ | Use `caplog_logxide` fixture instead of `caplog` |
 | Sentry | ✅ | Auto-integration supported |
 | structlog | ❌ | Requires custom handlers |
 | infra_basement | ❌ | Requires LogRecord subclassing |

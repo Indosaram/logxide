@@ -1,172 +1,169 @@
 # Architecture
 
-LogXide leverages Rust's performance and safety with Python's ease of use through a sophisticated async architecture.
+LogXide delivers high performance through its native Rust implementation, providing Python applications with fast logging while maintaining a familiar API.
 
 ## Core Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Python API    │    │   Rust Core      │    │  Tokio Runtime  │
+│   Python API    │    │   Rust Core      │    │   I/O Output    │
 │                 │    │                  │    │                 │
 │ ┌─────────────┐ │    │ ┌──────────────┐ │    │ ┌─────────────┐ │
-│ │ PyLogger    │ │───▶│ │ LogRecord    │ │───▶│ │ Async       │ │
-│ │ Methods     │ │    │ │ Creation     │ │    │ │ Handlers    │ │
-│ └─────────────┘ │    │ └──────────────┘ │    │ └─────────────┘ │
-│                 │    │                  │    │                 │
-│ ┌─────────────┐ │    │ ┌──────────────┐ │    │ ┌─────────────┐ │
-│ │ basicConfig │ │───▶│ │ Channel      │ │───▶│ │ Concurrent  │ │
-│ │ flush()     │ │    │ │ Management   │ │    │ │ Processing  │ │
-│ └─────────────┘ │    │ └──────────────┘ │    │ └─────────────┘ │
+│ │ PyLogger    │ │───▶│ │ LogRecord    │ │───▶│ │ Files       │ │
+│ │ Methods     │ │    │ │ Creation     │ │    │ │ Streams     │ │
+│ └─────────────┘ │    │ └──────────────┘ │    │ │ HTTP/OTLP   │ │
+│                 │    │                  │    │ └─────────────┘ │
+│ ┌─────────────┐ │    │ ┌──────────────┐ │    │                 │
+│ │ basicConfig │ │───▶│ │ Direct       │ │    │                 │
+│ │ flush()     │ │    │ │ Handler Call │ │    │                 │
+│ └─────────────┘ │    │ └──────────────┘ │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
 ## Message Processing Flow
 
-1. **Python Call** → LogXide PyLogger methods
-2. **Record Creation** → Rust LogRecord with full metadata
-3. **Async Channel** → Non-blocking message passing to Tokio runtime
-4. **Concurrent Processing** → Multiple handlers execute in parallel
-5. **Output** → Formatted messages to files/streams/handlers
+1. **Python Call** → LogXide PyLogger methods via PyO3
+2. **Record Creation** → Rust `LogRecord` with full metadata (logger name, level, timestamp, thread info)
+3. **Handler Dispatch** → Each handler's `emit()` is called (non-blocking for stream/HTTP/OTLP, synchronous for file handlers)
+4. **Output** → Formatted messages written to files/streams/HTTP endpoints
 
 ## Key Components
 
-### PyO3 Integration
-- **Zero-copy data transfer** between Python and Rust
-- **Native Python objects** for seamless integration
-- **Exception handling** that preserves Python semantics
+### PyO3 Integration (`src/lib.rs`, `src/py_logger.rs`, `src/py_handlers.rs`)
+- Python bindings exposing Logger, Handler, and Formatter types
+- `addHandler()` accepts only LogXide's Rust native handlers
+- Python `logging.Handler` subclasses are explicitly rejected
 
-### Async Message Processing
-- **Non-blocking channels** with 1024-capacity buffers
-- **Tokio runtime** with dedicated thread pool
-- **Backpressure handling** for high-throughput scenarios
+### Core Types (`src/core.rs`)
+- `LogRecord` — Rust struct holding log metadata (name, level, message, timestamp, thread info, extras)
+- `Logger` — Core logger with level filtering and handler dispatch
+- `LoggerManager` — Hierarchical logger registry with parent-child relationships
 
-### Concurrent Handlers
-- **Parallel execution** for maximum throughput
-- **Handler isolation** prevents one handler from blocking others
-- **Error resilience** ensures continued operation
+### Fast Logger (`src/fast_logger.rs`)
+- Lock-free implementation using atomic operations
+- Optimized for high-performance scenarios where mutex contention is a concern
+- Uses `AtomicU8` for fast level checking
 
-### Memory Management
-- **Rust's ownership system** prevents memory leaks
-- **Arc-based sharing** for efficient data sharing
-- **Minimal allocations** in hot paths
+### Handlers (`src/handler.rs`)
 
-## Performance Optimizations
+All handlers implement the synchronous `Handler` trait:
 
-### Lock-Free Design
-- **Atomic operations** for shared state
-- **Channel-based communication** eliminates locks
-- **Thread-local buffers** where possible
+```rust
+pub trait Handler: Send + Sync {
+    fn emit(&self, record: &LogRecord);
+    fn flush(&self);
+}
+```
 
-### Efficient String Handling
-- **Rust's formatter** for fast string processing
-- **String interning** for repeated logger names
-- **Copy-on-write** semantics for format strings
+| Handler | Description | I/O Strategy |
+|---------|-------------|-------------|
+| `StreamHandler` | stdout/stderr output | crossbeam 채널 + 백그라운드 스레드 (논블로킹) |
+| `FileHandler` | File output | 동기 직접 write (`Mutex<BufWriter>`) |
+| `RotatingFileHandler` | Auto-rotating files | 동기 직접 write + size-based rotation |
+| `HTTPHandler` | HTTP log shipping | crossbeam 채널 + 백그라운드 스레드 (배치) |
+| `OTLPHandler` | OpenTelemetry OTLP | crossbeam 채널 + 백그라운드 스레드 (Protobuf) |
+| `MemoryHandler` | In-memory capture | 동기 `Vec::push` (`Mutex`) |
+| `NullHandler` | Discards all logs | Zero overhead |
 
-### Async I/O
-- **Non-blocking file operations**
-- **Batched writes** for improved throughput
-- **Async flush** operations
+### Non-blocking Handlers (Stream/HTTP/OTLP)
 
-## Thread Safety
+`StreamHandler`, `HTTPHandler`, `OTLPHandler` use the channel + background thread pattern:
 
-LogXide is designed from the ground up for multi-threaded applications:
+```
+Logger → emit() → crossbeam-channel sender → Background thread → I/O output
+```
 
-- **Thread-safe logger instances** can be shared across threads
-- **Async runtime** handles concurrent access automatically
-- **No global locks** that could cause contention
-- **Per-thread optimization** where beneficial
+- `emit()` formats the message and sends it to a bounded `crossbeam-channel` (non-blocking)
+- A dedicated background thread performs actual I/O
+- HTTP/OTLP handlers additionally batch records before sending
+
+### Synchronous Handlers (File/RotatingFile)
+
+`FileHandler`, `RotatingFileHandler` use direct synchronous writes:
+
+```
+Logger → emit() → Mutex<BufWriter<File>> → write + conditional flush
+```
+
+- `emit()` acquires a `Mutex` lock and writes directly to `BufWriter`
+- Level-based flush: records at `ERROR` or above trigger immediate `flush()`
+- Simpler and faster for single-thread-dominant workloads
+
+### Formatters (`src/formatter.rs`)
+- `PercentStyle` — `%(name)s` format (default)
+- `StrFormatStyle` — `{name}` format
+- `StringTemplateStyle` — `$name` / `${name}` format
+- Full support for padding, alignment, and date formatting
+
+### Filters (`src/filter.rs`)
+- Name-based filtering matching Python's `logging.Filter`
+- Hierarchical name matching (e.g., `"myapp"` matches `"myapp.database"`)
+
+### String Cache (`src/string_cache.rs`)
+- `Arc<str>`-based interning for logger names and level names
+- Reduces allocation overhead for frequently used strings
 
 ## Handler Architecture
 
 ```
-┌─────────────────┐
-│ Handler Registry│
-├─────────────────┤
-│ ┌─────────────┐ │
-│ │FileHandler  │ │───┐
-│ └─────────────┘ │   │
-│ ┌─────────────┐ │   │    ┌──────────────┐
-│ │StreamHandler│ │───┼───▶│ Concurrent   │
-│ └─────────────┘ │   │    │ Execution    │
-│ ┌─────────────┐ │   │    └──────────────┘
-│ │CustomHandler│ │───┘
-│ └─────────────┘ │
-└─────────────────┘
+┌─────────────────────┐
+│   PyLogger          │
+│   (per-logger       │
+│    handler list)    │
+├─────────────────────┤
+│ ┌─────────────────┐ │
+│ │ FileHandler     │ │─── Mutex<BufWriter> → 동기 직접 write
+│ └─────────────────┘ │
+│ ┌─────────────────┐ │
+│ │ StreamHandler   │ │─── crossbeam-channel → Background thread → stderr/stdout
+│ └─────────────────┘ │
+│ ┌─────────────────┐ │
+│ │ HTTPHandler     │ │─── crossbeam-channel → Background thread → HTTP batch
+│ └─────────────────┘ │
+│ ┌─────────────────┐ │
+│ │ OTLPHandler     │ │─── crossbeam-channel → Background thread → OTLP Protobuf
+│ └─────────────────┘ │
+└─────────────────────┘
 ```
 
-### Handler Types
+Each logger maintains its own handler list. When `logger.addHandler()` is called with a Rust handler, it is stored in the logger's local handler list. Global handlers configured via `basicConfig()` are also supported.
 
-- **ConsoleHandler**: Optimized console output
-- **FileHandler**: Async file writing with buffering
-- **RotatingFileHandler**: Automatic log rotation
-- **PythonHandler**: Bridge to Python-based handlers
+## Thread Safety
 
-## Memory Layout
+- **Mutex-protected handlers** — `parking_lot::Mutex` for handler state
+- **Thread-safe logger registry** — `DashMap` for concurrent logger access
+- **Atomic level checks** — `AtomicU8` for fast level filtering without locks
+- **OS-level stream writes** — stdout/stderr bypass Python's GIL
 
-### Log Record Structure
-```rust
-pub struct LogRecord {
-    pub logger_name: String,
-    pub level: LogLevel,
-    pub message: String,
-    pub timestamp: SystemTime,
-    pub thread_id: u64,
-    pub thread_name: Option<String>,
-    // ... additional metadata
-}
-```
+## Memory Management
 
-### Channel Architecture
-```rust
-// Unbounded channel for maximum throughput
-crossbeam::channel::unbounded::<LogMessage>()
-
-// Message types
-enum LogMessage {
-    Record(Box<LogRecord>),
-    Flush(oneshot::Sender<()>),
-}
-```
+- **Rust ownership** prevents memory leaks
+- **`Arc`-based sharing** for handlers and formatters across loggers
+- **`BufWriter`** with 64KB buffers reduces syscall overhead for file handlers
+- **String interning** via `Arc<str>` for repeated logger/level names
 
 ## Comparison with Standard Logging
 
 | Aspect | Python logging | LogXide |
 |--------|---------------|---------|
-| **Threading** | Global locks | Lock-free |
-| **I/O** | Synchronous | Asynchronous |
-| **Memory** | GC overhead | Zero-copy where possible |
-| **Error handling** | Exceptions can block | Isolated error handling |
-| **Performance** | Single-threaded bottlenecks | Concurrent processing |
+| **Implementation** | Pure Python | Native Rust via PyO3 |
+| **Handler calls** | Python method dispatch | Direct Rust function calls |
+| **String formatting** | Python string operations | Rust native formatting |
+| **Thread safety** | Global lock (`_lock`) | Per-handler mutexes |
+| **I/O** | Python file objects | Direct OS I/O (bypasses GIL) |
+| **Custom handlers** | Unlimited (Python subclasses) | Rust handlers only |
+| **subclassing** | Full support | Not supported |
 
-## Future Architecture Plans
+## Dependencies
 
-### Planned Optimizations
-- **SIMD string processing** for format operations
-- **Memory pooling** for log record allocation
-- **Adaptive batching** based on throughput
-- **Custom allocators** for specific use cases
-
-### Plugin Architecture
-- **Handler plugins** for custom output formats
-- **Filter plugins** for advanced message filtering
-- **Formatter plugins** for domain-specific formatting
-
-## Best Practices
-
-### For High Performance
-1. Use async handlers when possible
-2. Avoid frequent logger creation
-3. Use appropriate buffer sizes
-4. Consider message batching for extreme throughput
-
-### For Reliability
-1. Handle handler errors gracefully
-2. Monitor channel capacity
-3. Use flush() for critical messages
-4. Test under load conditions
-
-### For Memory Efficiency
-1. Reuse logger instances
-2. Avoid large format strings
-3. Use string interning for repeated values
-4. Monitor memory usage in long-running processes
+| Crate | Purpose |
+|-------|---------|
+| `pyo3` | Python-Rust bindings |
+| `chrono` | Timestamp formatting |
+| `regex` | Format string parsing |
+| `parking_lot` | Fast mutexes |
+| `dashmap` | Concurrent logger map |
+| `crossbeam-channel` | Stream/HTTP/OTLP handler channels |
+| `ureq` | HTTP requests (HTTPHandler) |
+| `serde` / `serde_json` | JSON serialization |
+| `prost` / `opentelemetry-proto` | OTLP Protobuf encoding |

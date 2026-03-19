@@ -47,4 +47,19 @@ plugins:
 
 nav:
   - Home: index.md
-  - API Reference: reference.md
+  - Getting Started:
+    - Installation: installation.md
+    - Usage Guide: usage.md
+  - Integrations:
+    - Overview: integrations/index.md
+    - Flask: integrations/flask.md
+    - Django: integrations/django.md
+    - FastAPI: integrations/fastapi.md
+    - Sentry: integrations/sentry.md
+  - Performance & Architecture:
+    - Benchmarks: benchmarks.md
+    - Architecture: architecture.md
+  - Development:
+    - Development Guide: development.md
+    - API Reference: reference.md
+
