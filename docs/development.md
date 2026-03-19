@@ -41,7 +41,7 @@ python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install development dependencies
-pip install maturin pytest pytest-cov pytest-xdist
+uv pip install maturin pytest pytest-cov pytest-xdist
 ```
 
 ## Building
@@ -146,17 +146,14 @@ cargo test
 ### Python Code
 
 ```bash
-# Format with black
-black tests/ examples/
+# Format with ruff
+ruff format tests/ examples/
 
-# Sort imports
-isort tests/ examples/
+# Lint and fix imports with ruff
+ruff check --fix tests/ examples/
 
-# Type checking with mypy
-mypy tests/
-
-# Lint with ruff
-ruff check tests/ examples/
+# Type checking with pyright
+pyright tests/
 ```
 
 ## Debugging
@@ -231,7 +228,7 @@ py-spy record -o profile.svg -- python your_script.py
 3. **Make** your changes
 4. **Add** tests for new functionality
 5. **Ensure** all tests pass: `pytest tests/`
-6. **Format** code: `cargo fmt && black .`
+6. **Format** code: `cargo fmt && ruff format .`
 7. **Commit** your changes (`git commit -m 'Add amazing feature'`)
 8. **Push** to the branch (`git push origin feature/amazing-feature`)
 9. **Open** a Pull Request
@@ -350,21 +347,23 @@ pytest tests/test_specific.py::test_function -v
 ```rust
 // In src/handler.rs
 use crate::core::LogRecord;
-use async_trait::async_trait;
 
-#[async_trait]
 pub trait Handler: Send + Sync {
-    async fn emit(&self, record: &LogRecord);
+    fn emit(&self, record: &LogRecord);
+    fn flush(&self);
 }
 
 pub struct CustomHandler {
     // Your handler implementation
 }
 
-#[async_trait]
 impl Handler for CustomHandler {
-    async fn emit(&self, record: &LogRecord) {
+    fn emit(&self, record: &LogRecord) {
         // Your custom logic here
+    }
+
+    fn flush(&self) {
+        // Flush any buffered output
     }
 }
 ```

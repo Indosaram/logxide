@@ -5,10 +5,43 @@ This document provides comprehensive performance analysis of LogXide compared to
 ## Test Environment
 
 - **Platform**: macOS ARM64 (Apple Silicon)
-- **Python**: 3.12.12
+- **Python**: 3.12.12 / 3.14.2
 - **Test Methodology**: Multiple runs (3 iterations) with averages, garbage collection between tests
 - **Libraries Tested**: LogXide, Picologging, Structlog
-- **Test Date**: December 30, 2024
+- **Test Date**: December 30, 2024 (external), March 19, 2026 (internal)
+
+## Internal Handler Benchmarks
+
+Low-level `emit()` latency and throughput measurements for each handler type.
+
+### emit() Latency (10K calls, single LogRecord)
+
+| Handler | Avg | Median | P99 | Ops/sec |
+|---------|-----|--------|-----|---------|
+| StreamHandler | 60ns | 42ns | 84ns | 16.8M |
+| FileHandler | 69ns | 83ns | 84ns | 14.4M |
+| RotatingFileHandler | 67ns | 83ns | 84ns | 15.0M |
+| MemoryHandler | 67ns | 83ns | 84ns | 15.0M |
+
+### Throughput (100K messages via `logger.info`)
+
+| Handler | Messages | Time | Msgs/sec |
+|---------|----------|------|----------|
+| FileHandler | 100,000 | 0.298s | 335,069 |
+| RotatingFileHandler | 100,000 | 2.163s | 46,240 |
+| MemoryHandler | 100,000 | 0.345s | 289,504 |
+
+### flush() Latency (1K calls)
+
+| Handler | Avg | Median | P99 |
+|---------|-----|--------|-----|
+| FileHandler | 80ns | 83ns | 125ns |
+
+!!! note "Handler I/O Strategy"
+    - **StreamHandler**: crossbeam channel + background thread (non-blocking emit)
+    - **FileHandler / RotatingFileHandler**: synchronous direct write (Mutex + BufWriter)
+    - **HTTPHandler / OTLPHandler**: crossbeam channel + background thread (batched)
+    - **MemoryHandler**: synchronous Vec::push
 
 ## File I/O Benchmarks (Real-World Performance)
 
