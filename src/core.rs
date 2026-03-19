@@ -496,7 +496,7 @@ impl Logger {
         for handler in &self.handlers {
             let handler = handler.clone();
             let record = record.clone();
-            futures::executor::block_on(handler.emit(&record));
+            handler.emit(&record);
         }
         if self.propagate {
             if let Some(ref parent) = self.parent {

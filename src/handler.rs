@@ -1,6 +1,7 @@
 //! # Log Handlers
-
-use async_trait::async_trait;
+//!
+//! StreamHandler, HTTPHandler, OTLPHandler use crossbeam channels + background threads
+//! for non-blocking emit(). FileHandler and RotatingFileHandler use synchronous direct writes.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -9,33 +10,27 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::core::{LogLevel, LogRecord};
 use crate::filter::Filter;
 use crate::formatter::Formatter;
 
-#[async_trait::async_trait]
 pub trait Handler: Send + Sync {
-    async fn emit(&self, record: &LogRecord);
-    async fn flush(&self);
+    fn emit(&self, record: &LogRecord);
+    fn flush(&self);
     #[allow(dead_code)]
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>);
     #[allow(dead_code)]
     fn add_filter(&mut self, filter: Arc<dyn Filter + Send + Sync>);
 }
 
-/// A handler that writes log records to stdout or stderr.
-///
-/// Supports custom formatters for controlling output format.
-pub struct StreamHandler {
-    stream: Mutex<StreamDestination>,
-    level: AtomicU8,
-    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
-    error_callback: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
-}
+// ============================================================================
+// StreamHandler — non-blocking stdout/stderr via background thread
+// ============================================================================
 
 #[derive(Clone, Copy)]
 pub enum StreamDestination {
@@ -43,22 +38,78 @@ pub enum StreamDestination {
     Stderr,
 }
 
+pub struct StreamHandler {
+    sender: crossbeam_channel::Sender<String>,
+    flush_signal: crossbeam_channel::Sender<()>,
+    flush_done: crossbeam_channel::Receiver<()>,
+    level: AtomicU8,
+    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
+}
+
 impl StreamHandler {
-    pub fn stdout() -> Self {
+    fn new_with_dest(dest: StreamDestination) -> Self {
+        let (tx, rx) = crossbeam_channel::bounded::<String>(8192);
+        let (flush_tx, flush_rx) = crossbeam_channel::bounded::<()>(1);
+        let (done_tx, done_rx) = crossbeam_channel::bounded::<()>(1);
+
+        std::thread::Builder::new()
+            .name("logxide-stream".into())
+            .spawn(move || {
+                loop {
+                    // Check for flush signal
+                    if flush_rx.try_recv().is_ok() {
+                        // Drain all pending messages
+                        while let Ok(msg) = rx.try_recv() {
+                            Self::write_to_dest(dest, &msg);
+                        }
+                        let _ = done_tx.try_send(());
+                    }
+
+                    match rx.recv_timeout(Duration::from_millis(50)) {
+                        Ok(msg) => {
+                            Self::write_to_dest(dest, &msg);
+                        }
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                            // Drain remaining
+                            while let Ok(msg) = rx.try_recv() {
+                                Self::write_to_dest(dest, &msg);
+                            }
+                            let _ = done_tx.try_send(());
+                            break;
+                        }
+                    }
+                }
+            })
+            .expect("Failed to spawn stream handler thread");
+
         Self {
-            stream: Mutex::new(StreamDestination::Stdout),
+            sender: tx,
+            flush_signal: flush_tx,
+            flush_done: done_rx,
             level: AtomicU8::new(LogLevel::Debug as u8),
             formatter: Mutex::new(None),
-            error_callback: Mutex::new(None),
         }
     }
 
+    pub fn stdout() -> Self {
+        Self::new_with_dest(StreamDestination::Stdout)
+    }
+
     pub fn stderr() -> Self {
-        Self {
-            stream: Mutex::new(StreamDestination::Stderr),
-            level: AtomicU8::new(LogLevel::Debug as u8),
-            formatter: Mutex::new(None),
-            error_callback: Mutex::new(None),
+        Self::new_with_dest(StreamDestination::Stderr)
+    }
+
+    fn write_to_dest(dest: StreamDestination, msg: &str) {
+        match dest {
+            StreamDestination::Stdout => {
+                let stdout = std::io::stdout();
+                let _ = writeln!(stdout.lock(), "{}", msg);
+            }
+            StreamDestination::Stderr => {
+                let stderr = std::io::stderr();
+                let _ = writeln!(stderr.lock(), "{}", msg);
+            }
         }
     }
 
@@ -67,17 +118,8 @@ impl StreamHandler {
     }
 
     /// Set an error callback for this handler.
-    pub fn set_error_callback(&self, callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {
-        *self.error_callback.lock().unwrap() = callback;
-    }
-
-    /// Report an error via callback and stderr.
-    #[allow(dead_code)]
-    fn report_error(&self, msg: String) {
-        if let Some(cb) = self.error_callback.lock().unwrap().as_ref() {
-            cb(msg.clone());
-        }
-        eprintln!("[LogXide Error] {}", msg);
+    pub fn set_error_callback(&self, _callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {
+        // Error callback not needed for stream handler with channel pattern
     }
 
     /// Set a formatter for this handler.
@@ -96,22 +138,20 @@ impl StreamHandler {
     }
 }
 
-#[async_trait]
 impl Handler for StreamHandler {
-    async fn emit(&self, record: &LogRecord) {
+    fn emit(&self, record: &LogRecord) {
         let level = self.level.load(Ordering::Relaxed);
         if record.levelno < level as i32 {
             return;
         }
         let output = self.format_record(record);
-        let dest = *self.stream.lock().unwrap();
-        match dest {
-            StreamDestination::Stdout => println!("{}", output),
-            StreamDestination::Stderr => eprintln!("{}", output),
-        }
+        let _ = self.sender.try_send(output);
     }
 
-    async fn flush(&self) {}
+    fn flush(&self) {
+        let _ = self.flush_signal.try_send(());
+        let _ = self.flush_done.recv_timeout(Duration::from_secs(5));
+    }
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
         *self.formatter.lock().unwrap() = Some(formatter);
@@ -120,15 +160,15 @@ impl Handler for StreamHandler {
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
-/// A handler that writes log records to a file.
-///
-/// Supports custom formatters for controlling output format.
+// ============================================================================
+// FileHandler — synchronous direct file write
+// ============================================================================
+
 pub struct FileHandler {
     writer: Mutex<BufWriter<File>>,
     level: AtomicU8,
     flush_level: AtomicU8,
     formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
-    error_callback: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
 }
 
 impl FileHandler {
@@ -139,7 +179,6 @@ impl FileHandler {
             level: AtomicU8::new(LogLevel::Debug as u8),
             flush_level: AtomicU8::new(LogLevel::Error as u8),
             formatter: Mutex::new(None),
-            error_callback: Mutex::new(None),
         })
     }
 
@@ -159,20 +198,9 @@ impl FileHandler {
     }
 
     /// Set an error callback for this handler.
-    pub fn set_error_callback(&self, callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {
-        *self.error_callback.lock().unwrap() = callback;
-    }
-
-    /// Report an error via callback and stderr.
-    fn report_error(&self, msg: String) {
-        if let Some(cb) = self.error_callback.lock().unwrap().as_ref() {
-            cb(msg.clone());
-        }
-        eprintln!("[LogXide Error] {}", msg);
-    }
+    pub fn set_error_callback(&self, _callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {}
 
     /// Set a formatter for this handler.
-    /// Thread-safe: can be called while the handler is in use.
     pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
         *self.formatter.lock().unwrap() = Some(formatter);
     }
@@ -187,9 +215,8 @@ impl FileHandler {
     }
 }
 
-#[async_trait]
 impl Handler for FileHandler {
-    async fn emit(&self, record: &LogRecord) {
+    fn emit(&self, record: &LogRecord) {
         let level = self.level.load(Ordering::Relaxed);
         if record.levelno < level as i32 {
             return;
@@ -197,23 +224,17 @@ impl Handler for FileHandler {
         let output = self.format_record(record);
         let mut w = self.writer.lock().unwrap();
         if let Err(e) = writeln!(w, "{}", output) {
-            self.report_error(format!("FileHandler write failed: {}", e));
+            eprintln!("[LogXide Error] FileHandler write failed: {}", e);
         }
-        
-        // Level-based flush: only flush if record level >= flush_level
+        // Level-based flush: flush if record level >= flush_level
         let flush_level = self.flush_level.load(Ordering::Relaxed);
         if record.levelno >= flush_level as i32 {
-            if let Err(e) = w.flush() {
-                self.report_error(format!("FileHandler flush failed: {}", e));
-            }
+            let _ = w.flush();
         }
     }
 
-    async fn flush(&self) {
-        // Manual flush always executes regardless of flush_level
-        if let Err(e) = self.writer.lock().unwrap().flush() {
-            self.report_error(format!("FileHandler flush failed: {}", e));
-        }
+    fn flush(&self) {
+        let _ = self.writer.lock().unwrap().flush();
     }
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
@@ -223,49 +244,43 @@ impl Handler for FileHandler {
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
-/// A handler that writes log records to a file with size-based rotation.
-///
-/// When the log file exceeds `max_bytes`, it rotates:
-/// - app.log -> app.log.1
-/// - app.log.1 -> app.log.2
-/// - ... up to backup_count
+// ============================================================================
+// RotatingFileHandler — synchronous direct file write with rotation
+// ============================================================================
+
 pub struct RotatingFileHandler {
+    writer: Mutex<BufWriter<File>>,
     filename: PathBuf,
     max_bytes: u64,
     backup_count: u32,
+    current_size: std::sync::atomic::AtomicU64,
     level: AtomicU8,
     flush_level: AtomicU8,
-    writer: Mutex<BufWriter<File>>,
-    current_size: AtomicU64,
     formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
-    error_callback: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
 }
 
 impl RotatingFileHandler {
     pub fn new(filename: String, max_bytes: u64, backup_count: u32) -> std::io::Result<Self> {
         let path = PathBuf::from(&filename);
-        
-        // Get initial file size if exists
-        let current_size = std::fs::metadata(&path)
+
+        let initial_size = std::fs::metadata(&path)
             .map(|m| m.len())
             .unwrap_or(0);
-        
-        // Open file for appending
+
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)?;
-        
+
         Ok(Self {
+            writer: Mutex::new(BufWriter::new(file)),
             filename: path,
             max_bytes,
             backup_count,
+            current_size: std::sync::atomic::AtomicU64::new(initial_size),
             level: AtomicU8::new(LogLevel::Debug as u8),
             flush_level: AtomicU8::new(LogLevel::Error as u8),
-            writer: Mutex::new(BufWriter::new(file)),
-            current_size: AtomicU64::new(current_size),
             formatter: Mutex::new(None),
-            error_callback: Mutex::new(None),
         })
     }
 
@@ -289,17 +304,7 @@ impl RotatingFileHandler {
     }
 
     /// Set an error callback for this handler.
-    pub fn set_error_callback(&self, callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {
-        *self.error_callback.lock().unwrap() = callback;
-    }
-
-    /// Report an error via callback and stderr.
-    fn report_error(&self, msg: String) {
-        if let Some(cb) = self.error_callback.lock().unwrap().as_ref() {
-            cb(msg.clone());
-        }
-        eprintln!("[LogXide Error] {}", msg);
-    }
+    pub fn set_error_callback(&self, _callback: Option<Arc<dyn Fn(String) + Send + Sync>>) {}
 
     /// Format a record using the configured formatter, or return the raw message.
     fn format_record(&self, record: &LogRecord) -> String {
@@ -310,121 +315,106 @@ impl RotatingFileHandler {
         }
     }
 
-    /// Check if rotation is needed based on current size and message size.
-    fn should_rotate(&self, message_bytes: usize) -> bool {
-        let current = self.current_size.load(Ordering::Relaxed);
-        current + message_bytes as u64 > self.max_bytes && self.max_bytes > 0
-    }
-
     /// Generate backup filename for given index (e.g., app.log.1, app.log.2)
-    fn backup_filename(&self, index: u32) -> PathBuf {
-        let mut path = self.filename.clone();
-        let filename = path.file_name()
+    fn backup_filename(path: &Path, index: u32) -> PathBuf {
+        let mut backup = path.to_path_buf();
+        let filename = backup.file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("app.log");
-        path.set_file_name(format!("{}.{}", filename, index));
-        path
+        backup.set_file_name(format!("{}.{}", filename, index));
+        backup
     }
 
-    /// Perform rotation while holding the writer lock.
-    /// IMPORTANT: This method assumes the caller already holds the writer lock.
-    fn do_rotation_locked(&self, writer: &mut BufWriter<File>) {
-        // Flush before rotation
+    /// Perform rotation.
+    fn do_rotation(
+        path: &Path,
+        backup_count: u32,
+        writer: &mut BufWriter<File>,
+        current_size: &std::sync::atomic::AtomicU64,
+    ) {
         let _ = writer.flush();
 
-        // Handle backup_count=0: just truncate, no backups
-        if self.backup_count == 0 {
+        if backup_count == 0 {
             if let Ok(f) = OpenOptions::new()
                 .write(true)
                 .truncate(true)
-                .open(&self.filename)
+                .open(path)
             {
                 *writer = BufWriter::new(f);
-                self.current_size.store(0, Ordering::Relaxed);
+                current_size.store(0, Ordering::Relaxed);
             }
             return;
         }
 
-        // Delete excess backup files (if they exist beyond backup_count)
-        for i in self.backup_count..self.backup_count + 10 {
-            let path = self.backup_filename(i);
-            if path.exists() {
-                let _ = std::fs::remove_file(&path);
+        for i in backup_count..backup_count + 10 {
+            let bp = Self::backup_filename(path, i);
+            if bp.exists() {
+                let _ = std::fs::remove_file(&bp);
             } else {
                 break;
             }
         }
 
-        // Rotate existing backups: .N -> .N+1 (in reverse order)
-        for i in (1..self.backup_count).rev() {
-            let src = self.backup_filename(i);
-            let dst = self.backup_filename(i + 1);
+        for i in (1..backup_count).rev() {
+            let src = Self::backup_filename(path, i);
+            let dst = Self::backup_filename(path, i + 1);
             if src.exists() {
                 let _ = std::fs::rename(&src, &dst);
             }
         }
 
-        // Rename current file to .1
-        let _ = std::fs::rename(&self.filename, self.backup_filename(1));
+        let _ = std::fs::rename(path, Self::backup_filename(path, 1));
 
-        // Create new file
         match OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
-            .open(&self.filename)
+            .open(path)
         {
             Ok(f) => {
                 *writer = BufWriter::new(f);
-                self.current_size.store(0, Ordering::Relaxed);
+                current_size.store(0, Ordering::Relaxed);
             }
             Err(e) => {
-                self.report_error(format!("RotatingFileHandler: failed to create new file: {}", e));
+                eprintln!("[LogXide Error] RotatingFileHandler: failed to create new file: {}", e);
             }
         }
     }
 }
 
-#[async_trait]
 impl Handler for RotatingFileHandler {
-    async fn emit(&self, record: &LogRecord) {
+    fn emit(&self, record: &LogRecord) {
         let level = self.level.load(Ordering::Relaxed);
         if record.levelno < level as i32 {
             return;
         }
 
-        // Format BEFORE acquiring lock to minimize lock time
         let output = self.format_record(record);
-        let message_bytes = output.len() + 1; // +1 for newline
+        let message_bytes = output.len() as u64 + 1;
 
-        // Acquire writer lock
-        let mut writer = self.writer.lock().unwrap();
+        let mut w = self.writer.lock().unwrap();
 
-        // Double-check rotation (TOCTOU prevention)
-        if self.should_rotate(message_bytes) {
-            self.do_rotation_locked(&mut writer);
+        // Check rotation
+        let cur = self.current_size.load(Ordering::Relaxed);
+        if self.max_bytes > 0 && cur + message_bytes > self.max_bytes {
+            Self::do_rotation(&self.filename, self.backup_count, &mut w, &self.current_size);
         }
 
-        // Write message
-        if let Err(e) = writeln!(writer, "{}", output) {
-            self.report_error(format!("RotatingFileHandler write failed: {}", e));
+        if let Err(e) = writeln!(w, "{}", output) {
+            eprintln!("[LogXide Error] RotatingFileHandler write failed: {}", e);
         } else {
-            self.current_size.fetch_add(message_bytes as u64, Ordering::Relaxed);
+            self.current_size.fetch_add(message_bytes, Ordering::Relaxed);
         }
 
         // Level-based flush
         let flush_level = self.flush_level.load(Ordering::Relaxed);
         if record.levelno >= flush_level as i32 {
-            if let Err(e) = writer.flush() {
-                self.report_error(format!("RotatingFileHandler flush failed: {}", e));
-            }
+            let _ = w.flush();
         }
     }
 
-    async fn flush(&self) {
-        if let Err(e) = self.writer.lock().unwrap().flush() {
-            self.report_error(format!("RotatingFileHandler flush failed: {}", e));
-        }
+    fn flush(&self) {
+        let _ = self.writer.lock().unwrap().flush();
     }
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
@@ -434,15 +424,14 @@ impl Handler for RotatingFileHandler {
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
-/// HTTP handler that sends log records as JSON to a remote endpoint.
-/// Uses internal buffering and batch processing for efficient network I/O.
-/// HTTP handler that sends log records as JSON to a remote endpoint.
-/// Uses internal buffering and batch processing for efficient network I/O.
-///
-/// Supports level-based flush: records at or above `flush_level` trigger immediate flush.
+// ============================================================================
+// HTTPHandler — batch JSON to remote endpoint (already uses channel pattern)
+// ============================================================================
+
 pub struct HTTPHandler {
     sender: crossbeam_channel::Sender<LogRecord>,
     flush_signal: crossbeam_channel::Sender<()>,
+    flush_done: crossbeam_channel::Receiver<()>,
     level: AtomicU8,
     flush_level: AtomicU8,
     shutdown: Arc<AtomicBool>,
@@ -496,6 +485,7 @@ impl HTTPHandler {
     ) -> Self {
         let (s, r) = crossbeam_channel::bounded(capacity);
         let (flush_tx, flush_rx) = crossbeam_channel::bounded::<()>(1);
+        let (done_tx, done_rx) = crossbeam_channel::bounded::<()>(1);
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown.clone();
 
@@ -520,7 +510,7 @@ impl HTTPHandler {
                     Err(_) => false,
                 };
 
-                match r.recv_timeout(std::time::Duration::from_millis(100)) {
+                match r.recv_timeout(Duration::from_millis(100)) {
                     Ok(rec) => {
                         buffer.push(rec);
                         if buffer.len() >= batch_size || should_flush {
@@ -534,6 +524,9 @@ impl HTTPHandler {
                                 &mut buffer,
                             );
                             last_flush = std::time::Instant::now();
+                            if should_flush {
+                                let _ = done_tx.try_send(());
+                            }
                         }
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
@@ -550,6 +543,9 @@ impl HTTPHandler {
                                 &mut buffer,
                             );
                             last_flush = std::time::Instant::now();
+                            if should_flush {
+                                let _ = done_tx.try_send(());
+                            }
                         }
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -564,6 +560,7 @@ impl HTTPHandler {
                                 &mut buffer,
                             );
                         }
+                        let _ = done_tx.try_send(());
                         break;
                     }
                 }
@@ -573,8 +570,9 @@ impl HTTPHandler {
         Self {
             sender: s,
             flush_signal: flush_tx,
+            flush_done: done_rx,
             level: AtomicU8::new(LogLevel::Debug as u8),
-            flush_level: AtomicU8::new(LogLevel::Error as u8),  // Default: ERROR+ triggers immediate flush
+            flush_level: AtomicU8::new(LogLevel::Error as u8),
             shutdown,
         }
     }
@@ -686,6 +684,7 @@ impl HTTPHandler {
 
     pub fn flush(&self) {
         let _ = self.flush_signal.try_send(());
+        let _ = self.flush_done.recv_timeout(Duration::from_secs(5));
     }
 
     pub fn shutdown(&self) {
@@ -742,35 +741,40 @@ fn py_to_value(obj: &Bound<PyAny>) -> Value {
     }
 }
 
-#[async_trait]
 impl Handler for HTTPHandler {
-    async fn emit(&self, record: &LogRecord) {
+    fn emit(&self, record: &LogRecord) {
         let level = self.level.load(Ordering::Relaxed);
         if record.levelno < level as i32 {
             return;
         }
         let _ = self
             .sender
-            .send_timeout(record.clone(), std::time::Duration::from_millis(5));
-        
+            .send_timeout(record.clone(), Duration::from_millis(5));
+
         // Level-based flush: immediately flush if record level >= flush_level
         let flush_level = self.flush_level.load(Ordering::Relaxed);
         if record.levelno >= flush_level as i32 {
             let _ = self.flush_signal.try_send(());
         }
     }
-    async fn flush(&self) {}
+
+    fn flush(&self) {
+        let _ = self.flush_signal.try_send(());
+        let _ = self.flush_done.recv_timeout(Duration::from_secs(5));
+    }
 
     fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
 
-/// HTTP handler that sends log records as OpenTelemetry OTLP (protobuf) to a remote endpoint.
-/// Uses internal buffering and batch processing for efficient network I/O.
-/// Compatible with OTLP (OpenTelemetry Protocol) receivers.
+// ============================================================================
+// OTLPHandler — batch protobuf to OTLP endpoint
+// ============================================================================
+
 pub struct OTLPHandler {
     sender: crossbeam_channel::Sender<LogRecord>,
     flush_signal: crossbeam_channel::Sender<()>,
+    flush_done: crossbeam_channel::Receiver<()>,
     level: AtomicU8,
     shutdown: Arc<AtomicBool>,
 }
@@ -812,6 +816,7 @@ impl OTLPHandler {
     ) -> Self {
         let (s, r) = crossbeam_channel::bounded(capacity);
         let (flush_tx, flush_rx) = crossbeam_channel::bounded::<()>(1);
+        let (done_tx, done_rx) = crossbeam_channel::bounded::<()>(1);
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown.clone();
 
@@ -831,7 +836,7 @@ impl OTLPHandler {
 
                 let should_flush = matches!(flush_rx.try_recv(), Ok(()));
 
-                match r.recv_timeout(std::time::Duration::from_millis(100)) {
+                match r.recv_timeout(Duration::from_millis(100)) {
                     Ok(rec) => {
                         buffer.push(rec);
                         if buffer.len() >= batch_size || should_flush {
@@ -843,6 +848,9 @@ impl OTLPHandler {
                                 &mut buffer,
                             );
                             last_flush = std::time::Instant::now();
+                            if should_flush {
+                                let _ = done_tx.try_send(());
+                            }
                         }
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
@@ -857,6 +865,9 @@ impl OTLPHandler {
                                 &mut buffer,
                             );
                             last_flush = std::time::Instant::now();
+                            if should_flush {
+                                let _ = done_tx.try_send(());
+                            }
                         }
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -869,6 +880,7 @@ impl OTLPHandler {
                                 &mut buffer,
                             );
                         }
+                        let _ = done_tx.try_send(());
                         break;
                     }
                 }
@@ -878,6 +890,7 @@ impl OTLPHandler {
         Self {
             sender: s,
             flush_signal: flush_tx,
+            flush_done: done_rx,
             level: AtomicU8::new(LogLevel::Debug as u8),
             shutdown,
         }
@@ -989,6 +1002,7 @@ impl OTLPHandler {
 
     pub fn flush(&self) {
         let _ = self.flush_signal.try_send(());
+        let _ = self.flush_done.recv_timeout(Duration::from_secs(5));
     }
 
     pub fn shutdown(&self) {
@@ -1001,23 +1015,29 @@ impl OTLPHandler {
     }
 }
 
-#[async_trait]
 impl Handler for OTLPHandler {
-    async fn emit(&self, record: &LogRecord) {
+    fn emit(&self, record: &LogRecord) {
         let level = self.level.load(Ordering::Relaxed);
         if record.levelno < level as i32 {
             return;
         }
         let _ = self
             .sender
-            .send_timeout(record.clone(), std::time::Duration::from_millis(5));
+            .send_timeout(record.clone(), Duration::from_millis(5));
     }
 
-    async fn flush(&self) {}
+    fn flush(&self) {
+        let _ = self.flush_signal.try_send(());
+        let _ = self.flush_done.recv_timeout(Duration::from_secs(5));
+    }
 
     fn set_formatter(&mut self, _: Arc<dyn Formatter + Send + Sync>) {}
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
 }
+
+// ============================================================================
+// MemoryHandler — in-memory log capture (synchronous, no channel needed)
+// ============================================================================
 
 /// Handler that stores log records in memory.
 /// Highly efficient for testing and log capture.
@@ -1026,17 +1046,6 @@ impl Handler for OTLPHandler {
 /// - `get_records()` - Returns all captured LogRecord objects
 /// - `get_text()` - Returns all captured messages as a single string
 /// - `get_record_tuples()` - Returns (logger_name, level, message) tuples
-///
-/// # Examples
-///
-/// ```rust
-/// use logxide::handler::MemoryHandler;
-///
-/// let handler = MemoryHandler::new();
-/// // ... emit some records ...
-/// let text = handler.get_text();  // All messages joined
-/// let tuples = handler.get_record_tuples();  // [("root", 20, "msg"), ...]
-/// ```
 pub struct MemoryHandler {
     records: Arc<Mutex<Vec<LogRecord>>>,
     level: AtomicU8,
@@ -1115,9 +1124,8 @@ impl MemoryHandler {
     }
 }
 
-#[async_trait]
 impl Handler for MemoryHandler {
-    async fn emit(&self, record: &LogRecord) {
+    fn emit(&self, record: &LogRecord) {
         let level = self.level.load(Ordering::Relaxed);
         if record.levelno < level as i32 {
             return;
@@ -1125,7 +1133,7 @@ impl Handler for MemoryHandler {
         self.records.lock().unwrap().push(record.clone());
     }
 
-    async fn flush(&self) {}
+    fn flush(&self) {}
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
         *self.formatter.lock().unwrap() = Some(formatter);

@@ -1,6 +1,6 @@
 # Welcome to LogXide
 
-LogXide is a high-performance, Rust-powered, drop-in replacement for Python's standard logging module. It's designed to be fast, thread-safe, and easy to use, providing a familiar API for Python developers while leveraging the power of Rust for performance-critical logging operations.
+LogXide is a high-performance logging library for Python, delivering exceptional performance through its native Rust implementation. It provides a familiar logging API but prioritizes **performance over full compatibility**.
 
 ## Documentation
 
@@ -9,8 +9,8 @@ LogXide is a high-performance, Rust-powered, drop-in replacement for Python's st
 - **[Usage Guide](usage.md)** - Complete usage examples and API guide
 
 ### Integrations
-- **[Framework Integration](integration.md)** - Flask, Django, and FastAPI integration
-- **[Sentry Integration](sentry.md)** - Automatic error tracking with Sentry
+- **[Framework Integration](integrations/index.md)** - Flask, Django, and FastAPI integration
+- **[Sentry Integration](integrations/sentry.md)** - Automatic error tracking with Sentry
 
 ### Performance & Architecture
 - **[Performance Benchmarks](benchmarks.md)** - Comprehensive performance analysis and comparisons
@@ -22,43 +22,48 @@ LogXide is a high-performance, Rust-powered, drop-in replacement for Python's st
 
 ## Key Features
 
-- **High Performance**: Rust-powered logging with native handlers delivers exceptional throughput and non-blocking I/O.
-- **Drop-in Replacement**: Fully compatible with the `logging` module's API. You can switch to LogXide with minimal code changes.
-- **Thread-Safe**: Designed from the ground up for multi-threaded applications, with features to make thread-based logging easier.
-- **Rich Formatting**: Supports all standard Python logging format specifiers, plus advanced features like padding and alignment.
-- **Async Processing**: Log messages are processed in the background, so your application's main thread isn't blocked.
-- **Level Filtering**: Hierarchical loggers with level filtering and inheritance, just like the standard library.
-- **Configurable**: Flexible configuration options to tailor logging to your needs.
+- **High Performance**: Rust-powered logging with exceptional throughput
+- **Familiar API**: Similar to Python's logging module (not a drop-in replacement)
+- **Thread-Safe**: Complete support for multi-threaded applications
+- **Direct Processing**: Efficient log message processing with native Rust handlers (file I/O synchronous, stream/HTTP/OTLP non-blocking)
+- **Rich Formatting**: All Python logging format specifiers with advanced features
+- **Level Filtering**: Hierarchical logger levels with inheritance
+- **Sentry Integration**: Automatic error tracking with Sentry (optional)
+
+## ⚠️ Important: Not a Drop-in Replacement
+
+LogXide is **NOT** a drop-in replacement for Python's logging module. Key limitations:
+
+- **Rust handlers only**: `addHandler()` accepts only LogXide's Rust handlers
+- **No custom Python handlers**: `logging.Handler` subclasses are rejected
+- **No subclassing**: `LogRecord` and `Logger` are Rust types
+- **No pytest caplog**: Use `caplog_logxide` fixture instead
 
 ## Installation
 
-You can install Logxide via pip:
-
 ```bash
 pip install logxide
+
+# With Sentry integration
+pip install logxide[sentry]
 ```
 
 ## Quick Start
 
-Using Logxide is as simple as replacing `import logging` with `from logxide import logging`. **No manual installation required** - LogXide automatically integrates when imported!
-
-Here's a basic example to get you started:
-
 ```python
-from logxide import logging  # Auto-installs LogXide - no setup needed!
+from logxide import logging
 
 def main():
-    # Configure logxide with basic settings
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # 1. Root logger usage
+    # Root logger usage
     root_logger = logging.getLogger()
     root_logger.info("This is the root logger")
 
-    # 2. Different log levels
+    # Different log levels
     logger = logging.getLogger("example")
     logger.debug("This is a debug message")
     logger.info("This is an info message")
@@ -66,19 +71,16 @@ def main():
     logger.error("This is an error message")
     logger.critical("This is a critical message")
 
-    # 3. Logger hierarchy
+    # Logger hierarchy
     parent_logger = logging.getLogger("myapp")
     child_logger = logging.getLogger("myapp.database")
-    grandchild_logger = logging.getLogger("myapp.database.connection")
 
     parent_logger.info("Parent logger message")
     child_logger.info("Child logger message")
-    grandchild_logger.info("Grandchild logger message")
 
-    # 4. String formatting
+    # String formatting
     logger.info("User %s logged in from %s", "alice", "192.168.1.100")
     logger.warning("High memory usage: %d%% (%d MB)", 85, 1024)
-    logger.error("Connection timeout after %d seconds", 30)
 
     # Ensure all logs are processed before the program exits
     logging.flush()
@@ -86,5 +88,3 @@ def main():
 if __name__ == "__main__":
     main()
 ```
-
-This example demonstrates basic configuration, logging at different levels, using the logger hierarchy, and string formatting, all with an API that is identical to the standard `logging` module.

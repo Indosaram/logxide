@@ -5,7 +5,11 @@
 Install LogXide from PyPI using pip:
 
 ```bash
+# Basic installation
 pip install logxide
+
+# With Sentry integration
+pip install logxide[sentry]
 ```
 
 ## Development Setup
@@ -56,5 +60,5 @@ pytest tests/ --cov=logxide --cov-report=html
 
 - **Python**: 3.12+ (3.14 supported)
 - **Platforms**: macOS, Linux, Windows
-- **API**: Full compatibility with Python's `logging` module
 - **Dependencies**: None (Rust compiled into native extension)
+

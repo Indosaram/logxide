@@ -456,11 +456,11 @@ impl PyLogger {
             drop(local_handlers);
             let global_handlers = HANDLERS.lock().unwrap();
             for handler in global_handlers.iter() {
-                let _ = futures::executor::block_on(handler.emit(&record));
+                let _ = handler.emit(&record);
             }
         } else {
             for handler in local_handlers.iter() {
-                let _ = futures::executor::block_on(handler.emit(&record));
+                let _ = handler.emit(&record);
             }
 
             let should_propagate = *self.propagate.lock().unwrap();
@@ -468,7 +468,7 @@ impl PyLogger {
                 drop(local_handlers);
                 let global_handlers = HANDLERS.lock().unwrap();
                 for handler in global_handlers.iter() {
-                    let _ = futures::executor::block_on(handler.emit(&record));
+                    let _ = handler.emit(&record);
                 }
             }
         }
