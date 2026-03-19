@@ -284,8 +284,8 @@ class TestFilterCallback:
         class ModifyFilter:
             def filter(self, record):
                 # Modify the message - replace 'secret' with '***'
-                if 'secret' in record.get('msg', ''):
-                    record['msg'] = record['msg'].replace('secret', '***')
+                if "secret" in record.get("msg", ""):
+                    record["msg"] = record["msg"].replace("secret", "***")
                 return True
 
         f = ModifyFilter()
@@ -295,8 +295,8 @@ class TestFilterCallback:
 
         # Check the message was modified
         assert len(handler.records) == 1
-        assert '***' in handler.records[0].msg
-        assert 'secret' not in handler.records[0].msg
+        assert "***" in handler.records[0].msg
+        assert "secret" not in handler.records[0].msg
 
         # Cleanup
         logger.removeFilter(f)
@@ -314,12 +314,12 @@ class TestFilterCallback:
 
         # Plain callable that filters based on level
         def level_filter(record):
-            return record.get('levelno', 0) >= 30  # Only WARNING and above
+            return record.get("levelno", 0) >= 30  # Only WARNING and above
 
         logger.addFilter(level_filter)
 
         logger.debug("This is debug")  # Should be filtered out by callable
-        logger.info("This is info")    # Should be filtered out by callable
+        logger.info("This is info")  # Should be filtered out by callable
         logger.warning("This is warning")  # Should pass
 
         assert len(handler.records) == 1

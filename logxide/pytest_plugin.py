@@ -4,6 +4,7 @@ LogXide pytest plugin.
 Provides caplog fixture for logxide when pytest is installed.
 Auto-registered via pyproject.toml entry point.
 """
+
 import pytest
 
 # Import logging from logxide
@@ -17,15 +18,15 @@ logging = _logxide_ext.logging
 def caplog():
     """
     Pytest caplog fixture for logxide.
-    
+
     Provides pytest caplog-compatible API for capturing logs from logxide.
-    
+
     Usage:
         def test_example(caplog):
             logger = logging.getLogger("test")
             logger.addHandler(caplog.handler)
             logger.info("Hello!")
-            
+
             assert "Hello!" in caplog.text
             assert ("test", 20, "Hello!") in caplog.record_tuples
     """

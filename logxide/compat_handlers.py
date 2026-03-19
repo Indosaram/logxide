@@ -552,8 +552,12 @@ class LoggerAdapter:
 
     def warn(self, msg, *args, **kwargs):
         import warnings
-        warnings.warn("The 'warn' method is deprecated, "
-            "use 'warning' instead", DeprecationWarning, 2)
+
+        warnings.warn(
+            "The 'warn' method is deprecated, use 'warning' instead",
+            DeprecationWarning,
+            2,
+        )
         self.warning(msg, *args, **kwargs)
 
     def error(self, msg, *args, **kwargs):
@@ -599,4 +603,4 @@ class LoggerAdapter:
     def __repr__(self):
         logger = self.logger
         level = getLevelName(logger.getEffectiveLevel())
-        return f'<{self.__class__.__name__} {logger.name} ({level})>'
+        return f"<{self.__class__.__name__} {logger.name} ({level})>"

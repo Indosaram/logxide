@@ -93,15 +93,24 @@ def basicConfig(**kwargs):
         if stream is None:
             # Default to stderr
             logxide_module.logging.register_stream_handler(
-                "stderr", level, fmt, datefmt,
+                "stderr",
+                level,
+                fmt,
+                datefmt,
             )
         elif stream is sys.stdout:
             logxide_module.logging.register_stream_handler(
-                "stdout", level, fmt, datefmt,
+                "stdout",
+                level,
+                fmt,
+                datefmt,
             )
         elif stream is sys.stderr:
             logxide_module.logging.register_stream_handler(
-                "stderr", level, fmt, datefmt,
+                "stderr",
+                level,
+                fmt,
+                datefmt,
             )
         else:
             # Python file-like object (StringIO, file, etc.)

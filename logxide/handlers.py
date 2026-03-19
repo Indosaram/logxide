@@ -15,7 +15,7 @@ class FileHandler(logging.FileHandler):
         self._inner = logxide.FileHandler(filename)
         super().__init__(filename, mode, encoding, delay, errors)
         # Close parent's file handle since we use Rust handler
-        if hasattr(self, 'stream') and self.stream:
+        if hasattr(self, "stream") and self.stream:
             self.stream.close()
             self.stream = None
 
@@ -85,7 +85,7 @@ class RotatingFileHandler(logging.handlers.RotatingFileHandler):
         self._inner = logxide.RotatingFileHandler(filename, maxBytes, backupCount)
         super().__init__(filename, mode, maxBytes, backupCount, encoding, delay)
         # Close parent's file handle since we use Rust handler
-        if hasattr(self, 'stream') and self.stream:
+        if hasattr(self, "stream") and self.stream:
             self.stream.close()
             self.stream = None
 
@@ -179,7 +179,7 @@ class HTTPHandler(logging.Handler):
         """
         Set the flush level. Records at or above this level trigger immediate flush.
         Default is ERROR (40).
-        
+
         Args:
             level: Log level (e.g., logging.ERROR, logging.CRITICAL)
         """
@@ -188,16 +188,17 @@ class HTTPHandler(logging.Handler):
     def getFlushLevel(self):
         """
         Get the current flush level.
-        
+
         Returns:
             int: Current flush level (e.g., 40 for ERROR)
         """
         return self._inner.getFlushLevel()
 
+
 class OTLPHandler(logging.Handler):
     """
     High-performance OTLP (OpenTelemetry) handler for log export.
-    
+
     Args:
         url: OTLP endpoint URL (e.g., http://localhost:4318/v1/logs)
         service_name: Service name for OTLP logs
@@ -232,7 +233,7 @@ class MemoryHandler(logging.Handler):
     """
     High-performance memory handler for testing and log capture.
     Stores records in Rust native memory for maximum performance.
-    
+
     Provides pytest caplog-compatible properties:
     - `.records`: List of LogRecord objects
     - `.text`: All messages joined with newlines
@@ -261,7 +262,7 @@ class MemoryHandler(logging.Handler):
     def records(self):
         """
         All captured log records.
-        
+
         Returns:
             List of LogRecord objects.
         """
@@ -271,9 +272,9 @@ class MemoryHandler(logging.Handler):
     def text(self):
         """
         All captured log messages as a single newline-separated string.
-        
+
         Compatible with pytest caplog.text.
-        
+
         Returns:
             str: All messages joined with newlines.
         """
@@ -283,9 +284,9 @@ class MemoryHandler(logging.Handler):
     def record_tuples(self):
         """
         Captured records as tuples.
-        
+
         Compatible with pytest caplog.record_tuples.
-        
+
         Returns:
             List of (logger_name, level_number, message) tuples.
         """

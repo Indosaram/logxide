@@ -18,10 +18,12 @@ def test_logger_methods():
     logger.fatal("fatal")
     # warn() is deprecated but should still work
     import warnings
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         logger.warn("warn")
     logger.exception("exception")
+
 
 def test_compatibility_attributes():
     """Test compatibility attributes.
