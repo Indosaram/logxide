@@ -85,7 +85,7 @@ def _auto_configure_sentry(enable=None):
         handler = auto_configure_sentry(enable)
         if handler:
             # Add to standard root logger
-            _std_logging.root.addHandler(handler)
+            _std_logging.root.addHandler(handler)  # type: ignore[arg-type]
             # Add to LogXide root logger
             getLogger().addHandler(handler)
     except ImportError:
