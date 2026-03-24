@@ -8,12 +8,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::{LogLevel, LogRecord};
-use crate::py_logger::check_level;
 use crate::formatter::{ColorFormatter, Formatter, PythonFormatter};
 use crate::handler::{
-    FileHandler, Handler, HTTPHandler, HTTPHandlerConfig, MemoryHandler, OTLPHandler, OTLPHandlerConfig,
-    RotatingFileHandler, StreamHandler,
+    FileHandler, HTTPHandler, HTTPHandlerConfig, Handler, MemoryHandler, OTLPHandler,
+    OTLPHandlerConfig, RotatingFileHandler, StreamHandler,
 };
+use crate::py_logger::check_level;
 
 // ============================================================================
 // Formatter Bindings
@@ -113,7 +113,8 @@ impl PyFileHandler {
 
     fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
         let level_int = check_level(py, level)?;
-        self.inner.set_level(LogLevel::from_usize(level_int as usize));
+        self.inner
+            .set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -121,7 +122,8 @@ impl PyFileHandler {
     /// Default is ERROR (40).
     #[pyo3(name = "setFlushLevel")]
     fn set_flush_level(&self, level: u32) -> PyResult<()> {
-        self.inner.set_flush_level(LogLevel::from_usize(level as usize));
+        self.inner
+            .set_flush_level(LogLevel::from_usize(level as usize));
         Ok(())
     }
 
@@ -137,11 +139,12 @@ impl PyFileHandler {
         match callback {
             Some(cb) => {
                 let cb = cb.clone_ref(py);
-                self.inner.set_error_callback(Some(Arc::new(move |msg: String| {
-                    Python::attach(|py| {
-                        let _ = cb.call1(py, (msg,));
-                    });
-                })));
+                self.inner
+                    .set_error_callback(Some(Arc::new(move |msg: String| {
+                        Python::attach(|py| {
+                            let _ = cb.call1(py, (msg,));
+                        });
+                    })));
             }
             None => {
                 self.inner.set_error_callback(None);
@@ -175,7 +178,8 @@ impl PyStreamHandler {
 
     fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
         let level_int = check_level(py, level)?;
-        self.inner.set_level(LogLevel::from_usize(level_int as usize));
+        self.inner
+            .set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -185,11 +189,12 @@ impl PyStreamHandler {
         match callback {
             Some(cb) => {
                 let cb = cb.clone_ref(py);
-                self.inner.set_error_callback(Some(Arc::new(move |msg: String| {
-                    Python::attach(|py| {
-                        let _ = cb.call1(py, (msg,));
-                    });
-                })));
+                self.inner
+                    .set_error_callback(Some(Arc::new(move |msg: String| {
+                        Python::attach(|py| {
+                            let _ = cb.call1(py, (msg,));
+                        });
+                    })));
             }
             None => {
                 self.inner.set_error_callback(None);
@@ -216,14 +221,16 @@ impl PyRotatingFileHandler {
 
     fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
         let level_int = check_level(py, level)?;
-        self.inner.set_level(LogLevel::from_usize(level_int as usize));
+        self.inner
+            .set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
     /// Set the flush level. Records at or above this level trigger immediate flush.
     #[pyo3(name = "setFlushLevel")]
     fn set_flush_level(&self, level: u32) -> PyResult<()> {
-        self.inner.set_flush_level(LogLevel::from_usize(level as usize));
+        self.inner
+            .set_flush_level(LogLevel::from_usize(level as usize));
         Ok(())
     }
 
@@ -239,11 +246,12 @@ impl PyRotatingFileHandler {
         match callback {
             Some(cb) => {
                 let cb = cb.clone_ref(py);
-                self.inner.set_error_callback(Some(Arc::new(move |msg: String| {
-                    Python::attach(|py| {
-                        let _ = cb.call1(py, (msg,));
-                    });
-                })));
+                self.inner
+                    .set_error_callback(Some(Arc::new(move |msg: String| {
+                        Python::attach(|py| {
+                            let _ = cb.call1(py, (msg,));
+                        });
+                    })));
             }
             None => {
                 self.inner.set_error_callback(None);
@@ -354,7 +362,8 @@ impl PyHTTPHandler {
 
     fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
         let level_int = check_level(py, level)?;
-        self.inner.set_level(LogLevel::from_usize(level_int as usize));
+        self.inner
+            .set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -373,7 +382,8 @@ impl PyHTTPHandler {
     /// Use logging.DEBUG (10) to flush on every record.
     #[pyo3(name = "setFlushLevel")]
     fn set_flush_level(&self, level: u32) -> PyResult<()> {
-        self.inner.set_flush_level(LogLevel::from_usize(level as usize));
+        self.inner
+            .set_flush_level(LogLevel::from_usize(level as usize));
         Ok(())
     }
 
@@ -431,7 +441,8 @@ impl PyOTLPHandler {
 
     fn setLevel(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
         let level_int = check_level(py, level)?;
-        self.inner.set_level(LogLevel::from_usize(level_int as usize));
+        self.inner
+            .set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 
@@ -498,7 +509,8 @@ impl PyMemoryHandler {
     #[pyo3(name = "setLevel")]
     pub fn set_level(&self, py: Python, level: &Bound<PyAny>) -> PyResult<()> {
         let level_int = check_level(py, level)?;
-        self.inner.set_level(LogLevel::from_usize(level_int as usize));
+        self.inner
+            .set_level(LogLevel::from_usize(level_int as usize));
         Ok(())
     }
 

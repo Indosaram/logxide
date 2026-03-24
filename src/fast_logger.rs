@@ -136,7 +136,9 @@ impl FastLoggerManager {
         } else {
             root_level
         };
-        self.root_logger.effective_level.store(root_effective, Ordering::Relaxed);
+        self.root_logger
+            .effective_level
+            .store(root_effective, Ordering::Relaxed);
 
         // Update all other loggers
         for entry in self.loggers.iter() {
