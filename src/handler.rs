@@ -263,14 +263,9 @@ impl RotatingFileHandler {
     pub fn new(filename: String, max_bytes: u64, backup_count: u32) -> std::io::Result<Self> {
         let path = PathBuf::from(&filename);
 
-        let initial_size = std::fs::metadata(&path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let initial_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         Ok(Self {
             writer: Mutex::new(BufWriter::new(file)),
@@ -318,7 +313,8 @@ impl RotatingFileHandler {
     /// Generate backup filename for given index (e.g., app.log.1, app.log.2)
     fn backup_filename(path: &Path, index: u32) -> PathBuf {
         let mut backup = path.to_path_buf();
-        let filename = backup.file_name()
+        let filename = backup
+            .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("app.log");
         backup.set_file_name(format!("{}.{}", filename, index));
@@ -335,11 +331,7 @@ impl RotatingFileHandler {
         let _ = writer.flush();
 
         if backup_count == 0 {
-            if let Ok(f) = OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(path)
-            {
+            if let Ok(f) = OpenOptions::new().write(true).truncate(true).open(path) {
                 *writer = BufWriter::new(f);
                 current_size.store(0, Ordering::Relaxed);
             }
@@ -376,7 +368,10 @@ impl RotatingFileHandler {
                 current_size.store(0, Ordering::Relaxed);
             }
             Err(e) => {
-                eprintln!("[LogXide Error] RotatingFileHandler: failed to create new file: {}", e);
+                eprintln!(
+                    "[LogXide Error] RotatingFileHandler: failed to create new file: {}",
+                    e
+                );
             }
         }
     }
@@ -397,13 +392,19 @@ impl Handler for RotatingFileHandler {
         // Check rotation
         let cur = self.current_size.load(Ordering::Relaxed);
         if self.max_bytes > 0 && cur + message_bytes > self.max_bytes {
-            Self::do_rotation(&self.filename, self.backup_count, &mut w, &self.current_size);
+            Self::do_rotation(
+                &self.filename,
+                self.backup_count,
+                &mut w,
+                &self.current_size,
+            );
         }
 
         if let Err(e) = writeln!(w, "{}", output) {
             eprintln!("[LogXide Error] RotatingFileHandler write failed: {}", e);
         } else {
-            self.current_size.fetch_add(message_bytes, Ordering::Relaxed);
+            self.current_size
+                .fetch_add(message_bytes, Ordering::Relaxed);
         }
 
         // Level-based flush

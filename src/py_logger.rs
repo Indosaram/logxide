@@ -42,16 +42,18 @@ pub fn check_level(py: Python, level: &Bound<PyAny>) -> PyResult<u32> {
                 let name_to_level = compat.getattr("_nameToLevel")?;
                 match name_to_level.call_method1("get", (upper.as_str(),)) {
                     Ok(val) if !val.is_none() => val.extract::<u32>(),
-                    _ => Err(pyo3::exceptions::PyValueError::new_err(
-                        format!("Unknown level: '{}'", s),
-                    )),
+                    _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Unknown level: '{}'",
+                        s
+                    ))),
                 }
             }
         };
     }
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        format!("Level not an integer or a valid string: {}", level.repr()?.to_string()),
-    ))
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "Level not an integer or a valid string: {}",
+        level.repr()?.to_string()
+    )))
 }
 pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
     if obj.is_none() {
@@ -182,9 +184,7 @@ impl PyLogger {
         kwargs: Option<&Bound<PyDict>>,
         default_exc_info: bool,
     ) -> Option<String> {
-        let exc_info_val = kwargs.and_then(|dict| {
-            dict.get_item("exc_info").ok().flatten()
-        });
+        let exc_info_val = kwargs.and_then(|dict| dict.get_item("exc_info").ok().flatten());
 
         match exc_info_val {
             None => {
@@ -207,7 +207,10 @@ impl PyLogger {
                 }
 
                 // Check if it's an exception instance
-                if let Ok(base_exc) = py.import("builtins").and_then(|m| m.getattr("BaseException")) {
+                if let Ok(base_exc) = py
+                    .import("builtins")
+                    .and_then(|m| m.getattr("BaseException"))
+                {
                     if val.is_instance(&base_exc).unwrap_or(false) {
                         return self.format_exception_instance(py, &val);
                     }
@@ -231,9 +234,7 @@ impl PyLogger {
         kwargs: Option<&Bound<PyDict>>,
         default_exc_info: bool,
     ) -> Option<Py<PyAny>> {
-        let exc_info_val = kwargs.and_then(|dict| {
-            dict.get_item("exc_info").ok().flatten()
-        });
+        let exc_info_val = kwargs.and_then(|dict| dict.get_item("exc_info").ok().flatten());
 
         match exc_info_val {
             None => {
@@ -248,7 +249,11 @@ impl PyLogger {
                         // Check if there's an actual exception (info[1] is not None)
                         let tuple = info.cast::<PyTuple>().ok()?;
                         let val_item = tuple.get_item(1).ok()?;
-                        if val_item.is_none() { None } else { Some(info.unbind()) }
+                        if val_item.is_none() {
+                            None
+                        } else {
+                            Some(info.unbind())
+                        }
                     })
             }
             Some(val) => {
@@ -264,15 +269,22 @@ impl PyLogger {
                 }
 
                 // Exception instance — build (type, value, tb) tuple
-                if let Ok(base_exc) = py.import("builtins").and_then(|m| m.getattr("BaseException")) {
+                if let Ok(base_exc) = py
+                    .import("builtins")
+                    .and_then(|m| m.getattr("BaseException"))
+                {
                     if val.is_instance(&base_exc).unwrap_or(false) {
                         let exc_type = val.get_type();
                         let tb = val.getattr("__traceback__").ok();
-                        let tuple = PyTuple::new(py, &[
-                            exc_type.into_any(),
-                            val.clone(),
-                            tb.unwrap_or_else(|| py.None().into_bound(py)),
-                        ]).ok()?;
+                        let tuple = PyTuple::new(
+                            py,
+                            &[
+                                exc_type.into_any(),
+                                val.clone(),
+                                tb.unwrap_or_else(|| py.None().into_bound(py)),
+                            ],
+                        )
+                        .ok()?;
                         return Some(tuple.unbind().into());
                     }
                 }
@@ -285,7 +297,11 @@ impl PyLogger {
                         .and_then(|info| {
                             let tuple = info.cast::<PyTuple>().ok()?;
                             let val_item = tuple.get_item(1).ok()?;
-                            if val_item.is_none() { None } else { Some(info.unbind()) }
+                            if val_item.is_none() {
+                                None
+                            } else {
+                                Some(info.unbind())
+                            }
                         })
                 } else {
                     None
@@ -306,14 +322,24 @@ impl PyLogger {
     /// Format a (type, value, tb) tuple into traceback text.
     fn format_exception_tuple(&self, py: Python, tuple: &Bound<PyTuple>) -> Option<String> {
         let tb_mod = py.import("traceback").ok()?;
-        let formatted = tb_mod.call_method1(
-            "format_exception",
-            (tuple.get_item(0).ok()?, tuple.get_item(1).ok()?, tuple.get_item(2).ok()?),
-        ).ok()?;
+        let formatted = tb_mod
+            .call_method1(
+                "format_exception",
+                (
+                    tuple.get_item(0).ok()?,
+                    tuple.get_item(1).ok()?,
+                    tuple.get_item(2).ok()?,
+                ),
+            )
+            .ok()?;
         let empty_str = "".into_pyobject(py).ok()?;
         let joined = empty_str.call_method1("join", (&formatted,)).ok()?;
         let result = joined.to_string();
-        if result.is_empty() { None } else { Some(result) }
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
     }
 
     /// Format an exception instance into traceback text.
@@ -321,14 +347,17 @@ impl PyLogger {
         let exc_type = exc.get_type();
         let tb = exc.getattr("__traceback__").ok()?;
         let tb_mod = py.import("traceback").ok()?;
-        let formatted = tb_mod.call_method1(
-            "format_exception",
-            (exc_type, exc, tb),
-        ).ok()?;
+        let formatted = tb_mod
+            .call_method1("format_exception", (exc_type, exc, tb))
+            .ok()?;
         let empty_str = "".into_pyobject(py).ok()?;
         let joined = empty_str.call_method1("join", (&formatted,)).ok()?;
         let result = joined.to_string();
-        if result.is_empty() { None } else { Some(result) }
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
     }
 
     /// Populate pathname, filename, lineno, func_name on record via Python frame introspection.
@@ -337,18 +366,22 @@ impl PyLogger {
         let Ok(sys) = py.import("sys") else { return };
         // _getframe(0) from Rust returns the most recent Python frame,
         // which is the frame that called logger.debug/info/etc.
-        let Ok(frame) = sys.call_method1("_getframe", (0i32,)) else { return };
+        let Ok(frame) = sys.call_method1("_getframe", (0i32,)) else {
+            return;
+        };
 
         // Extract f_code.co_filename → pathname, filename
         if let Ok(code) = frame.getattr("f_code") {
             if let Ok(co_filename) = code.getattr("co_filename") {
                 if let Ok(path) = co_filename.extract::<String>() {
                     // filename = basename of pathname
-                    let filename = path.rsplit_once(std::path::MAIN_SEPARATOR)
+                    let filename = path
+                        .rsplit_once(std::path::MAIN_SEPARATOR)
                         .map(|(_, name)| name.to_string())
                         .unwrap_or_else(|| path.clone());
                     // module = filename without extension
-                    let module_name = filename.rsplit_once('.')
+                    let module_name = filename
+                        .rsplit_once('.')
                         .map(|(base, _)| base.to_string())
                         .unwrap_or_else(|| filename.clone());
                     record.pathname = path;
@@ -381,7 +414,7 @@ impl PyLogger {
             let filters = self.filters.lock().unwrap();
             for filter_obj in filters.iter() {
                 let filter_bound = filter_obj.bind(py);
-                
+
                 // Try calling filter.filter(record) if it's a filter object
                 // Or call it directly if it's a callable
                 let result = if let Ok(filter_method) = filter_bound.getattr("filter") {
@@ -394,20 +427,20 @@ impl PyLogger {
                     let _ = py_record.set_item("pathname", &record.pathname);
                     let _ = py_record.set_item("lineno", record.lineno);
                     let _ = py_record.set_item("func_name", &record.func_name);
-                    
+
                     // Call filter method with reference to dict
                     let call_result = filter_method.call1((&py_record,));
-                    
+
                     // Check if filter modified the msg (after the call)
                     if let Ok(Some(new_msg)) = py_record.get_item("msg") {
                         if let Ok(msg_str) = new_msg.extract::<String>() {
                             record.msg = msg_str;
                         }
                     }
-                    
+
                     match call_result {
                         Ok(res) => res.is_truthy().unwrap_or(true),
-                        Err(_) => true,  // On error, allow the record
+                        Err(_) => true, // On error, allow the record
                     }
                 } else if filter_bound.is_callable() {
                     // Direct callable filter
@@ -419,36 +452,36 @@ impl PyLogger {
                     let _ = py_record.set_item("pathname", &record.pathname);
                     let _ = py_record.set_item("lineno", record.lineno);
                     let _ = py_record.set_item("func_name", &record.func_name);
-                    
+
                     // Call filter with reference to dict
                     let call_result = filter_bound.call1((&py_record,));
-                    
+
                     // Check if filter modified the msg (after the call)
                     if let Ok(Some(new_msg)) = py_record.get_item("msg") {
                         if let Ok(msg_str) = new_msg.extract::<String>() {
                             record.msg = msg_str;
                         }
                     }
-                    
+
                     match call_result {
                         Ok(res) => res.is_truthy().unwrap_or(true),
                         Err(_) => true,
                     }
                 } else {
-                    true  // Not a valid filter, allow the record
+                    true // Not a valid filter, allow the record
                 };
-                
+
                 if !result {
-                    return false;  // Filter rejected the record
+                    return false; // Filter rejected the record
                 }
             }
-            true  // All filters passed
+            true // All filters passed
         });
-        
+
         if !should_emit {
             return;
         }
-        
+
         let local_handlers = self.local_handlers.lock().unwrap();
 
         // 1. Handle Rust handlers
@@ -489,7 +522,11 @@ impl PyLogger {
                 record.levelno,
                 record.pathname.clone(),
                 record.lineno as i32,
-                record.get_message().into_py_any(py).expect("Failed to convert getMessage to PyAny").into(),
+                record
+                    .get_message()
+                    .into_py_any(py)
+                    .expect("Failed to convert getMessage to PyAny")
+                    .into(),
                 py.None().into(),
                 exc_info_py.as_ref().map(|e| e.clone_ref(py)),
             ) {
@@ -506,8 +543,12 @@ impl PyLogger {
 
             // Set func_name/funcName on the Python LogRecord from Rust record's caller info
             if !record.func_name.is_empty() {
-                let _ = py_record.bind(py).setattr("func_name", record.func_name.as_str());
-                let _ = py_record.bind(py).setattr("funcName", record.func_name.as_str());
+                let _ = py_record
+                    .bind(py)
+                    .setattr("func_name", record.func_name.as_str());
+                let _ = py_record
+                    .bind(py)
+                    .setattr("funcName", record.func_name.as_str());
             }
 
             // Call local Python handlers
@@ -634,7 +675,7 @@ impl PyLogger {
     /// The filter can be:
     /// - An object with a `filter(record)` method that returns True/False
     /// - A callable that takes a record dict and returns True/False
-    /// 
+    ///
     /// The record dict has keys: name, levelno, levelname, msg, pathname, lineno, func_name
     /// Filters can modify record['msg'] to transform the log message.
     fn addFilter(&self, py: Python, filter_obj: Py<PyAny>) -> PyResult<()> {

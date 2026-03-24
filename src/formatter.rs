@@ -81,7 +81,12 @@ impl Formatter for DefaultFormatter {
     /// Formatted string in the format: `[LEVELNAME] logger_name: message`
     fn format(&self, record: &crate::core::LogRecord) -> String {
         // Simple format: "[LEVELNAME] logger_name: msg"
-        let mut result = format!("[{}] {}: {}", record.levelname, record.name, record.get_message());
+        let mut result = format!(
+            "[{}] {}: {}",
+            record.levelname,
+            record.name,
+            record.get_message()
+        );
         if let Some(ref exc_text) = record.exc_text {
             result.push('\n');
             result.push_str(exc_text);

@@ -13,8 +13,8 @@ use once_cell::sync::Lazy;
 
 use crate::core::{get_logger as core_get_logger, get_root_logger, LogLevel};
 use crate::fast_logger;
-use crate::handler::{FileHandler, HTTPHandler, Handler, OverflowStrategy, RotatingFileHandler};
 use crate::formatter::PythonFormatter;
+use crate::handler::{FileHandler, HTTPHandler, Handler, OverflowStrategy, RotatingFileHandler};
 use crate::py_handlers::{
     PyFileHandler, PyHTTPHandler, PyMemoryHandler, PyOTLPHandler, PyRotatingFileHandler,
     PyStreamHandler,
@@ -167,7 +167,8 @@ pub fn register_rotating_file_handler(
         filename,
         max_bytes.unwrap_or(10 * 1024 * 1024),
         backup_count.unwrap_or(5),
-    ).map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+    )
+    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
 
     handler.set_level(log_level);
     HANDLERS.lock().unwrap().push(Arc::new(handler));
