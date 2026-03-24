@@ -2,15 +2,25 @@
 
 ## From PyPI (Recommended)
 
-Install LogXide from PyPI using pip:
+=== "pip"
 
-```bash
-# Basic installation
-pip install logxide
+    ```bash
+    # Basic installation
+    pip install logxide
 
-# With Sentry integration
-pip install logxide[sentry]
-```
+    # With Sentry integration
+    pip install logxide[sentry]
+    ```
+
+=== "uv"
+
+    ```bash
+    # Basic installation
+    uv add logxide
+
+    # With Sentry integration
+    uv add logxide[sentry]
+    ```
 
 ## Development Setup
 
@@ -20,11 +30,21 @@ For development or building from source:
 
 1. Install `maturin` to build the Python package:
 
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install maturin
-```
+=== "pip"
+
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate
+    pip install maturin
+    ```
+
+=== "uv"
+
+    ```bash
+    uv venv
+    source .venv/bin/activate
+    uv pip install maturin
+    ```
 
 ### Building from Source
 
@@ -32,29 +52,61 @@ uv pip install maturin
 # Clone the repository
 git clone https://github.com/Indosaram/logxide
 cd logxide
-
-# Install development dependencies
-uv pip install maturin pytest pytest-cov
-
-# Build in development mode
-maturin develop
-
-# Build release version
-maturin build --release
 ```
+
+=== "pip"
+
+    ```bash
+    # Install development dependencies
+    pip install maturin pytest pytest-cov
+
+    # Build in development mode
+    maturin develop
+
+    # Build release version
+    maturin build --release
+    ```
+
+=== "uv"
+
+    ```bash
+    # Install development dependencies
+    uv pip install maturin pytest pytest-cov
+
+    # Build in development mode
+    maturin develop
+
+    # Build release version
+    maturin build --release
+    ```
 
 ### Running Tests
 
-```bash
-# Install test dependencies
-uv pip install pytest pytest-cov pytest-xdist
+=== "pip"
 
-# Run test suite
-pytest tests/ -v
+    ```bash
+    # Install test dependencies
+    pip install pytest pytest-cov pytest-xdist
 
-# Generate coverage report
-pytest tests/ --cov=logxide --cov-report=html
-```
+    # Run test suite
+    pytest tests/ -v
+
+    # Generate coverage report
+    pytest tests/ --cov=logxide --cov-report=html
+    ```
+
+=== "uv"
+
+    ```bash
+    # Install test dependencies
+    uv pip install pytest pytest-cov pytest-xdist
+
+    # Run test suite
+    pytest tests/ -v
+
+    # Generate coverage report
+    pytest tests/ --cov=logxide --cov-report=html
+    ```
 
 ## Compatibility
 

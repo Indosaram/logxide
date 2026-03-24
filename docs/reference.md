@@ -32,9 +32,10 @@ All handlers are Rust-native implementations. Python `logging.Handler` subclasse
 ### FileHandler
 
 ```python
+# notest
 from logxide import FileHandler
 
-handler = FileHandler(filename, mode='a')
+handler = FileHandler('app.log', mode='a')
 handler.setLevel(logging.INFO)
 handler.setFormatter(formatter)
 ```
@@ -42,6 +43,7 @@ handler.setFormatter(formatter)
 ### StreamHandler
 
 ```python
+# notest
 from logxide import StreamHandler
 
 handler = StreamHandler(stream='stderr')  # 'stdout' or 'stderr'
@@ -50,18 +52,20 @@ handler = StreamHandler(stream='stderr')  # 'stdout' or 'stderr'
 ### RotatingFileHandler
 
 ```python
+# notest
 from logxide import RotatingFileHandler
 
 handler = RotatingFileHandler(
-    filename,
-    max_bytes=0,       # 0 = no rotation
-    backup_count=0     # Number of backup files to keep
+    'app.log',
+    maxBytes=0,        # 0 = no rotation
+    backupCount=0      # Number of backup files to keep
 )
 ```
 
 ### HTTPHandler
 
 ```python
+# notest
 from logxide import HTTPHandler
 
 handler = HTTPHandler(
@@ -77,18 +81,19 @@ handler = HTTPHandler(
 ### OTLPHandler
 
 ```python
+# notest
 from logxide import OTLPHandler
 
 handler = OTLPHandler(
     url="http://localhost:4318/v1/logs",
-    service_name="my-service"
+    service_name="my-service",
 )
 ```
 
 ### SentryHandler
 
 ```python
-from logxide import SentryHandler
+from logxide.sentry_integration import SentryHandler  # notest
 
 handler = SentryHandler(
     level=logging.WARNING,
@@ -96,7 +101,7 @@ handler = SentryHandler(
 )
 ```
 
-Requires `pip install logxide[sentry]`.
+Requires `pip install logxide[sentry]` or `uv add logxide[sentry]`.
 
 ### NullHandler
 

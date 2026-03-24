@@ -67,8 +67,8 @@ logger.addHandler(handler)
 # Rotating file handler
 rotating = RotatingFileHandler(
     'app.log',
-    max_bytes=10 * 1024 * 1024,  # 10MB
-    backup_count=5
+    maxBytes=10 * 1024 * 1024,  # 10MB
+    backupCount=5
 )
 logger.addHandler(rotating)
 

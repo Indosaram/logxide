@@ -41,12 +41,23 @@ LogXide is **NOT** a drop-in replacement for Python's logging module. Key limita
 
 ## Installation
 
-```bash
-pip install logxide
+=== "pip"
 
-# With Sentry integration
-pip install logxide[sentry]
-```
+    ```bash
+    pip install logxide
+
+    # With Sentry integration
+    pip install logxide[sentry]
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add logxide
+
+    # With Sentry integration
+    uv add logxide[sentry]
+    ```
 
 ## Quick Start
 

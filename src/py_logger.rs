@@ -52,7 +52,7 @@ pub fn check_level(py: Python, level: &Bound<PyAny>) -> PyResult<u32> {
     }
     Err(pyo3::exceptions::PyTypeError::new_err(format!(
         "Level not an integer or a valid string: {}",
-        level.repr()?.to_string()
+        level.repr()?
     )))
 }
 pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
@@ -489,11 +489,11 @@ impl PyLogger {
             drop(local_handlers);
             let global_handlers = HANDLERS.lock().unwrap();
             for handler in global_handlers.iter() {
-                let _ = handler.emit(&record);
+                handler.emit(&record);
             }
         } else {
             for handler in local_handlers.iter() {
-                let _ = handler.emit(&record);
+                handler.emit(&record);
             }
 
             let should_propagate = *self.propagate.lock().unwrap();
@@ -501,7 +501,7 @@ impl PyLogger {
                 drop(local_handlers);
                 let global_handlers = HANDLERS.lock().unwrap();
                 for handler in global_handlers.iter() {
-                    let _ = handler.emit(&record);
+                    handler.emit(&record);
                 }
             }
         }
