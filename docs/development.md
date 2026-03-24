@@ -35,14 +35,29 @@ logxide/
 # Clone the repository
 git clone https://github.com/Indosaram/logxide
 cd logxide
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install development dependencies
-uv pip install maturin pytest pytest-cov pytest-xdist
 ```
+
+=== "pip"
+
+    ```bash
+    # Create virtual environment
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+    # Install development dependencies
+    pip install maturin pytest pytest-cov pytest-xdist
+    ```
+
+=== "uv"
+
+    ```bash
+    # Create virtual environment
+    uv venv
+    source .venv/bin/activate
+
+    # Install development dependencies
+    uv pip install maturin pytest pytest-cov pytest-xdist
+    ```
 
 ## Building
 
@@ -280,10 +295,21 @@ maturin publish
 
 ### Building Documentation
 
-```bash
-# Install documentation dependencies
-pip install mkdocs mkdocs-material
+=== "pip"
 
+    ```bash
+    # Install documentation dependencies
+    pip install mkdocs mkdocs-material
+    ```
+
+=== "uv"
+
+    ```bash
+    # Install documentation dependencies
+    uv pip install mkdocs mkdocs-material
+    ```
+
+```bash
 # Serve documentation locally
 mkdocs serve
 

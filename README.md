@@ -56,14 +56,13 @@ LogXide automatically installs itself when imported.
 ## Installation
 
 ```bash
-# Basic installation
+# pip
 pip install logxide
+pip install logxide[sentry]    # With Sentry integration
 
-# With Sentry integration
-pip install logxide[sentry]
-
-# Development dependencies
-pip install logxide[dev]
+# uv
+uv add logxide
+uv add logxide[sentry]          # With Sentry integration
 ```
 
 > **📘 [Usage Guide](USAGE.md)** - Common mistakes, correct patterns, and troubleshooting
@@ -223,7 +222,7 @@ We welcome contributions! See our [development guide](docs/development.md) for d
 # Quick development setup
 git clone https://github.com/Indosaram/logxide
 cd logxide
-pip install maturin
+pip install maturin   # or: uv pip install maturin
 maturin develop
 pytest tests/
 ```

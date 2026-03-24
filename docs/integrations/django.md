@@ -54,6 +54,7 @@ LOGGING = {
 ## Custom Middleware
 
 ```python
+# notest
 # middleware.py
 import logging
 import time
@@ -95,6 +96,7 @@ class LogXideRequestMiddleware(MiddlewareMixin):
 ## Views and Models
 
 ```python
+# notest
 # views.py
 import logging
 from django.http import JsonResponse
@@ -156,6 +158,7 @@ def log_user_created(sender, instance, created, **kwargs):
 ## Management Commands
 
 ```python
+# notest
 # management/commands/log_demo.py
 import logging
 from django.core.management.base import BaseCommand
@@ -188,6 +191,7 @@ class Command(BaseCommand):
 See the [Sentry Integration Guide](sentry.md) for detailed Sentry setup. Quick example:
 
 ```python
+# notest
 # settings.py
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration

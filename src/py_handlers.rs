@@ -462,6 +462,12 @@ pub struct PyMemoryHandler {
     pub(crate) inner: Arc<MemoryHandler>,
 }
 
+impl Default for PyMemoryHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drop for PyMemoryHandler {
     fn drop(&mut self) {}
 }
