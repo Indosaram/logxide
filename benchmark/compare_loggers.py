@@ -231,7 +231,7 @@ times = []
 for run in range(3):
     gc.collect()
     start_time = time.perf_counter()
-    
+
     if "{benchmark_name}" == "simple_logging":
         for i in range(iterations):
             logger.info("Simple log message")
@@ -242,7 +242,7 @@ for run in range(3):
         exception = ValueError("Test exception")
         for i in range(iterations):
             logger.error(f"Error occurred - error: {{exception}}, count: {{i}}")
-    
+
     end_time = time.perf_counter()
     times.append(end_time - start_time)
 

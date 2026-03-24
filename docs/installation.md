@@ -113,4 +113,3 @@ cd logxide
 - **Python**: 3.12+ (3.14 supported)
 - **Platforms**: macOS, Linux, Windows
 - **Dependencies**: None (Rust compiled into native extension)
-
