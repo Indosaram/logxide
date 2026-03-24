@@ -234,4 +234,3 @@ def test_doc_codeblock_exec(block_id: str, code: str):
             # Get last few lines of traceback
             err_msg = "\n".join(stderr[-5:]) if len(stderr) > 5 else "\n".join(stderr)
             pytest.fail(f"Execution error in {block_id}:\n{err_msg}")
-
