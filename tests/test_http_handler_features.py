@@ -3,6 +3,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import pytest
+
 import logxide
 from logxide import HTTPHandler
 
@@ -30,19 +32,29 @@ class MockHTTPHandler(BaseHTTPRequestHandler):
         pass
 
 
-def run_server(server):
-    server.serve_forever()
+@pytest.fixture()
+def mock_server():
+    """Start a mock HTTP server on an OS-assigned port and return the port."""
+    server = HTTPServer(("127.0.0.1", 0), MockHTTPHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield port
+    server.shutdown()
 
 
-def test_global_context():
+def _wait_for_payloads(count=1, timeout=5.0):
+    """Poll RECEIVED_PAYLOADS until we have at least `count` entries."""
+    deadline = time.monotonic() + timeout
+    while len(RECEIVED_PAYLOADS) < count and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+
+def test_global_context(mock_server):
     RECEIVED_PAYLOADS.clear()
 
-    server = HTTPServer(("localhost", 8082), MockHTTPHandler)
-    server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
-    server_thread.start()
-
     handler = HTTPHandler(
-        url="http://localhost:8082",
+        url=f"http://127.0.0.1:{mock_server}",
         batch_size=1,
         global_context={
             "application": "test-app",
@@ -56,9 +68,7 @@ def test_global_context():
     logger.addHandler(handler)
 
     logger.info("Test message")
-    time.sleep(0.5)
-
-    server.shutdown()
+    _wait_for_payloads(1)
 
     assert len(RECEIVED_PAYLOADS) > 0, "No payloads received"
     payload = RECEIVED_PAYLOADS[0]
@@ -68,15 +78,10 @@ def test_global_context():
     assert record.get("application") == "test-app", f"Missing application: {record}"
     assert record.get("environment") == "testing", f"Missing environment: {record}"
     assert record.get("version") == 123, f"Missing version: {record}"
-    print("✅ test_global_context PASSED")
 
 
-def test_transform_callback():
+def test_transform_callback(mock_server):
     RECEIVED_PAYLOADS.clear()
-
-    server = HTTPServer(("localhost", 8083), MockHTTPHandler)
-    server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
-    server_thread.start()
 
     def transform(records):
         return {
@@ -85,7 +90,7 @@ def test_transform_callback():
         }
 
     handler = HTTPHandler(
-        url="http://localhost:8083",
+        url=f"http://127.0.0.1:{mock_server}",
         batch_size=2,
         transform_callback=transform,
     )
@@ -96,9 +101,7 @@ def test_transform_callback():
 
     logger.info("Message 1")
     logger.warning("Message 2")
-    time.sleep(0.5)
-
-    server.shutdown()
+    _wait_for_payloads(1)
 
     assert len(RECEIVED_PAYLOADS) > 0, "No payloads received"
     payload = RECEIVED_PAYLOADS[0]
@@ -106,15 +109,10 @@ def test_transform_callback():
     assert "logs" in payload, f"Missing 'logs' key: {payload}"
     assert "meta" in payload, f"Missing 'meta' key: {payload}"
     assert payload["meta"]["count"] == 2, f"Wrong count: {payload}"
-    print("✅ test_transform_callback PASSED")
 
 
-def test_context_provider():
+def test_context_provider(mock_server):
     RECEIVED_PAYLOADS.clear()
-
-    server = HTTPServer(("localhost", 8084), MockHTTPHandler)
-    server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
-    server_thread.start()
 
     call_count = [0]
 
@@ -123,7 +121,7 @@ def test_context_provider():
         return {"batch_id": call_count[0], "timestamp": "2026-01-13T00:00:00Z"}
 
     handler = HTTPHandler(
-        url="http://localhost:8084",
+        url=f"http://127.0.0.1:{mock_server}",
         batch_size=1,
         context_provider=dynamic_context,
     )
@@ -133,11 +131,9 @@ def test_context_provider():
     logger.addHandler(handler)
 
     logger.info("First message")
-    time.sleep(0.3)
+    _wait_for_payloads(1)
     logger.info("Second message")
-    time.sleep(0.3)
-
-    server.shutdown()
+    _wait_for_payloads(2)
 
     assert len(RECEIVED_PAYLOADS) >= 2, (
         f"Expected 2+ payloads, got {len(RECEIVED_PAYLOADS)}"
@@ -148,18 +144,13 @@ def test_context_provider():
 
     assert first_record.get("batch_id") == 1, f"Wrong batch_id: {first_record}"
     assert second_record.get("batch_id") == 2, f"Wrong batch_id: {second_record}"
-    print("✅ test_context_provider PASSED")
 
 
-def test_manual_flush():
+def test_manual_flush(mock_server):
     RECEIVED_PAYLOADS.clear()
 
-    server = HTTPServer(("localhost", 8085), MockHTTPHandler)
-    server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
-    server_thread.start()
-
     handler = HTTPHandler(
-        url="http://localhost:8085",
+        url=f"http://127.0.0.1:{mock_server}",
         batch_size=100,
         flush_interval=3600,
     )
@@ -173,23 +164,16 @@ def test_manual_flush():
     assert len(RECEIVED_PAYLOADS) == 0, "Should not have sent yet"
 
     handler.flush()
-    time.sleep(0.3)
-
-    server.shutdown()
+    _wait_for_payloads(1)
 
     assert len(RECEIVED_PAYLOADS) > 0, "Flush should have sent the message"
-    print("✅ test_manual_flush PASSED")
 
 
-def test_extra_fields_complex_types():
+def test_extra_fields_complex_types(mock_server):
     RECEIVED_PAYLOADS.clear()
 
-    server = HTTPServer(("localhost", 8086), MockHTTPHandler)
-    server_thread = threading.Thread(target=run_server, args=(server,), daemon=True)
-    server_thread.start()
-
     handler = HTTPHandler(
-        url="http://localhost:8086",
+        url=f"http://127.0.0.1:{mock_server}",
         batch_size=1,
     )
 
@@ -205,9 +189,7 @@ def test_extra_fields_complex_types():
             "metadata": {"key": "value", "nested": {"deep": True}},
         },
     )
-    time.sleep(0.5)
-
-    server.shutdown()
+    _wait_for_payloads(1)
 
     assert len(RECEIVED_PAYLOADS) > 0, "No payloads received"
     record = RECEIVED_PAYLOADS[0][0]
@@ -218,7 +200,6 @@ def test_extra_fields_complex_types():
     assert extra.get("metadata", {}).get("nested", {}).get("deep") is True, (
         f"Wrong nested: {extra}"
     )
-    print("✅ test_extra_fields_complex_types PASSED")
 
 
 def test_error_callback():
@@ -228,7 +209,7 @@ def test_error_callback():
         ERROR_MESSAGES.append(msg)
 
     handler = HTTPHandler(
-        url="http://localhost:9999",
+        url="http://127.0.0.1:1",  # Port 1 — guaranteed to fail
         batch_size=1,
         error_callback=on_error,
     )
@@ -238,17 +219,9 @@ def test_error_callback():
     logger.addHandler(handler)
 
     logger.info("This will fail")
-    time.sleep(0.5)
+
+    deadline = time.monotonic() + 5.0
+    while not ERROR_MESSAGES and time.monotonic() < deadline:
+        time.sleep(0.1)
 
     assert len(ERROR_MESSAGES) > 0, "Error callback should have been called"
-    print(f"✅ test_error_callback PASSED (error: {ERROR_MESSAGES[0][:50]}...)")
-
-
-if __name__ == "__main__":
-    test_global_context()
-    test_transform_callback()
-    test_context_provider()
-    test_manual_flush()
-    test_extra_fields_complex_types()
-    test_error_callback()
-    print("\n🎉 All tests passed!")
