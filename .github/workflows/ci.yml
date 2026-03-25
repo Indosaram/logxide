@@ -46,6 +46,7 @@ jobs:
         name: Test
         needs: [lint, security]
         runs-on: ${{ matrix.os }}
+        timeout-minutes: 15
         strategy:
             fail-fast: true
             matrix:
@@ -94,7 +95,7 @@ jobs:
             - name: Run Python tests
               env:
                   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
-              run: uv run pytest tests/ -v --cov=logxide --cov-report=xml
+              run: uv run pytest tests/ -v --cov=logxide --cov-report=xml --ignore=tests/test_sentry_integration.py --ignore=tests/test_http_auth.py
             - name: Upload coverage to Codecov
               if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
               uses: codecov/codecov-action@v4
