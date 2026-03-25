@@ -189,7 +189,7 @@ def _needs_framework(code: str) -> set[str]:
 EXEC_CODEBLOCKS = [
     (block_id, code)
     for block_id, code in ALL_CODEBLOCKS
-    if _is_executable(code) and not block_id.startswith("integrations/")
+    if _is_executable(code) and not block_id.split(":")[0].startswith("integrations")
 ]
 
 
