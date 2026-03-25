@@ -1,7 +1,7 @@
 import json
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -16,6 +16,8 @@ ERROR_MESSAGES = []
 
 
 class MockHTTPHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length)
@@ -35,7 +37,7 @@ class MockHTTPHandler(BaseHTTPRequestHandler):
 @pytest.fixture()
 def mock_server():
     """Start a mock HTTP server on an OS-assigned port and return the port."""
-    server = HTTPServer(("127.0.0.1", 0), MockHTTPHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), MockHTTPHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

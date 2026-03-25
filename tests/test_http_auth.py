@@ -1,7 +1,7 @@
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import logxide
 
@@ -16,6 +16,8 @@ RESULTS = []
 
 
 class AuthMockHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+
     def do_POST(self):
         auth_header = self.headers.get("Authorization")
         api_key = self.headers.get("X-API-KEY")
@@ -33,7 +35,7 @@ class AuthMockHandler(BaseHTTPRequestHandler):
 @pytest.fixture()
 def mock_server():
     """Start a mock HTTP server on an OS-assigned port."""
-    server = HTTPServer(("127.0.0.1", 0), AuthMockHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), AuthMockHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
