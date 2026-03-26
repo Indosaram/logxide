@@ -44,6 +44,22 @@ LogXide delivers high performance through its native Rust implementation, provid
 - Optimized for high-performance scenarios where mutex contention is a concern
 - Uses `AtomicU8` for fast level checking
 
+### FastLoggerWrapper (`logxide/fast_logger_wrapper.py`)
+
+Python-side optimization wrapper that intercepts logging calls before they cross the PyO3 boundary:
+
+```
+Python call → FastLoggerWrapper.info() → level check (Python) → [skip if disabled]
+                                                               → [delegate to Rust if enabled]
+```
+
+- **2-5x speedup** for disabled log calls by avoiding:
+    - `PyObject` creation for messages
+    - `PyTuple`/`PyDict` packaging for args/kwargs
+    - PyO3 boundary crossing overhead
+- Caches `getEffectiveLevel()` on the Python side and invalidates on `setLevel()`/`addHandler()`/`removeHandler()`
+- Transparent delegation: all non-hot-path attributes fall through to the underlying Rust `PyLogger` via `__getattr__`
+
 ### Handlers (`src/handler.rs`)
 
 All handlers implement the synchronous `Handler` trait:

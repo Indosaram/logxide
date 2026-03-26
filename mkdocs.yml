@@ -52,6 +52,7 @@ nav:
   - Getting Started:
     - Installation: installation.md
     - Usage Guide: usage.md
+    - Testing Guide: testing.md
   - Integrations:
     - Overview: integrations/index.md
     - Flask: integrations/flask.md
