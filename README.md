@@ -212,7 +212,6 @@ handler = OTLPHandler(
 | pytest | ⚠️ | Use `caplog_logxide` fixture instead of `caplog` |
 | Sentry | ✅ | Auto-integration supported |
 | structlog | ❌ | Requires custom handlers |
-| infra_basement | ❌ | Requires LogRecord subclassing |
 
 ## Contributing
 
