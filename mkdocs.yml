@@ -60,6 +60,13 @@ nav:
     - Django: integrations/django.md
     - FastAPI: integrations/fastapi.md
     - Sentry: integrations/sentry.md
+  - Comparisons:
+    - Overview: comparison.md
+    - vs Standard Library: comparison-stdlib.md
+    - vs Structlog: comparison-structlog.md
+    - vs Picologging: comparison-picologging.md
+  - Compatibility:
+    - Migration Checklist: compatibility.md
   - Performance & Architecture:
     - Benchmarks: benchmarks.md
     - Architecture: architecture.md
