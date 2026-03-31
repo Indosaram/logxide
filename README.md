@@ -23,7 +23,7 @@ LogXide is **NOT** a drop-in replacement for Python's logging module. It priorit
 | Basic logging API | ✅ | `getLogger`, `info`, `debug`, etc. |
 | Formatters | ✅ | `PercentStyle`, `StrFormatStyle`, `StringTemplateStyle` |
 | Rust handlers | ✅ | `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `HTTPHandler`, `OTLPHandler` |
-| Custom Python handlers | ❌ | Not supported - use Rust handlers only |
+| Custom Python handlers | ⚠️ | Accepted but bypass Rust performance pipeline |
 | Subclassing `LogRecord` | ❌ | Rust type, not subclassable |
 | Subclassing `Logger` | ❌ | Rust type, not subclassable |
 | pytest `caplog` | ⚠️ | Use `caplog_logxide` fixture |
@@ -31,7 +31,7 @@ LogXide is **NOT** a drop-in replacement for Python's logging module. It priorit
 
 **If your project requires:**
 - Subclassing `LogRecord` or `Logger`
-- Custom Python handlers
+- Custom Python formatters with overridden `format()` methods
 - pytest `caplog` fixture (use `caplog_logxide` instead)
 - Full stdlib logging compatibility
 
@@ -71,6 +71,7 @@ uv add logxide[sentry]          # With Sentry integration
 
 - **[Usage Guide](docs/usage.md)** - Complete usage examples and API guide
 - **[Integration Guide](docs/integrations/index.md)** - Flask, Django, and FastAPI integration
+- **[Third-Party Compatibility](docs/third-party-compatibility.md)** - Detailed compatibility for 20+ libraries
 - **[Sentry Integration](docs/integrations/sentry.md)** - Automatic error tracking with Sentry
 - **[Performance Benchmarks](docs/benchmarks.md)** - Comprehensive performance analysis
 - **[Architecture](docs/architecture.md)** - Technical architecture and design
@@ -127,7 +128,7 @@ LogXide delivers exceptional performance through its Rust-powered native archite
 LogXide uses **Rust-native handlers only** for maximum performance:
 
 - **Rust handlers only**: `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `HTTPHandler`, `OTLPHandler`
-- **No custom Python handlers**: `logger.addHandler()` rejects Python `logging.Handler` subclasses
+- **No custom Python handlers**: `logger.addHandler()` accepts Python handlers but they bypass the Rust performance pipeline
 - **No subclassing**: `LogRecord`, `Logger` are Rust types (not subclassable)
 - **No StringIO capture**: Use file-based logging for tests
 - **No pytest caplog**: Use `caplog_logxide` fixture instead
@@ -198,7 +199,7 @@ handler = OTLPHandler(
 
 ## Compatibility
 
-- **Python**: 3.12+ (3.14 supported)
+- **Python**: 3.12+ (3.14 supported, 3.15 testing in progress)
 - **Platforms**: macOS, Linux, Windows
 - **Dependencies**: None (Rust compiled into native extension)
 
@@ -206,12 +207,19 @@ handler = OTLPHandler(
 
 | Library | Compatible | Notes |
 |---------|------------|-------|
-| Flask | ✅ | Works with `app.logger` |
-| Django | ✅ | Works with Django logging |
-| FastAPI | ✅ | Works with Uvicorn |
+| Flask | ✅ | `app.logger` automatically intercepted |
+| Django | ✅ | `dictConfig` LOGGING supported |
+| FastAPI / Uvicorn | ✅ | All uvicorn loggers intercepted |
+| SQLAlchemy | ✅ | SQL query logging via `echo=True` |
+| requests / urllib3 | ✅ | HTTP connection logs captured |
+| httpx | ✅ | Standard logging, expected to work |
+| boto3 / botocore | ✅ | Standard logging, expected to work |
+| Sentry | ✅ | Native integration, auto-detects SDK |
+| Celery | ⚠️ | Use `setup_logging` signal ([details](docs/third-party-compatibility.md#celery)) |
 | pytest | ⚠️ | Use `caplog_logxide` fixture instead of `caplog` |
-| Sentry | ✅ | Auto-integration supported |
-| structlog | ❌ | Requires custom handlers |
+| structlog | ❌ | Incompatible architecture ([details](docs/third-party-compatibility.md#structlog)) |
+
+**[Full compatibility guide](docs/third-party-compatibility.md)** — Detailed documentation for 20+ libraries.
 
 ## Contributing
 
