@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 ## Framework Guides
 
+- **[Third-Party Compatibility Guide](../third-party-compatibility.md)** — Full compatibility matrix for 20+ libraries
 - **[Flask Integration](flask.md)** — Basic setup, request logging middleware, SQLAlchemy
 - **[Django Integration](django.md)** — Settings, middleware, views, management commands
 - **[FastAPI Integration](fastapi.md)** — Basic setup, background tasks, SQLAlchemy

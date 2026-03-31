@@ -55,6 +55,7 @@ nav:
     - Testing Guide: testing.md
   - Integrations:
     - Overview: integrations/index.md
+    - Third-Party Compatibility: third-party-compatibility.md
     - Flask: integrations/flask.md
     - Django: integrations/django.md
     - FastAPI: integrations/fastapi.md
