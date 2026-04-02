@@ -196,6 +196,7 @@ addopts = [
     "--ignore=tests/test_timed_rotation.py",
     "--timeout=60",
 ]
+timeout_method = "thread"
 log_cli = false
 log_cli_level = "CRITICAL"
 log_cli_format = "%(message)s"
