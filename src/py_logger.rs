@@ -411,7 +411,10 @@ impl PyLogger {
         // Apply Python callable filters before emission
         // Filters can modify the record (especially record.msg) and return False to suppress
         let should_emit = Python::attach(|py| {
-            let filters = self.filters.lock().unwrap();
+            let filters: Vec<Py<PyAny>> = {
+                let lock = self.filters.lock().unwrap();
+                lock.iter().map(|f| f.clone_ref(py)).collect()
+            };
             for filter_obj in filters.iter() {
                 let filter_bound = filter_obj.bind(py);
 
@@ -482,12 +485,13 @@ impl PyLogger {
             return;
         }
 
-        let local_handlers = self.local_handlers.lock().unwrap();
+        let local_handlers: Vec<Arc<dyn Handler + Send + Sync>> =
+            { self.local_handlers.lock().unwrap().clone() };
 
         // 1. Handle Rust handlers
         if local_handlers.is_empty() {
-            drop(local_handlers);
-            let global_handlers = HANDLERS.lock().unwrap();
+            let global_handlers: Vec<Arc<dyn Handler + Send + Sync>> =
+                { HANDLERS.lock().unwrap().clone() };
             for handler in global_handlers.iter() {
                 handler.emit(&record);
             }
@@ -498,8 +502,8 @@ impl PyLogger {
 
             let should_propagate = *self.propagate.lock().unwrap();
             if should_propagate {
-                drop(local_handlers);
-                let global_handlers = HANDLERS.lock().unwrap();
+                let global_handlers: Vec<Arc<dyn Handler + Send + Sync>> =
+                    { HANDLERS.lock().unwrap().clone() };
                 for handler in global_handlers.iter() {
                     handler.emit(&record);
                 }
@@ -508,10 +512,16 @@ impl PyLogger {
 
         // 2. Handle Python handlers (like pytest's caplog)
         Python::attach(|py| {
-            let local_py = self.local_python_handlers.lock().unwrap();
-            let global_py = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+            let local_py_handlers: Vec<Py<PyAny>> = {
+                let lock = self.local_python_handlers.lock().unwrap();
+                lock.iter().map(|h| h.clone_ref(py)).collect()
+            };
+            let global_py_handlers: Vec<Py<PyAny>> = {
+                let lock = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+                lock.iter().map(|h| h.clone_ref(py)).collect()
+            };
 
-            if local_py.is_empty() && global_py.is_empty() {
+            if local_py_handlers.is_empty() && global_py_handlers.is_empty() {
                 return;
             }
 
@@ -552,12 +562,12 @@ impl PyLogger {
             }
 
             // Call local Python handlers
-            for handler in local_py.iter() {
+            for handler in local_py_handlers.iter() {
                 let b_handler = handler.bind(py);
                 let _ = b_handler.call_method1("handle", (&py_record,));
             }
             // Call global Python handlers
-            for handler in global_py.iter() {
+            for handler in global_py_handlers.iter() {
                 let b_handler = handler.bind(py);
                 let _ = b_handler.call_method1("handle", (&py_record,));
             }
@@ -944,7 +954,10 @@ impl PyLogger {
 
     fn handle(&self, record: Py<PyAny>) -> PyResult<()> {
         Python::attach(|py| {
-            let handlers = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+            let handlers: Vec<Py<PyAny>> = {
+                let lock = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
+                lock.iter().map(|h| h.clone_ref(py)).collect()
+            };
             for handler in handlers.iter() {
                 let _ = handler.call_method1(py, "handle", (record.clone_ref(py),));
             }
