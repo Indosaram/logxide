@@ -96,7 +96,7 @@ jobs:
             - name: Run Python tests
               env:
                   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
-              run: uv run pytest tests/ -v --cov=logxide --cov-report=xml
+              run: uv run pytest tests/ -v --cov=logxide --cov-report=xml --timeout=60 --timeout-method=thread
             - name: Upload coverage to Codecov
               if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
               uses: codecov/codecov-action@v4
