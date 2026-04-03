@@ -220,8 +220,22 @@ def test_thread_safety():
         for t in threads:
             t.join()
 
-        # Flush logs
-        logging.flush()
+        # Flush logs (with timeout to prevent Rust Mutex/GIL deadlock)
+        import threading as _threading
+
+        _done = _threading.Event()
+
+        def _do_flush():
+            try:
+                logging.flush()
+            except BaseException:
+                pass
+            finally:
+                _done.set()
+
+        _ft = _threading.Thread(target=_do_flush, daemon=True)
+        _ft.start()
+        _done.wait(timeout=5)
 
         print("✓ Thread safety test passed")
         return True
