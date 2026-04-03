@@ -75,11 +75,13 @@ pub fn basicConfig(_py: Python, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult
 }
 
 #[pyfunction]
-pub fn flush(_py: Python) -> PyResult<()> {
-    let handlers = HANDLERS.lock().unwrap();
-    for h in handlers.iter() {
-        h.flush();
-    }
+pub fn flush(py: Python) -> PyResult<()> {
+    let handlers: Vec<Arc<dyn Handler + Send + Sync>> = { HANDLERS.lock().unwrap().clone() };
+    py.detach(|| {
+        for h in handlers.iter() {
+            h.flush();
+        }
+    });
     Ok(())
 }
 
