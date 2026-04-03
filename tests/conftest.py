@@ -14,6 +14,29 @@ import pytest
 from logxide import logging
 
 
+def _safe_flush(timeout_seconds=3):
+    """Flush with timeout to prevent Rust-level deadlocks.
+
+    The Rust implementation of logging.flush() acquires HANDLERS.lock().
+    If another thread holds this Mutex while waiting for GIL, it creates
+    a cross-deadlock that Python-level timeouts cannot interrupt.
+    Using a daemon thread with Event.wait() lets us bail out safely.
+    """
+    done = threading.Event()
+
+    def _do_flush():
+        try:
+            logging.flush()
+        except BaseException:
+            pass
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_do_flush, daemon=True)
+    t.start()
+    done.wait(timeout=timeout_seconds)
+
+
 @pytest.fixture(autouse=True)
 def cleanup_logxide():
     """Ensure proper cleanup of logxide handlers after each test."""
@@ -23,7 +46,7 @@ def cleanup_logxide():
 
     # BEFORE test: flush any pending logs
     with contextlib.suppress(BaseException):
-        logging.flush()
+        _safe_flush()
 
     # Clear Python-side logger handlers (but not Rust global handlers)
     try:
@@ -67,7 +90,7 @@ def cleanup_logxide():
 
     # AFTER test: cleanup
     with contextlib.suppress(BaseException):
-        logging.flush()
+        _safe_flush()
 
     # Small delay to let any active operations complete
     time.sleep(0.05)
@@ -123,7 +146,7 @@ def clean_logging_state():
     yield
 
     # Flush any remaining messages
-    logging.flush()
+    _safe_flush()
 
     # Reset thread name
     threading.current_thread().name = "TestThread"
@@ -145,7 +168,7 @@ def capture_logs():
                 logging.basicConfig()
 
         def get_output(self):
-            logging.flush()
+            _safe_flush()
             return self.output.getvalue()
 
         def clear(self):
@@ -249,7 +272,7 @@ class LogOutputCapture:
             sys.stdout = self.original_stdout
         if self.original_stderr:
             sys.stderr = self.original_stderr
-        logging.flush()
+        _safe_flush()
         # Small delay to ensure async logging completes
         time.sleep(0.05)
         return self.output.getvalue()
@@ -277,7 +300,7 @@ def log_output_capture():
 
 def wait_for_async_logging(timeout: float = 1.0):
     """Wait for async logging to complete."""
-    logging.flush()
+    _safe_flush()
     time.sleep(0.01)  # Small delay to ensure async processing
 
 
