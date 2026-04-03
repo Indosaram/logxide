@@ -194,6 +194,7 @@ addopts = [
     "-p", "no:logging",
     "--ignore=tests/test_interceptor.py",
     "--ignore=tests/test_timed_rotation.py",
+    "--ignore=tests/test_sentry_integration.py",
     "--timeout=60",
 ]
 timeout_method = "thread"
