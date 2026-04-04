@@ -1,192 +1,85 @@
 # LogXide
 
-**High-Performance Rust-Powered Logging for Python**
+**2.7x faster Python logging, powered by Rust.**
 
-LogXide is a high-performance logging library for Python, delivering exceptional performance through its native Rust implementation. It provides a familiar logging API but prioritizes **performance over full compatibility**.
-
-## Key Features
-
-- **High Performance**: Rust-powered logging with exceptional throughput
-- **Familiar API**: Similar to Python's logging module (not a drop-in replacement)
-- **Thread-Safe**: Complete support for multi-threaded applications
-- **Direct Processing**: Efficient log message processing with native Rust handlers
-- **Rich Formatting**: All Python logging format specifiers with advanced features
-- **Level Filtering**: Hierarchical logger levels with inheritance
-- **Sentry Integration**: Automatic error tracking with Sentry (optional)
-
-## ⚠️ Important: Not a Drop-in Replacement
-
-LogXide is **NOT** a drop-in replacement for Python's logging module. It prioritizes performance over compatibility:
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Basic logging API | ✅ | `getLogger`, `info`, `debug`, etc. |
-| Formatters | ✅ | `PercentStyle`, `StrFormatStyle`, `StringTemplateStyle` |
-| Rust handlers | ✅ | `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `HTTPHandler`, `OTLPHandler` |
-| Custom Python handlers | ⚠️ | Accepted but bypass Rust performance pipeline |
-| Subclassing `LogRecord` | ❌ | Rust type, not subclassable |
-| Subclassing `Logger` | ❌ | Rust type, not subclassable |
-| pytest `caplog` | ⚠️ | Use `caplog_logxide` fixture |
-| StringIO capture | ❌ | Use file-based logging |
-
-**If your project requires:**
-- Subclassing `LogRecord` or `Logger`
-- Custom Python formatters with overridden `format()` methods
-- pytest `caplog` fixture (use `caplog_logxide` instead)
-- Full stdlib logging compatibility
-
-**→ Use standard Python logging instead.**
-
-## Quick Start
+Same stdlib API. Same `getLogger`. Same format strings. Just faster.
 
 ```python
-from logxide import logging
+# Before                              # After
+import logging                        from logxide import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('myapp')
-logger.info('Hello from LogXide!')
+logger.info('Hello, world!')          # 2.7x faster. Same code.
 ```
 
-LogXide automatically installs itself when imported.
+[![PyPI](https://img.shields.io/pypi/v/logxide)](https://pypi.org/project/logxide/)
+[![Python](https://img.shields.io/pypi/pyversions/logxide)](https://pypi.org/project/logxide/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/Indosaram/logxide/actions/workflows/ci.yml/badge.svg)](https://github.com/Indosaram/logxide/actions/workflows/ci.yml)
 
 ## Installation
 
 ```bash
-# pip
 pip install logxide
-pip install logxide[sentry]    # With Sentry integration
-
-# uv
-uv add logxide
-uv add logxide[sentry]          # With Sentry integration
 ```
 
-> **📘 [Usage Guide](USAGE.md)** - Common mistakes, correct patterns, and troubleshooting
-
-## Documentation
-
-- **[Usage Guide](docs/usage.md)** - Complete usage examples and API guide
-- **[Integration Guide](docs/integrations/index.md)** - Flask, Django, and FastAPI integration
-- **[Third-Party Compatibility](docs/third-party-compatibility.md)** - Detailed compatibility for 20+ libraries
-- **[Sentry Integration](docs/integrations/sentry.md)** - Automatic error tracking with Sentry
-- **[Performance Benchmarks](docs/benchmarks.md)** - Comprehensive performance analysis
-- **[Architecture](docs/architecture.md)** - Technical architecture and design
-- **[Installation](docs/installation.md)** - Installation and setup guide
-- **[Development](docs/development.md)** - Contributing and development guide
-- **[API Reference](docs/reference.md)** - Complete API documentation
-
-## Sentry Integration
-
-LogXide includes optional Sentry integration for automatic error tracking:
-
-```python
-# Configure Sentry first
-import sentry_sdk
-sentry_sdk.init(dsn="your-sentry-dsn")
-
-# Import LogXide - Sentry integration is automatic!
-from logxide import logging
-
-logger = logging.getLogger(__name__)
-logger.warning("This will appear in Sentry")
-logger.error("This error will be tracked")
+```bash
+# With Sentry integration
+pip install logxide[sentry]
 ```
-
-**Features:**
-- **Automatic detection** of Sentry configuration
-- **Level filtering** (WARNING and above sent to Sentry)
-- **Rich context** including stack traces and custom data
-- **Zero configuration** required
 
 ## Performance
 
-LogXide delivers exceptional performance through its Rust-powered native architecture. See our [comprehensive benchmarks](docs/benchmarks.md) for detailed performance analysis.
+Real-world file logging benchmarks (Python 3.12, 100K iterations):
 
-### Python 3.12 Benchmark Results (File I/O)
+| Scenario | LogXide | Picologging (C) | stdlib logging | vs Pico | vs stdlib |
+|----------|---------|-----------------|----------------|---------|-----------|
+| Simple | 446,135 ops/s | 372,020 ops/s | 157,220 ops/s | **+20%** | **+184%** |
+| Structured | 412,235 ops/s | 357,193 ops/s | 153,547 ops/s | **+15%** | **+168%** |
+| Error | 426,294 ops/s | 361,053 ops/s | 155,332 ops/s | **+18%** | **+174%** |
 
-**Real-world file logging performance (100,000 iterations):**
+20% faster than Picologging (C-based, Microsoft). 2.7x faster than stdlib. [Full benchmarks →](docs/benchmarks.md)
 
-| Test Scenario | LogXide | Picologging | Python logging | vs Pico | vs Stdlib |
-|--------------|---------|-------------|----------------|---------|-----------|
-| **Simple Logging** | 446,135 ops/sec | 372,020 ops/sec | 157,220 ops/sec | **+20%** | **+184%** |
-| **Structured Logging** | 412,235 ops/sec | 357,193 ops/sec | 153,547 ops/sec | **+15%** | **+168%** |
-| **Error Logging** | 426,294 ops/sec | 361,053 ops/sec | 155,332 ops/sec | **+18%** | **+174%** |
+## Works With
 
-**Key highlights:**
-- **15-20% faster** than Picologging (C-based) in production file I/O scenarios
-- **2.7x faster** than standard Python logging - upgrade with zero code changes!
-- **2.5x faster** than Structlog across all tests
-- **Native Rust I/O** provides measurable performance advantages
-- **Consistent performance** across all logging patterns
+LogXide intercepts stdlib logging — most libraries work without changes.
 
-## Limitations
+| Framework / Library | Status | Notes |
+|---------------------|--------|-------|
+| Flask | ✅ | `app.logger` automatically intercepted |
+| Django | ✅ | `LOGGING` dictConfig supported |
+| FastAPI / Uvicorn | ✅ | All uvicorn loggers intercepted |
+| SQLAlchemy | ✅ | SQL query logging via `echo=True` |
+| requests / httpx | ✅ | HTTP connection logs captured |
+| boto3 / botocore | ✅ | AWS SDK logs captured |
+| Sentry | ✅ | **Native integration** — auto-detects SDK |
+| Celery | ⚠️ | Requires `setup_logging` signal ([guide](docs/third-party-compatibility.md#celery)) |
+| pytest | ⚠️ | Use `caplog_logxide` instead of `caplog` |
 
-LogXide uses **Rust-native handlers only** for maximum performance:
+[Full compatibility guide for 20+ libraries →](docs/third-party-compatibility.md)
 
-- **Rust handlers only**: `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `HTTPHandler`, `OTLPHandler`
-- **No custom Python handlers**: `logger.addHandler()` accepts Python handlers but they bypass the Rust performance pipeline
-- **No subclassing**: `LogRecord`, `Logger` are Rust types (not subclassable)
-- **No StringIO capture**: Use file-based logging for tests
-- **No pytest caplog**: Use `caplog_logxide` fixture instead
+## Built-in Sentry Integration
 
-### Alternatives to LogRecord Subclassing
-
-Instead of subclassing `LogRecord`, use these approaches:
-
-| Use Case | Alternative |
-|----------|-------------|
-| Add custom fields | Use `extra` parameter: `logger.info("msg", extra={"user_id": 123})` |
-| Add metadata to all logs | Use `global_context` in `HTTPHandler` |
-| Transform log output | Use `transform_callback` in `HTTPHandler` |
-| Dynamic context per batch | Use `context_provider` in `HTTPHandler` |
-
-**Example - Adding custom fields:**
+No extra handlers. No configuration. Just works.
 
 ```python
+import sentry_sdk
+sentry_sdk.init(dsn="your-dsn")
+
 from logxide import logging
 
-logger = logging.getLogger('myapp')
-
-# Use extra parameter (supports complex types: int, dict, list)
-logger.info("User logged in", extra={
-    "user_id": 12345,
-    "ip": "192.168.1.1",
-    "metadata": {"browser": "Chrome", "version": 120}
-})
+logger = logging.getLogger(__name__)
+logger.error("This is automatically sent to Sentry")
 ```
 
-**Example - Global context for all logs:**
+- Auto-detects Sentry SDK
+- WARNING+ sent as events, INFO as breadcrumbs
+- Full stack traces and custom context
 
-```python
-from logxide import HTTPHandler
+## Native OpenTelemetry Support
 
-handler = HTTPHandler(
-    url="https://logs.example.com",
-    global_context={
-        "application": "myapp",
-        "environment": "production",
-        "version": "1.2.3"
-    }
-)
-```
-
-**Example - Custom JSON transformation:**
-
-```python
-handler = HTTPHandler(
-    url="https://logs.example.com",
-    transform_callback=lambda records: {
-        "logs": [{"msg": r["msg"], "level": r["levelname"]} for r in records],
-        "meta": {"count": len(records)}
-    }
-)
-```
-
-**Example - OpenTelemetry OTLP (Protobuf):**
+Ship logs to any OTLP-compatible backend with zero dependencies:
 
 ```python
 from logxide import OTLPHandler
@@ -197,49 +90,89 @@ handler = OTLPHandler(
 )
 ```
 
+## Quick Start
+
+```python
+from logxide import logging
+
+# Basic setup — same API as stdlib
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger('myapp')
+logger.info('Hello from LogXide!')
+logger.warning('This works exactly like stdlib logging')
+```
+
+### Custom fields with `extra`
+
+```python
+logger.info("User logged in", extra={
+    "user_id": 12345,
+    "ip": "192.168.1.1",
+    "metadata": {"browser": "Chrome", "version": 120}
+})
+```
+
+### HTTP log shipping
+
+```python
+from logxide import HTTPHandler
+
+handler = HTTPHandler(
+    url="https://logs.example.com",
+    global_context={"app": "myapp", "env": "production"},
+    transform_callback=lambda records: {
+        "logs": [{"msg": r["msg"], "level": r["levelname"]} for r in records]
+    }
+)
+```
+
+## What's Different from stdlib
+
+LogXide reimplements Python's logging in Rust for speed. The API is the same, but some advanced stdlib patterns aren't supported:
+
+| Feature | Status |
+|---------|--------|
+| `getLogger`, `info`, `debug`, `warning`, `error`, `critical` | ✅ Same API |
+| `basicConfig`, format strings, levels, filters | ✅ Same API |
+| `FileHandler`, `StreamHandler`, `RotatingFileHandler` | ✅ Rust-native |
+| `HTTPHandler`, `OTLPHandler` | ✅ Rust-native, high throughput |
+| Custom Python handlers via `addHandler()` | ⚠️ Works, but bypasses Rust pipeline |
+| Subclassing `LogRecord` or `Logger` | ❌ Rust types, not subclassable |
+| pytest `caplog` fixture | ⚠️ Use `caplog_logxide` instead |
+
+**Instead of subclassing LogRecord**, use `extra={}` for custom fields, `global_context` for metadata, or `transform_callback` for output transformation.
+
 ## Compatibility
 
-- **Python**: 3.12+ (3.14 supported, 3.15 testing in progress)
+- **Python**: 3.12, 3.13, 3.14 (3.15 in progress)
 - **Platforms**: macOS, Linux, Windows
 - **Dependencies**: None (Rust compiled into native extension)
 
-### Third-party Library Compatibility
+## Documentation
 
-| Library | Compatible | Notes |
-|---------|------------|-------|
-| Flask | ✅ | `app.logger` automatically intercepted |
-| Django | ✅ | `dictConfig` LOGGING supported |
-| FastAPI / Uvicorn | ✅ | All uvicorn loggers intercepted |
-| SQLAlchemy | ✅ | SQL query logging via `echo=True` |
-| requests / urllib3 | ✅ | HTTP connection logs captured |
-| httpx | ✅ | Standard logging, expected to work |
-| boto3 / botocore | ✅ | Standard logging, expected to work |
-| Sentry | ✅ | Native integration, auto-detects SDK |
-| Celery | ⚠️ | Use `setup_logging` signal ([details](docs/third-party-compatibility.md#celery)) |
-| pytest | ⚠️ | Use `caplog_logxide` fixture instead of `caplog` |
-| structlog | ❌ | Incompatible architecture ([details](docs/third-party-compatibility.md#structlog)) |
-
-**[Full compatibility guide](docs/third-party-compatibility.md)** — Detailed documentation for 20+ libraries.
+- [Usage Guide](docs/usage.md) — Complete API guide
+- [Integration Guide](docs/integrations/index.md) — Flask, Django, FastAPI
+- [Third-Party Compatibility](docs/third-party-compatibility.md) — 20+ libraries
+- [Performance Benchmarks](docs/benchmarks.md) — Detailed analysis
+- [Architecture](docs/architecture.md) — Technical design
+- [API Reference](docs/reference.md) — Full reference
 
 ## Contributing
 
-We welcome contributions! See our [development guide](docs/development.md) for details.
-
 ```bash
-# Quick development setup
 git clone https://github.com/Indosaram/logxide
 cd logxide
-pip install maturin   # or: uv pip install maturin
+pip install maturin
 maturin develop
 pytest tests/
 ```
 
+See [development guide](docs/development.md) for details.
+
 ## License
 
-[Add your license information here]
-
----
-
-**LogXide delivers high performance for applications that don't need full logging compatibility.**
-
-*Built with Rust for high-performance Python applications.*
+MIT License — see [LICENSE](LICENSE) for details.

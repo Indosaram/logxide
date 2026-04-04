@@ -10,8 +10,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-.venv/
-.venv312/
+.venv*/
 env/
 bin/
 build/
@@ -83,3 +82,6 @@ benchmark_results.txt
 
 .serena
 site/
+
+# Agent config (local only)
+AGENT.md

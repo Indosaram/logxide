@@ -1,7 +1,7 @@
 [project]
 name = "logxide"
 version = "0.1.17"
-description = "High-performance, Rust-powered drop-in replacement for Python's logging module"
+description = "Fastest Python logging library — Rust-powered, stdlib-compatible API"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -13,12 +13,13 @@ maintainers = [
 keywords = [
     "logging",
     "rust",
-    "async",
     "performance",
-    "drop-in-replacement",
+    "fast-logging",
+    "python-logging",
     "high-performance",
     "thread-safe",
-    "structured-logging",
+    "sentry",
+    "opentelemetry",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -41,7 +42,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/Indosaram/logxide"
 Repository = "https://github.com/Indosaram/logxide"
-Documentation = "https://Indosaram.readthedocs.io/logxide"
+Documentation = "https://indosaram.github.io/logxide/"
 "Bug Tracker" = "https://github.com/Indosaram/logxide/issues"
 Changelog = "https://github.com/Indosaram/logxide/blob/main/CHANGELOG.md"
 "Source Code" = "https://github.com/Indosaram/logxide"
