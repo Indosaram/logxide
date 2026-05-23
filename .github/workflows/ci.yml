@@ -39,7 +39,7 @@ jobs:
             - name: Set up Rust
               uses: dtolnay/rust-toolchain@stable
               with:
-                  toolchain: 1.85.0
+                  toolchain: 1.88.0
             - name: Run security audit
               run: |
                   cargo install cargo-audit --locked
@@ -65,7 +65,7 @@ jobs:
             - name: Set up Rust
               uses: dtolnay/rust-toolchain@stable
               with:
-                  toolchain: 1.85.0
+                  toolchain: 1.88.0
                   components: rustfmt, clippy
             - name: Cache Rust dependencies
               uses: actions/cache@v4
@@ -141,7 +141,7 @@ jobs:
             - name: Set up Rust
               uses: dtolnay/rust-toolchain@stable
               with:
-                  toolchain: 1.85.0
+                  toolchain: 1.88.0
             - name: Install maturin
               run: |
                   python -m pip install --upgrade uv

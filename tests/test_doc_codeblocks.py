@@ -216,10 +216,9 @@ def test_doc_codeblock_exec(block_id: str, code: str):
         except ImportError:
             pytest.skip(f"Requires {framework}")
 
-    # Run in a subprocess with timeout to prevent hanging
     with tempfile.TemporaryDirectory() as tmpdir:
-        script = tmpdir + "/test_block.py"
-        with open(script, "w") as f:
+        script = Path(tmpdir) / "test_block.py"
+        with open(script, "w", encoding="utf-8") as f:
             f.write(code)
 
         result = subprocess.run(
