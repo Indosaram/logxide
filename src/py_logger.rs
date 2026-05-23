@@ -43,8 +43,7 @@ pub fn check_level(py: Python, level: &Bound<PyAny>) -> PyResult<u32> {
                 match name_to_level.call_method1("get", (upper.as_str(),)) {
                     Ok(val) if !val.is_none() => val.extract::<u32>(),
                     _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Unknown level: '{}'",
-                        s
+                        "Unknown level: '{s}'"
                     ))),
                 }
             }

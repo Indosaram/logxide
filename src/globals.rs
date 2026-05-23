@@ -137,7 +137,7 @@ pub fn register_file_handler(
     let log_level = LogLevel::from_usize(level.unwrap_or(10) as usize);
 
     let handler = FileHandler::new(filename)
-        .map_err(|e| PyValueError::new_err(format!("Failed to create file handler: {}", e)))?;
+        .map_err(|e| PyValueError::new_err(format!("Failed to create file handler: {e}")))?;
 
     handler.set_level(log_level);
 

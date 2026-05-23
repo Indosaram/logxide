@@ -104,11 +104,11 @@ impl StreamHandler {
         match dest {
             StreamDestination::Stdout => {
                 let stdout = std::io::stdout();
-                let _ = writeln!(stdout.lock(), "{}", msg);
+                let _ = writeln!(stdout.lock(), "{msg}");
             }
             StreamDestination::Stderr => {
                 let stderr = std::io::stderr();
-                let _ = writeln!(stderr.lock(), "{}", msg);
+                let _ = writeln!(stderr.lock(), "{msg}");
             }
         }
     }
@@ -223,8 +223,8 @@ impl Handler for FileHandler {
         }
         let output = self.format_record(record);
         let mut w = self.writer.lock().unwrap();
-        if let Err(e) = writeln!(w, "{}", output) {
-            eprintln!("[LogXide Error] FileHandler write failed: {}", e);
+        if let Err(e) = writeln!(w, "{output}") {
+            eprintln!("[LogXide Error] FileHandler write failed: {e}");
         }
         // Level-based flush: flush if record level >= flush_level
         let flush_level = self.flush_level.load(Ordering::Relaxed);
@@ -317,7 +317,7 @@ impl RotatingFileHandler {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("app.log");
-        backup.set_file_name(format!("{}.{}", filename, index));
+        backup.set_file_name(format!("{filename}.{index}"));
         backup
     }
 
@@ -368,10 +368,7 @@ impl RotatingFileHandler {
                 current_size.store(0, Ordering::Relaxed);
             }
             Err(e) => {
-                eprintln!(
-                    "[LogXide Error] RotatingFileHandler: failed to create new file: {}",
-                    e
-                );
+                eprintln!("[LogXide Error] RotatingFileHandler: failed to create new file: {e}");
             }
         }
     }
@@ -400,8 +397,8 @@ impl Handler for RotatingFileHandler {
             );
         }
 
-        if let Err(e) = writeln!(w, "{}", output) {
-            eprintln!("[LogXide Error] RotatingFileHandler write failed: {}", e);
+        if let Err(e) = writeln!(w, "{output}") {
+            eprintln!("[LogXide Error] RotatingFileHandler write failed: {e}");
         } else {
             self.current_size
                 .fetch_add(message_bytes, Ordering::Relaxed);

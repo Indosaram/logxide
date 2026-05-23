@@ -240,8 +240,7 @@ impl LogRecord {
             }
         }
         Err(pyo3::exceptions::PyAttributeError::new_err(format!(
-            "'LogRecord' object has no attribute '{}'",
-            name
+            "'LogRecord' object has no attribute '{name}'"
         )))
     }
 

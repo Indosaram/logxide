@@ -320,7 +320,7 @@ impl Formatter for PythonFormatter {
         // Handle extra fields from the 'extra' parameter
         if let Some(ref extra_fields) = record.extra {
             for (key, value) in extra_fields {
-                let placeholder = format!("%({})s", key);
+                let placeholder = format!("%({key})s");
                 let value_str = match value {
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Null => "null".to_string(),
@@ -404,8 +404,8 @@ impl ColorFormatter {
     ///
     /// # Arguments
     ///
-    /// * `format_string` - Python-style format string with %(field)s placeholders
-    ///                     Supports %(ansi_level_color)s and %(ansi_reset_color)s
+    /// * `format_string` - Python-style format string with %(field)s placeholders.
+    ///   Supports %(ansi_level_color)s and %(ansi_reset_color)s.
     ///
     /// # Examples
     ///
