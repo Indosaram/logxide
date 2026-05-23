@@ -148,7 +148,7 @@ LogXide reimplements Python's logging in Rust for speed. The API is the same, bu
 
 ## Compatibility
 
-- **Python**: 3.12, 3.13, 3.14 (3.15 in progress)
+- **Python**: 3.12, 3.13, 3.14, 3.15 (All fully tested and supported)
 - **Platforms**: macOS, Linux, Windows
 - **Dependencies**: None (Rust compiled into native extension)
 

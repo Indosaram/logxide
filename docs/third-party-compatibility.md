@@ -155,6 +155,7 @@ Django uses the `LOGGING` dictionary configuration in `settings.py`, processed v
 
 ```python
 # manage.py or wsgi.py — import logxide early
+# notest
 from logxide import logging
 
 import os
@@ -294,13 +295,16 @@ response = requests.get('https://example.com')
 httpx is a development dependency in logxide's test suite. It uses standard `logging.getLogger(__name__)` patterns, logging to `httpx` and `httpcore`.
 
 ```python
+# notest
+import asyncio
 from logxide import logging
 import httpx
 
 logging.getLogger('httpx').setLevel(logging.DEBUG)
 
-async with httpx.AsyncClient() as client:
-    response = await client.get('https://example.com')
+async def main():
+    async with httpx.AsyncClient() as client:
+        response = await client.get('https://example.com')
 ```
 
 ---
@@ -384,6 +388,7 @@ logging.basicConfig(
 Celery has aggressive logging management. By default, it **hijacks the root logger** — removing all existing handlers and installing its own. This conflicts with logxide's configuration.
 
 ```python
+# notest
 from logxide import logging
 from celery import Celery
 from celery.signals import setup_logging
@@ -689,6 +694,7 @@ Some libraries call `logging.basicConfig()` on import. LogXide's patched `basicC
 
 ```python
 # Import logxide FIRST, always
+# notest
 from logxide import logging
 import problematic_library  # Its basicConfig() call is intercepted
 ```

@@ -97,7 +97,7 @@ FROM rust-base as build
 RUN .venv/bin/maturin build --release --out dist/
 
 # Production stage
-FROM python:3.11-slim as production
+FROM python:3.12-slim as production
 
 # Install system dependencies needed at runtime
 RUN apt-get update && apt-get install -y \

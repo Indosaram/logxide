@@ -209,8 +209,7 @@ class Formatter:
         import io
 
         sio = io.StringIO()
-        tb = ei[2]
-        traceback.print_exception(ei[0], ei[1], tb, None, sio)
+        traceback.print_exception(ei[1], limit=None, file=sio)
         s = sio.getvalue()
         sio.close()
         if s[-1:] == "\n":

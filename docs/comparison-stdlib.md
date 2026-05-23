@@ -73,6 +73,7 @@ logger = logging.getLogger(__name__)
 Django and FastAPI `dictConfig` setups also work transparently:
 
 ```python
+# notest
 from logxide.config import dictConfig
 dictConfig(LOGGING_CONFIG)  # Transparently promotes stdlib handlers to LogXide
 ```

@@ -79,8 +79,7 @@ def test_without_fixture():
     with capture_logs(logging.INFO) as captured:
         logger.addHandler(captured.handler)
         logger.info("test message")
-
-    assert "test message" in captured.text
+        assert "test message" in captured.text
 ```
 
 ## MemoryHandler

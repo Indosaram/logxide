@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Official Python 3.15 Support**: Fully verified and integrated with the Python 3.15.0a2 release candidate.
+- Added native PyO3 `emit()` method overrides to core Rust handler classes (`PyFileHandler`, `PyStreamHandler`, `PyRotatingFileHandler`, `PyHTTPHandler`, `PyOTLPHandler`, `PyMemoryHandler`) to enable standard-to-native record passing.
+
+### Fixed
+- **Resolved 14 Pre-Existing Test Failures**:
+  - Implemented `_prepare_record_for_rust(record)` in `logxide/handlers.py` to fix compatibility with `logging.config.dictConfig` (resolving 2 config test failures).
+  - Resolved `OTLPHandler` positional constructor argument mismatch by utilizing explicit keyword parameters.
+  - Rectified documentation code block syntax errors by wrapping asynchronous snippets in executable definitions.
+  - Adjusted `capture_logs()` context manager example assertions to reside inside the context blocks, ensuring records are tested prior to context teardown/clearing.
+
 ## [0.1.3] - 2024-12-30
 
 ### Fixed

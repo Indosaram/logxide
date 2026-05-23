@@ -30,6 +30,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Logging",
@@ -116,8 +117,8 @@ exclude = [
 line-length = 88
 indent-width = 4
 
-# Assume Python 3.9+ (matching requires-python)
-target-version = "py39"
+# Match requires-python (>=3.12)
+target-version = "py312"
 
 [tool.ruff.lint]
 # Enable pycodestyle (`E`) and Pyflakes (`F`) codes by default.
@@ -249,7 +250,7 @@ reportUnknownParameterType = "none"
 reportUnknownArgumentType = "none"
 reportUnknownVariableType = "none"
 reportMissingTypeStubs = "none"
-pythonVersion = "3.9"
+pythonVersion = "3.12"
 
 [dependency-groups]
 dev = [

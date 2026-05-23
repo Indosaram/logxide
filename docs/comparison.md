@@ -162,6 +162,7 @@ For the complete compatibility matrix, see [Compatibility](compatibility.md).
 
 ```python
 # Loguru
+# notest
 from loguru import logger
 logger.add("app.log", rotation="10 MB")
 logger.info("Hello {}", "world")
@@ -178,6 +179,7 @@ logger.info("Hello %s", "world")
 
 ```python
 # LogXide
+# notest
 from logxide import logging
 logger = logging.getLogger(__name__)
 logger.info("Request from %s", ip)

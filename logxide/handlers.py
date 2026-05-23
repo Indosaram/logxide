@@ -9,6 +9,89 @@ import sys
 from . import logxide
 
 
+def _prepare_record_for_rust(record):
+    # Rust expects an instance of the logxide.logging.LogRecord pyclass.
+    # We construct a native Rust-backed LogRecord and populate its fields.
+
+    # Pre-parse exc_info to string if present
+    exc_info_str = None
+    if (
+        record.exc_info
+        and isinstance(record.exc_info, tuple)
+        and len(record.exc_info) == 3
+    ):
+        import io
+        import traceback
+
+        sio = io.StringIO()
+        traceback.print_exception(
+            record.exc_info[0], record.exc_info[1], record.exc_info[2], None, sio
+        )
+        exc_info_str = sio.getvalue()
+        sio.close()
+        if exc_info_str.endswith("\n"):
+            exc_info_str = exc_info_str[:-1]
+
+    func_name = getattr(record, "funcName", "") or getattr(record, "func_name", "")
+
+    rust_record = logxide.logging.LogRecord(
+        record.name,
+        record.levelno,
+        record.pathname or "",
+        record.lineno or 0,
+        str(record.msg),
+        None,  # We pre-format with self.format(record), so args can be None
+        exc_info_str,
+        func_name,
+        getattr(record, "stack_info", None),
+    )
+
+    # Populate other metadata fields
+    rust_record.created = getattr(record, "created", 0.0)
+    rust_record.msecs = getattr(record, "msecs", 0.0)
+    rust_record.relative_created = getattr(record, "relativeCreated", 0.0)
+    rust_record.thread = getattr(record, "thread", 0)
+    rust_record.thread_name = getattr(record, "threadName", "")
+    rust_record.process = getattr(record, "process", 0)
+    rust_record.process_name = getattr(record, "processName", "")
+    rust_record.levelname = getattr(record, "levelname", "")
+
+    # Extract extra attributes to the Rust LogRecord's extra dictionary
+    standard_fields = {
+        "name",
+        "levelno",
+        "levelname",
+        "pathname",
+        "filename",
+        "module",
+        "lineno",
+        "funcName",
+        "func_name",
+        "created",
+        "msecs",
+        "relativeCreated",
+        "relative_created",
+        "thread",
+        "threadName",
+        "thread_name",
+        "process",
+        "processName",
+        "process_name",
+        "msg",
+        "message",
+        "args",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "task_name",
+    }
+    for key, value in record.__dict__.items():
+        if key not in standard_fields:
+            setattr(rust_record, key, value)
+
+    return rust_record
+
+
 class FileHandler(logging.FileHandler):
     def __init__(self, filename, mode="a", encoding=None, delay=False, errors=None):
         # Initialize inner handler first (before parent creates file handle)
@@ -24,7 +107,14 @@ class FileHandler(logging.FileHandler):
         self._inner.setLevel(level)
 
     def emit(self, record):
-        pass
+        try:
+            if self.formatter:
+                record.msg = self.format(record)
+                record.args = None
+            rust_record = _prepare_record_for_rust(record)
+            self._inner.emit(rust_record)
+        except Exception:
+            self.handleError(record)
 
     def setFlushLevel(self, level):
         """
@@ -61,7 +151,14 @@ class StreamHandler(logging.StreamHandler):
         self._inner.setLevel(level)
 
     def emit(self, record):
-        pass
+        try:
+            if self.formatter:
+                record.msg = self.format(record)
+                record.args = None
+            rust_record = _prepare_record_for_rust(record)
+            self._inner.emit(rust_record)
+        except Exception:
+            self.handleError(record)
 
     def setErrorCallback(self, callback):
         """
@@ -94,7 +191,14 @@ class RotatingFileHandler(logging.handlers.RotatingFileHandler):
         self._inner.setLevel(level)
 
     def emit(self, record):
-        pass
+        try:
+            if self.formatter:
+                record.msg = self.format(record)
+                record.args = None
+            rust_record = _prepare_record_for_rust(record)
+            self._inner.emit(rust_record)
+        except Exception:
+            self.handleError(record)
 
     def setFlushLevel(self, level):
         """
@@ -166,7 +270,14 @@ class HTTPHandler(logging.Handler):
         self._inner.setLevel(level)
 
     def emit(self, record):
-        pass
+        try:
+            if self.formatter:
+                record.msg = self.format(record)
+                record.args = None
+            rust_record = _prepare_record_for_rust(record)
+            self._inner.emit(rust_record)
+        except Exception:
+            self.handleError(record)
 
     def flush(self):
         self._inner.flush()
@@ -212,14 +323,23 @@ class OTLPHandler(logging.Handler):
         headers=None,
     ):
         super().__init__()
-        self._inner = logxide.OTLPHandler(url, service_name, headers=headers)
+        self._inner = logxide.OTLPHandler(
+            url=url, service_name=service_name, headers=headers
+        )
 
     def setLevel(self, level):
         super().setLevel(level)
         self._inner.setLevel(level)
 
     def emit(self, record):
-        pass
+        try:
+            if self.formatter:
+                record.msg = self.format(record)
+                record.args = None
+            rust_record = _prepare_record_for_rust(record)
+            self._inner.emit(rust_record)
+        except Exception:
+            self.handleError(record)
 
     def flush(self):
         self._inner.flush()
@@ -249,7 +369,14 @@ class MemoryHandler(logging.Handler):
         self._inner.setLevel(level)
 
     def emit(self, record):
-        pass
+        try:
+            if self.formatter:
+                record.msg = self.format(record)
+                record.args = None
+            rust_record = _prepare_record_for_rust(record)
+            self._inner.emit(rust_record)
+        except Exception:
+            self.handleError(record)
 
     def get_records(self):
         """Returns all captured records as a list.

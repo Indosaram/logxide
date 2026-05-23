@@ -39,7 +39,6 @@ Usage:
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Optional
 
 from . import logxide as _logxide_ext
 from .handlers import MemoryHandler
@@ -68,8 +67,8 @@ class LogCaptureFixture:
 
     def __init__(self):
         """Initialize the capture fixture."""
-        self._handler: Optional[MemoryHandler] = None
-        self._initial_level: Optional[int] = None
+        self._handler: MemoryHandler | None = None
+        self._initial_level: int | None = None
 
     def _ensure_handler(self) -> MemoryHandler:
         """Ensure handler exists, creating if necessary."""
@@ -128,7 +127,7 @@ class LogCaptureFixture:
         if self._handler is not None:
             self._handler.clear()
 
-    def set_level(self, level, logger: Optional[str] = None) -> None:
+    def set_level(self, level, logger: str | None = None) -> None:
         """
         Set the minimum logging level for capture.
 
@@ -143,9 +142,7 @@ class LogCaptureFixture:
         self._ensure_handler().setLevel(level)
 
     @contextmanager
-    def at_level(
-        self, level, logger: Optional[str] = None
-    ) -> Generator[None, None, None]:
+    def at_level(self, level, logger: str | None = None) -> Generator[None, None, None]:
         """
         Context manager to temporarily set capture level.
 
@@ -195,8 +192,7 @@ def capture_logs(level: int = 10) -> Generator[LogCaptureFixture, None, None]:
         with capture_logs(logging.INFO) as captured:
             logger.addHandler(captured.handler)
             logger.info("test message")
-
-        assert "test message" in captured.text
+            assert "test message" in captured.text
     """
     fixture = LogCaptureFixture()
     fixture.set_level(level)

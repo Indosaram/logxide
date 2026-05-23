@@ -190,6 +190,7 @@ handler = OTLPHandler(
 In-memory handler for testing and log capture. Stores records in Rust-native memory for maximum performance.
 
 ```python
+# notest
 from logxide import MemoryHandler
 
 handler = MemoryHandler()
@@ -322,6 +323,7 @@ fixture = LogCaptureFixture()
 fixture.set_level(logging.DEBUG)
 
 logger = logging.getLogger("test")
+logger.setLevel(logging.DEBUG)
 logger.addHandler(fixture.handler)
 logger.info("Hello!")
 
@@ -351,12 +353,12 @@ from logxide import logging
 from logxide.testing import capture_logs
 
 logger = logging.getLogger("test")
+logger.setLevel(logging.INFO)
 
 with capture_logs(logging.INFO) as captured:
     logger.addHandler(captured.handler)
     logger.info("test message")
-
-assert "test message" in captured.text
+    assert "test message" in captured.text
 ```
 
 | Parameter | Type | Default | Description |

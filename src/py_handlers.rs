@@ -157,6 +157,12 @@ impl PyFileHandler {
         self.inner.flush();
         Ok(())
     }
+
+    fn emit(&self, _py: Python, record: &Bound<PyAny>) -> PyResult<()> {
+        let rust_record = record.extract::<LogRecord>()?;
+        self.inner.emit(&rust_record);
+        Ok(())
+    }
 }
 
 #[pyclass(name = "StreamHandler", subclass)]
@@ -200,6 +206,12 @@ impl PyStreamHandler {
                 self.inner.set_error_callback(None);
             }
         }
+        Ok(())
+    }
+
+    fn emit(&self, _py: Python, record: &Bound<PyAny>) -> PyResult<()> {
+        let rust_record = record.extract::<LogRecord>()?;
+        self.inner.emit(&rust_record);
         Ok(())
     }
 }
@@ -262,6 +274,12 @@ impl PyRotatingFileHandler {
 
     fn flush(&self) -> PyResult<()> {
         self.inner.flush();
+        Ok(())
+    }
+
+    fn emit(&self, _py: Python, record: &Bound<PyAny>) -> PyResult<()> {
+        let rust_record = record.extract::<LogRecord>()?;
+        self.inner.emit(&rust_record);
         Ok(())
     }
 }
@@ -392,6 +410,12 @@ impl PyHTTPHandler {
     fn get_flush_level(&self) -> PyResult<u32> {
         Ok(self.inner.get_flush_level() as u32)
     }
+
+    fn emit(&self, _py: Python, record: &Bound<PyAny>) -> PyResult<()> {
+        let rust_record = record.extract::<LogRecord>()?;
+        self.inner.emit(&rust_record);
+        Ok(())
+    }
 }
 
 #[pyclass(name = "OTLPHandler", subclass)]
@@ -453,6 +477,12 @@ impl PyOTLPHandler {
 
     fn shutdown(&self) -> PyResult<()> {
         self.inner.shutdown();
+        Ok(())
+    }
+
+    fn emit(&self, _py: Python, record: &Bound<PyAny>) -> PyResult<()> {
+        let rust_record = record.extract::<LogRecord>()?;
+        self.inner.emit(&rust_record);
         Ok(())
     }
 }
@@ -525,6 +555,12 @@ impl PyMemoryHandler {
     }
 
     pub fn shutdown(&self) -> PyResult<()> {
+        Ok(())
+    }
+
+    pub fn emit(&self, _py: Python, record: &Bound<PyAny>) -> PyResult<()> {
+        let rust_record = record.extract::<LogRecord>()?;
+        self.inner.emit(&rust_record);
         Ok(())
     }
 }
