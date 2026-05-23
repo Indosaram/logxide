@@ -7,7 +7,7 @@ when it's configured in the project.
 """
 
 import sys
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, cast
 
 from .compat_handlers import CRITICAL, ERROR, WARNING, Handler
 
@@ -275,7 +275,7 @@ class SentryHandler(Handler):
         self.handle(record)
 
 
-def auto_configure_sentry(enable: Optional[bool] = None) -> Optional[SentryHandler]:
+def auto_configure_sentry(enable: bool | None = None) -> SentryHandler | None:
     """
     Automatically configure Sentry integration if available.
 

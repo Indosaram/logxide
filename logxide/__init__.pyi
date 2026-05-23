@@ -2,7 +2,8 @@
 Type stubs for LogXide - High-performance logging for Python
 """
 
-from typing import IO, Any, Callable
+from collections.abc import Callable
+from typing import IO, Any
 
 # Version information
 __version__: str
