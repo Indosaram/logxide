@@ -5,18 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.18] - 2026-05-27
 
 ### Added
-- **Official Python 3.15 Support**: Fully verified and integrated with the Python 3.15.0a2 release candidate.
+- **Official Python 3.15 Support**: Fully verified and integrated Python 3.15 support.
 - Added native PyO3 `emit()` method overrides to core Rust handler classes (`PyFileHandler`, `PyStreamHandler`, `PyRotatingFileHandler`, `PyHTTPHandler`, `PyOTLPHandler`, `PyMemoryHandler`) to enable standard-to-native record passing.
+- Added comprehensive comparison and compatibility pages (stdlib, structlog, picologging) to MkDocs navigation.
+- Documented missing API items (MemoryHandler, ColorFormatter, testing guide, FastLoggerWrapper).
 
 ### Fixed
+- **Rust Mutex & Python GIL Deadlock Fix**: Resolved a critical cross-deadlock in logger `emit`, `flush`, `handle`, and `filter` paths.
 - **Resolved 14 Pre-Existing Test Failures**:
   - Implemented `_prepare_record_for_rust(record)` in `logxide/handlers.py` to fix compatibility with `logging.config.dictConfig` (resolving 2 config test failures).
   - Resolved `OTLPHandler` positional constructor argument mismatch by utilizing explicit keyword parameters.
   - Rectified documentation code block syntax errors by wrapping asynchronous snippets in executable definitions.
   - Adjusted `capture_logs()` context manager example assertions to reside inside the context blocks, ensuring records are tested prior to context teardown/clearing.
+- Fixed HTTP server deadlocks and Sentry thread leaks in unit test suites.
+- Resolved Windows encoding issues and Clippy warnings for Rust 1.88.0.
+
+### Performance
+- Cached formatter field regular expressions to reduce parsing overhead during formatting.
+
+### Security
+- Upgraded `rustls-webpki` to address RUSTSEC-2026-0049 vulnerability.
 
 ## [0.1.3] - 2024-12-30
 
