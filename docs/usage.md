@@ -100,12 +100,15 @@ otlp_handler = OTLPHandler(
 ### 1. Mixing Python stdlib handlers with Rust handlers
 
 ```python
-# ⚠️ Accepted, but runs alongside the Rust pipeline (no zero-GIL path)
+from logxide import logging, FileHandler
 import logging as stdlib
+
+logger = logging.getLogger('myapp')
+
+# ⚠️ Accepted, but runs alongside the Rust pipeline (no zero-GIL path)
 logger.addHandler(stdlib.FileHandler('app.log'))  # may cause duplicate processing
 
 # ✅ PREFERRED — Use LogXide handlers for the fast path
-from logxide import FileHandler
 logger.addHandler(FileHandler('app.log'))
 ```
 
