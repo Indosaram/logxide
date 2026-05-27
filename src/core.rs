@@ -396,7 +396,7 @@ pub fn create_log_record_with_extra(
     msg: String,
     extra: Option<HashMap<String, Value>>,
 ) -> LogRecord {
-    use crate::string_cache::{get_common_message, get_level_name, get_logger_name};
+    use crate::string_cache::{get_level_name, get_logger_name};
 
     let now = chrono::Local::now();
     let created = now.timestamp() as f64 + now.timestamp_subsec_nanos() as f64 / 1_000_000_000.0;
@@ -430,7 +430,7 @@ pub fn create_log_record_with_extra(
         thread_name,
         process_name: "".to_string(),
         process: std::process::id(),
-        msg: get_common_message(&msg).to_string(),
+        msg,
         args: None,
         exc_info: None,
         exc_text: None,

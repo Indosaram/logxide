@@ -87,7 +87,6 @@ impl StringInterner {
 pub struct LogStringCache {
     level_names: [Arc<str>; 6],
     common_loggers: StringInterner,
-    common_messages: StringInterner,
 }
 
 impl LogStringCache {
@@ -102,7 +101,6 @@ impl LogStringCache {
                 Arc::from("CRITICAL"),
             ],
             common_loggers: StringInterner::new(),
-            common_messages: StringInterner::new(),
         }
     }
 
@@ -120,31 +118,6 @@ impl LogStringCache {
     pub fn get_logger_name(&self, name: &str) -> Arc<str> {
         self.common_loggers.intern(name)
     }
-
-    pub fn get_common_message(&self, message: &str) -> Arc<str> {
-        if message.len() < 256 && self.is_likely_repeated(message) {
-            self.common_messages.intern(message)
-        } else {
-            Arc::from(message)
-        }
-    }
-
-    fn is_likely_repeated(&self, message: &str) -> bool {
-        // Heuristics for messages likely to be repeated
-        message.contains("error")
-            || message.contains("warning")
-            || message.contains("failed")
-            || message.contains("success")
-            || message.len() < 50
-    }
-
-    #[allow(dead_code)]
-    pub fn get_stats(&self) -> ((u64, u64, u64), (u64, u64, u64)) {
-        (
-            self.common_loggers.get_stats(),
-            self.common_messages.get_stats(),
-        )
-    }
 }
 
 /// Global string cache instance
@@ -156,13 +129,4 @@ pub fn get_level_name(level: LogLevel) -> Arc<str> {
 
 pub fn get_logger_name(name: &str) -> Arc<str> {
     STRING_CACHE.get_logger_name(name)
-}
-
-pub fn get_common_message(message: &str) -> Arc<str> {
-    STRING_CACHE.get_common_message(message)
-}
-
-#[allow(dead_code)]
-pub fn get_cache_stats() -> ((u64, u64, u64), (u64, u64, u64)) {
-    STRING_CACHE.get_stats()
 }
