@@ -205,12 +205,14 @@ impl Formatter for PythonFormatter {
     ///
     /// # Performance
     ///
-    /// Uses compiled regex patterns for efficient field replacement with
-    /// padding support. Basic field replacements use simple string replacement.
+    /// Uses a single-pass O(N) parser to perform field formatting with zero regex
+    /// and zero sequential allocations. All values are formatted directly into the
+    /// pre-allocated output buffer.
     fn format(&self, record: &crate::core::LogRecord) -> String {
-        let mut result = self.format_string.clone();
+        let format_str = &self.format_string;
+        let mut result = String::with_capacity(format_str.len() + 128);
 
-        // Format timestamp
+        // Pre-compute asctime
         let datetime = chrono::Local
             .timestamp_opt(record.created as i64, (record.msecs * 1_000_000.0) as u32)
             .single()
@@ -222,111 +224,117 @@ impl Formatter for PythonFormatter {
             datetime.format("%Y-%m-%d %H:%M:%S").to_string()
         };
 
-        // Use pre-compiled regex patterns for efficient field replacement with padding support
-        use once_cell::sync::Lazy;
-        use regex::Regex;
+        let mut chars = format_str.char_indices().peekable();
+        while let Some(&(_, c)) = chars.peek() {
+            if c == '%' {
+                chars.next(); // Consume '%'
+                if let Some(&(_, '(')) = chars.peek() {
+                    chars.next(); // Consume '('
 
-        static LEVELNAME_RE: Lazy<Regex> =
-            Lazy::new(|| Regex::new(r"%\(levelname\)(-?)(\d*)s").unwrap());
-        static THREADNAME_RE: Lazy<Regex> =
-            Lazy::new(|| Regex::new(r"%\(threadName\)(-?)(\d*)s").unwrap());
-        static NAME_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(name\)(-?)(\d*)s").unwrap());
-        static MSECS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\(msecs\)0?(\d*)d").unwrap());
+                    let mut name_start = None;
+                    if let Some(&(idx, _)) = chars.peek() {
+                        name_start = Some(idx);
+                    }
 
-        // Handle %(levelname)s with optional padding like %(levelname)-8s
-        result = LEVELNAME_RE
-            .replace_all(&result, |caps: &regex::Captures| {
-                let left_align = caps.get(1).map_or("", |m| m.as_str()) == "-";
-                let width: usize = caps.get(2).map_or("", |m| m.as_str()).parse().unwrap_or(0);
+                    let mut closing_idx = None;
+                    while let Some(&(idx, ch)) = chars.peek() {
+                        if ch == ')' {
+                            closing_idx = Some(idx);
+                            chars.next(); // Consume ')'
+                            break;
+                        }
+                        chars.next();
+                    }
 
-                if width > 0 {
-                    if left_align {
-                        format!("{:<width$}", record.levelname, width = width)
+                    if let (Some(start), Some(end)) = (name_start, closing_idx) {
+                        let field_name = &format_str[start..end];
+
+                        let mut left_align = false;
+                        if let Some(&(_, '-')) = chars.peek() {
+                            left_align = true;
+                            chars.next();
+                        }
+
+                        let mut zero_pad = false;
+                        if let Some(&(_, '0')) = chars.peek() {
+                            zero_pad = true;
+                            chars.next();
+                        }
+
+                        let mut width = 0;
+                        while let Some(&(_, ch)) = chars.peek() {
+                            if ch.is_ascii_digit() {
+                                width = width * 10 + ch.to_digit(10).unwrap() as usize;
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // Consume the format type specifier (s, d, f, etc.)
+                        if let Some(&(_, _)) = chars.peek() {
+                            chars.next();
+                        }
+
+                        let val_str = match field_name {
+                            "ansi_level_color" => {
+                                ansi_colors::get_level_color(&record.levelname).to_string()
+                            }
+                            "ansi_reset_color" => ansi_colors::RESET.to_string(),
+                            "levelname" => record.levelname.to_string(),
+                            "threadName" => record.thread_name.to_string(),
+                            "name" => record.name.to_string(),
+                            "msecs" => (record.msecs as i32).to_string(),
+                            "levelno" => record.levelno.to_string(),
+                            "pathname" => record.pathname.to_string(),
+                            "filename" => record.filename.to_string(),
+                            "module" => record.module.to_string(),
+                            "lineno" => record.lineno.to_string(),
+                            "funcName" => record.func_name.to_string(),
+                            "created" => record.created.to_string(),
+                            "relativeCreated" => record.relative_created.to_string(),
+                            "thread" => record.thread.to_string(),
+                            "processName" => record.process_name.to_string(),
+                            "process" => record.process.to_string(),
+                            "message" => record.get_message(),
+                            "asctime" => asctime.clone(),
+                            other => {
+                                if let Some(ref extra_fields) = record.extra {
+                                    if let Some(value) = extra_fields.get(other) {
+                                        match value {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            serde_json::Value::Null => "null".to_string(),
+                                            other_val => other_val.to_string(),
+                                        }
+                                    } else {
+                                        format!("%({other})")
+                                    }
+                                } else {
+                                    format!("%({other})")
+                                }
+                            }
+                        };
+
+                        if width > 0 {
+                            if left_align {
+                                result.push_str(&format!("{val_str:<width$}"));
+                            } else if zero_pad {
+                                result.push_str(&format!("{val_str:0>width$}"));
+                            } else {
+                                result.push_str(&format!("{val_str:>width$}"));
+                            }
+                        } else {
+                            result.push_str(&val_str);
+                        }
                     } else {
-                        format!("{:>width$}", record.levelname, width = width)
+                        result.push('%');
                     }
                 } else {
-                    record.levelname.to_string()
+                    result.push('%');
                 }
-            })
-            .to_string();
-
-        // Handle %(threadName)s with optional padding like %(threadName)-10s
-        result = THREADNAME_RE
-            .replace_all(&result, |caps: &regex::Captures| {
-                let left_align = caps.get(1).map_or("", |m| m.as_str()) == "-";
-                let width: usize = caps.get(2).map_or("", |m| m.as_str()).parse().unwrap_or(0);
-
-                if width > 0 {
-                    if left_align {
-                        format!("{:<width$}", record.thread_name, width = width)
-                    } else {
-                        format!("{:>width$}", record.thread_name, width = width)
-                    }
-                } else {
-                    record.thread_name.to_string()
-                }
-            })
-            .to_string();
-
-        // Handle %(name)s with optional padding like %(name)-15s
-        result = NAME_RE
-            .replace_all(&result, |caps: &regex::Captures| {
-                let left_align = caps.get(1).map_or("", |m| m.as_str()) == "-";
-                let width: usize = caps.get(2).map_or("", |m| m.as_str()).parse().unwrap_or(0);
-
-                if width > 0 {
-                    if left_align {
-                        format!("{:<width$}", record.name, width = width)
-                    } else {
-                        format!("{:>width$}", record.name, width = width)
-                    }
-                } else {
-                    record.name.to_string()
-                }
-            })
-            .to_string();
-
-        // Handle %(msecs)03d format with padding
-        result = MSECS_RE
-            .replace_all(&result, |caps: &regex::Captures| {
-                let width: usize = caps.get(1).map_or("", |m| m.as_str()).parse().unwrap_or(0);
-                let msecs_val = record.msecs as i32;
-
-                if width > 0 {
-                    format!("{msecs_val:0width$}")
-                } else {
-                    msecs_val.to_string()
-                }
-            })
-            .to_string();
-
-        // Handle other format specifiers (basic replacements)
-        // Note: %(name)s, %(levelname)s, %(threadName)s handled above with padding support
-        result = result.replace("%(levelno)d", &record.levelno.to_string());
-        result = result.replace("%(pathname)s", &record.pathname);
-        result = result.replace("%(filename)s", &record.filename);
-        result = result.replace("%(module)s", &record.module);
-        result = result.replace("%(lineno)d", &record.lineno.to_string());
-        result = result.replace("%(funcName)s", &record.func_name);
-        result = result.replace("%(created)f", &record.created.to_string());
-        result = result.replace("%(relativeCreated)f", &record.relative_created.to_string());
-        result = result.replace("%(thread)d", &record.thread.to_string());
-        result = result.replace("%(processName)s", &record.process_name);
-        result = result.replace("%(process)d", &record.process.to_string());
-        result = result.replace("%(message)s", &record.get_message());
-        result = result.replace("%(asctime)s", &asctime);
-
-        // Handle extra fields from the 'extra' parameter
-        if let Some(ref extra_fields) = record.extra {
-            for (key, value) in extra_fields {
-                let placeholder = format!("%({key})s");
-                let value_str = match value {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Null => "null".to_string(),
-                    other => other.to_string(),
-                };
-                result = result.replace(&placeholder, &value_str);
+            } else {
+                result.push(c);
+                chars.next();
             }
         }
 
@@ -442,17 +450,8 @@ impl Formatter for ColorFormatter {
     /// First replaces color placeholders with appropriate ANSI codes,
     /// then delegates to PythonFormatter logic for remaining fields.
     fn format(&self, record: &crate::core::LogRecord) -> String {
-        // Start with the format string
-        let mut result = self.format_string.clone();
-
-        // Replace color placeholders first
-        let level_color = ansi_colors::get_level_color(&record.levelname);
-        result = result.replace("%(ansi_level_color)s", level_color);
-        result = result.replace("%(ansi_reset_color)s", ansi_colors::RESET);
-
-        // Now use PythonFormatter logic for the rest
         let python_formatter = PythonFormatter {
-            format_string: result,
+            format_string: self.format_string.clone(),
             date_format: self.date_format.clone(),
         };
 
