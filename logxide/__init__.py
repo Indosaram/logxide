@@ -43,7 +43,7 @@ _check_python_version()
 
 from . import logxide
 
-__version__ = "0.1.13"
+__version__ = "0.1.19"
 
 from . import logxide as _logxide_ext
 from .compat_functions import (

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.1.19] - 2026-05-27
+
+### Performance
+- **Message cache dead state removal (Step 1)**: Removed dead string-caching states and redundant message-text cache checks from the string cache flow.
+- **Canonical `py_to_json_value` single helper path (Step 2)**: Consolidated Python-to-JSON parameter mapping (including `PyTuple`/`PyList` to JSON array conversion) into a single `py_to_json_value` helper in `src/py_logger.rs`.
+- **Direct ANSI color support in `RustFormatter` (Step 3)**: Added native handling of `%(ansi_level_color)s` and `%(ansi_reset_color)s` placeholders inside `RustFormatter` (and by extension `Formatter`), so terminal coloring no longer requires the `ColorFormatter` wrapper on the hot path.
+- **Single-pass formatter parser**: Replaced the previous regex-based formatter field parsing on the hot path with a single-pass O(N) parser. The `regex` crate is no longer used inside the active formatting path.
+
+### Changed
+- **Compat handler caller-info activation (Step 4)**: When formatters configured through `logxide/compat_handlers.py` reference caller-info placeholders (such as `%(funcName)s`, `%(pathname)s`, `%(lineno)d`), the `activate_caller_info` layer is connected dynamically so that stack-frame introspection only runs when needed.
+
+### Added
+- Regression suite (`tests/test_optimizations.py`) covering the Step 1–4 changes.
+
 ## [0.1.18] - 2026-05-27
 
 ### Added
