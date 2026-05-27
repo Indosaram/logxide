@@ -2,13 +2,14 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::PyDict;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::{LogLevel, LogRecord};
 use crate::formatter::{ColorFormatter, Formatter, PythonFormatter};
+use crate::globals::check_caller_info_needed;
 use crate::handler::{
     FileHandler, HTTPHandler, HTTPHandlerConfig, Handler, MemoryHandler, OTLPHandler,
     OTLPHandlerConfig, RotatingFileHandler, StreamHandler,
@@ -36,6 +37,7 @@ impl PyFormatter {
     #[new]
     #[pyo3(signature = (fmt="%(message)s".to_string(), datefmt=None))]
     pub fn new(fmt: String, datefmt: Option<String>) -> Self {
+        check_caller_info_needed(&fmt);
         let formatter = if let Some(df) = datefmt {
             PythonFormatter::with_date_format(fmt, df)
         } else {
@@ -79,6 +81,7 @@ impl PyColorFormatter {
     #[new]
     #[pyo3(signature = (fmt="%(ansi_level_color)s%(levelname)s%(ansi_reset_color)s - %(message)s".to_string(), datefmt=None))]
     pub fn new(fmt: String, datefmt: Option<String>) -> Self {
+        check_caller_info_needed(&fmt);
         let formatter = if let Some(df) = datefmt {
             ColorFormatter::with_date_format(fmt, df)
         } else {
@@ -293,37 +296,6 @@ impl Drop for PyHTTPHandler {
     fn drop(&mut self) {}
 }
 
-fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
-    if obj.is_none() {
-        Value::Null
-    } else if let Ok(b) = obj.extract::<bool>() {
-        Value::Bool(b)
-    } else if let Ok(i) = obj.extract::<i64>() {
-        Value::Number(i.into())
-    } else if let Ok(f) = obj.extract::<f64>() {
-        serde_json::Number::from_f64(f)
-            .map(Value::Number)
-            .unwrap_or(Value::Null)
-    } else if let Ok(s) = obj.extract::<String>() {
-        Value::String(s)
-    } else if let Ok(list) = obj.cast::<PyList>() {
-        let arr: Vec<Value> = list.iter().map(|item| py_to_json_value(&item)).collect();
-        Value::Array(arr)
-    } else if let Ok(dict) = obj.cast::<PyDict>() {
-        let mut map = serde_json::Map::new();
-        for (k, v) in dict.iter() {
-            if let Ok(key) = k.extract::<String>() {
-                map.insert(key, py_to_json_value(&v));
-            }
-        }
-        Value::Object(map)
-    } else if let Ok(s) = obj.str() {
-        Value::String(s.to_string())
-    } else {
-        Value::Null
-    }
-}
-
 #[pymethods]
 impl PyHTTPHandler {
     #[new]
@@ -358,7 +330,7 @@ impl PyHTTPHandler {
                 let mut map = HashMap::new();
                 for (k, v) in dict.iter() {
                     if let Ok(key) = k.extract::<String>() {
-                        map.insert(key, py_to_json_value(&v));
+                        map.insert(key, crate::py_logger::py_to_json_value(&v));
                     }
                 }
                 map

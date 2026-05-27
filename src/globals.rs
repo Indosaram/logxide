@@ -3,10 +3,12 @@
 //! This module contains global registries, thread-local storage,
 //! and module-level utility functions.
 
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use once_cell::sync::Lazy;
@@ -22,8 +24,30 @@ use crate::py_handlers::{
 use crate::py_logger::PyLogger;
 
 /// Global registry of log handlers.
-pub static HANDLERS: Lazy<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>> =
-    Lazy::new(|| Mutex::new(Vec::new()));
+pub static HANDLERS: Lazy<RwLock<Vec<Arc<dyn Handler + Send + Sync>>>> =
+    Lazy::new(|| RwLock::new(Vec::new()));
+
+/// Global flag indicating if caller frame introspection is required by any formatter/handler
+pub static CALLER_INFO_REQUIRED: AtomicBool = AtomicBool::new(false);
+
+/// Check if a format string contains caller-related placeholders and activate introspection if so
+pub fn check_caller_info_needed(format_str: &str) {
+    if format_str.contains("%(pathname)")
+        || format_str.contains("%(filename)")
+        || format_str.contains("%(module)")
+        || format_str.contains("%(lineno)")
+        || format_str.contains("%(funcName)")
+        || format_str.contains("%(func_name)")
+    {
+        CALLER_INFO_REQUIRED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Expose caller-info activation to Python compatibility layer
+#[pyfunction]
+pub fn activate_caller_info(format_str: &str) {
+    check_caller_info_needed(format_str);
+}
 
 /// GLOBAL KEEP ALIVE to prevent Python objects from being garbage collected
 pub static PYTHON_HANDLERS_KEEP_ALIVE: Lazy<Mutex<Vec<Py<PyAny>>>> =
@@ -76,7 +100,7 @@ pub fn basicConfig(_py: Python, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult
 
 #[pyfunction]
 pub fn flush(py: Python) -> PyResult<()> {
-    let handlers: Vec<Arc<dyn Handler + Send + Sync>> = { HANDLERS.lock().unwrap().clone() };
+    let handlers: Vec<Arc<dyn Handler + Send + Sync>> = { HANDLERS.read().clone() };
     py.detach(|| {
         for h in handlers.iter() {
             h.flush();
@@ -113,13 +137,13 @@ pub fn register_http_handler(
         OverflowStrategy::DropOldest,
     ));
     h.set_level(LogLevel::from_usize(level.unwrap_or(20) as usize));
-    HANDLERS.lock().unwrap().push(h);
+    HANDLERS.write().push(h);
     Ok(())
 }
 
 #[pyfunction]
 pub fn clear_handlers(_py: Python) -> PyResult<()> {
-    HANDLERS.lock().unwrap().clear();
+    HANDLERS.write().clear();
     Ok(())
 }
 
@@ -143,6 +167,7 @@ pub fn register_file_handler(
 
     // Set formatter if format string is provided
     if let Some(fmt) = format {
+        check_caller_info_needed(&fmt);
         let formatter = match datefmt {
             Some(df) => PythonFormatter::with_date_format(fmt, df),
             None => PythonFormatter::new(fmt),
@@ -150,7 +175,7 @@ pub fn register_file_handler(
         handler.set_formatter_instance(Arc::new(formatter));
     }
 
-    HANDLERS.lock().unwrap().push(Arc::new(handler));
+    HANDLERS.write().push(Arc::new(handler));
     Ok(())
 }
 
@@ -173,7 +198,7 @@ pub fn register_rotating_file_handler(
     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
 
     handler.set_level(log_level);
-    HANDLERS.lock().unwrap().push(Arc::new(handler));
+    HANDLERS.write().push(Arc::new(handler));
     Ok(())
 }
 
@@ -192,6 +217,7 @@ pub fn register_stream_handler(
 
     // Create formatter if format string is provided
     let formatter: Option<Arc<dyn crate::formatter::Formatter + Send + Sync>> = format.map(|fmt| {
+        check_caller_info_needed(&fmt);
         let f: Arc<dyn crate::formatter::Formatter + Send + Sync> = match datefmt {
             Some(df) => Arc::new(PythonFormatter::with_date_format(fmt, df)),
             None => Arc::new(PythonFormatter::new(fmt)),
@@ -216,7 +242,7 @@ pub fn register_stream_handler(
             if let Some(ref f) = formatter {
                 handler.set_formatter_instance(f.clone());
             }
-            HANDLERS.lock().unwrap().push(Arc::new(handler));
+            HANDLERS.write().push(Arc::new(handler));
         } else {
             // For Python file-like objects, we use stderr as fallback
             // since we don't have PythonStreamHandler anymore
@@ -225,7 +251,7 @@ pub fn register_stream_handler(
             if let Some(ref f) = formatter {
                 handler.set_formatter_instance(f.clone());
             }
-            HANDLERS.lock().unwrap().push(Arc::new(handler));
+            HANDLERS.write().push(Arc::new(handler));
         }
     } else {
         // Default to stderr
@@ -234,7 +260,7 @@ pub fn register_stream_handler(
         if let Some(ref f) = formatter {
             handler.set_formatter_instance(f.clone());
         }
-        HANDLERS.lock().unwrap().push(Arc::new(handler));
+        HANDLERS.write().push(Arc::new(handler));
     }
 
     Ok(())
@@ -282,7 +308,7 @@ pub fn add_handler_to_registry(
 
     if let Some(h) = handler_arc {
         if logger_name == "root" {
-            HANDLERS.lock().unwrap().push(h);
+            HANDLERS.write().push(h);
         } else {
             local_handlers.lock().unwrap().push(h);
         }
@@ -294,6 +320,7 @@ pub fn add_handler_to_registry(
         Ok(true)
     } else {
         // Allow Python handlers
+        CALLER_INFO_REQUIRED.store(true, Ordering::Relaxed);
         if logger_name == "root" {
             PYTHON_HANDLERS_KEEP_ALIVE
                 .lock()

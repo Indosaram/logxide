@@ -599,7 +599,7 @@ impl HTTPHandler {
                         let mut map = HashMap::new();
                         for (k, v) in dict.iter() {
                             if let Ok(key) = k.extract::<String>() {
-                                map.insert(key, py_to_value(&v));
+                                map.insert(key, crate::py_logger::py_to_json_value(&v));
                             }
                         }
                         Some(map)
@@ -703,39 +703,6 @@ impl HTTPHandler {
     /// Get the current flush level.
     pub fn get_flush_level(&self) -> u8 {
         self.flush_level.load(Ordering::Relaxed)
-    }
-}
-
-fn py_to_value(obj: &Bound<PyAny>) -> Value {
-    use pyo3::types::PyList;
-
-    if obj.is_none() {
-        Value::Null
-    } else if let Ok(b) = obj.extract::<bool>() {
-        Value::Bool(b)
-    } else if let Ok(i) = obj.extract::<i64>() {
-        Value::Number(i.into())
-    } else if let Ok(f) = obj.extract::<f64>() {
-        serde_json::Number::from_f64(f)
-            .map(Value::Number)
-            .unwrap_or(Value::Null)
-    } else if let Ok(s) = obj.extract::<String>() {
-        Value::String(s)
-    } else if let Ok(list) = obj.cast::<PyList>() {
-        let arr: Vec<Value> = list.iter().map(|item| py_to_value(&item)).collect();
-        Value::Array(arr)
-    } else if let Ok(dict) = obj.cast::<PyDict>() {
-        let mut map = serde_json::Map::new();
-        for (k, v) in dict.iter() {
-            if let Ok(key) = k.extract::<String>() {
-                map.insert(key, py_to_value(&v));
-            }
-        }
-        Value::Object(map)
-    } else if let Ok(s) = obj.str() {
-        Value::String(s.to_string())
-    } else {
-        Value::Null
     }
 }
 

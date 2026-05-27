@@ -142,6 +142,13 @@ class Formatter:
         self.style = style
         self.validate = validate
         self._kwargs = kwargs
+        if isinstance(self.fmt, str):
+            try:
+                from . import logxide
+
+                logxide.logging.activate_caller_info(self.fmt)
+            except ImportError:
+                pass
 
     def format(self, record):
         if isinstance(record, dict):
@@ -279,6 +286,15 @@ class Handler:
 
     def setFormatter(self, formatter):
         self.formatter = formatter
+        if formatter:
+            fmt = getattr(formatter, "fmt", None) or getattr(formatter, "_fmt", None)
+            if fmt:
+                try:
+                    from . import logxide
+
+                    logxide.logging.activate_caller_info(fmt)
+                except ImportError:
+                    pass
 
     def setLevel(self, level):
         self.level = level

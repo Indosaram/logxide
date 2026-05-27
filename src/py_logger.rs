@@ -57,23 +57,31 @@ pub fn check_level(py: Python, level: &Bound<PyAny>) -> PyResult<u32> {
 pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
     if obj.is_none() {
         Value::Null
-    } else if let Ok(b) = obj.extract::<bool>() {
-        Value::Bool(b)
-    } else if let Ok(i) = obj.extract::<i64>() {
-        Value::Number(i.into())
-    } else if let Ok(f) = obj.extract::<f64>() {
-        serde_json::Number::from_f64(f)
+    } else if let Ok(py_bool) = obj.cast::<pyo3::types::PyBool>() {
+        Value::Bool(py_bool.extract::<bool>().unwrap_or(false))
+    } else if let Ok(py_int) = obj.cast::<pyo3::types::PyInt>() {
+        if let Ok(i) = py_int.extract::<i64>() {
+            Value::Number(i.into())
+        } else if let Ok(f) = py_int.extract::<f64>() {
+            serde_json::Number::from_f64(f)
+                .map(Value::Number)
+                .unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        }
+    } else if let Ok(py_float) = obj.cast::<pyo3::types::PyFloat>() {
+        serde_json::Number::from_f64(py_float.value())
             .map(Value::Number)
             .unwrap_or(Value::Null)
-    } else if let Ok(s) = obj.extract::<String>() {
-        Value::String(s)
-    } else if let Ok(list) = obj.cast::<PyList>() {
+    } else if let Ok(py_str) = obj.cast::<pyo3::types::PyString>() {
+        Value::String(py_str.to_string())
+    } else if let Ok(list) = obj.cast::<pyo3::types::PyList>() {
         let arr: Vec<Value> = list.iter().map(|item| py_to_json_value(&item)).collect();
         Value::Array(arr)
-    } else if let Ok(tuple) = obj.cast::<PyTuple>() {
+    } else if let Ok(tuple) = obj.cast::<pyo3::types::PyTuple>() {
         let arr: Vec<Value> = tuple.iter().map(|item| py_to_json_value(&item)).collect();
         Value::Array(arr)
-    } else if let Ok(dict) = obj.cast::<PyDict>() {
+    } else if let Ok(dict) = obj.cast::<pyo3::types::PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             if let Ok(key) = k.str() {
@@ -362,6 +370,9 @@ impl PyLogger {
     /// Populate pathname, filename, lineno, func_name on record via Python frame introspection.
     /// Uses sys._getframe(0) from Rust — which gives the last Python frame (the caller).
     fn populate_caller_info(py: Python, record: &mut LogRecord) {
+        if !crate::globals::CALLER_INFO_REQUIRED.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         let Ok(sys) = py.import("sys") else { return };
         // _getframe(0) from Rust returns the most recent Python frame,
         // which is the frame that called logger.debug/info/etc.
@@ -489,8 +500,7 @@ impl PyLogger {
 
         // 1. Handle Rust handlers
         if local_handlers.is_empty() {
-            let global_handlers: Vec<Arc<dyn Handler + Send + Sync>> =
-                { HANDLERS.lock().unwrap().clone() };
+            let global_handlers: Vec<Arc<dyn Handler + Send + Sync>> = { HANDLERS.read().clone() };
             for handler in global_handlers.iter() {
                 handler.emit(&record);
             }
@@ -502,7 +512,7 @@ impl PyLogger {
             let should_propagate = *self.propagate.lock().unwrap();
             if should_propagate {
                 let global_handlers: Vec<Arc<dyn Handler + Send + Sync>> =
-                    { HANDLERS.lock().unwrap().clone() };
+                    { HANDLERS.read().clone() };
                 for handler in global_handlers.iter() {
                     handler.emit(&record);
                 }
