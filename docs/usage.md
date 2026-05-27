@@ -52,7 +52,7 @@ logging.basicConfig(
 
 ### Using addHandler
 
-LogXide supports `addHandler()` with its **Rust native handlers only**:
+LogXide's Rust native handlers give the best throughput, but `addHandler()` also accepts standard Python `logging.Handler` subclasses, which run alongside the Rust pipeline:
 
 ```python
 from logxide import logging, FileHandler, StreamHandler, RotatingFileHandler
@@ -97,14 +97,14 @@ otlp_handler = OTLPHandler(
 
 ## ⚠️ Common Mistakes
 
-### 1. Using Python stdlib handlers
+### 1. Mixing Python stdlib handlers with Rust handlers
 
 ```python
-# ❌ WRONG — Python handlers are rejected
+# ⚠️ Accepted, but runs alongside the Rust pipeline (no zero-GIL path)
 import logging as stdlib
-logger.addHandler(stdlib.FileHandler('app.log'))  # ValueError!
+logger.addHandler(stdlib.FileHandler('app.log'))  # may cause duplicate processing
 
-# ✅ CORRECT — Use LogXide handlers
+# ✅ PREFERRED — Use LogXide handlers for the fast path
 from logxide import FileHandler
 logger.addHandler(FileHandler('app.log'))
 ```

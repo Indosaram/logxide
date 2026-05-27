@@ -31,8 +31,7 @@ LogXide delivers high performance through its native Rust implementation, provid
 
 ### PyO3 Integration (`src/lib.rs`, `src/py_logger.rs`, `src/py_handlers.rs`)
 - Python bindings exposing Logger, Handler, and Formatter types
-- `addHandler()` accepts only LogXide's Rust native handlers
-- Python `logging.Handler` subclasses are explicitly rejected
+- `addHandler()` accepts LogXide's Rust native handlers (fast path) and standard Python `logging.Handler` subclasses (run alongside the Rust pipeline, no zero-GIL path; may cause duplicate processing)
 
 ### Core Types (`src/core.rs`)
 - `LogRecord` — Rust struct holding log metadata (name, level, message, timestamp, thread info, extras)
@@ -169,7 +168,7 @@ Each logger maintains its own handler list. When `logger.addHandler()` is called
 | **String formatting** | Python string operations | Rust native formatting |
 | **Thread safety** | Global lock (`_lock`) | Per-handler mutexes |
 | **I/O** | Python file objects | Direct OS I/O (bypasses GIL) |
-| **Custom handlers** | Unlimited (Python subclasses) | Rust handlers only |
+| **Custom handlers** | Unlimited (Python subclasses) | Rust native handlers (fast path); Python subclasses also accepted, run alongside the Rust pipeline |
 | **subclassing** | Full support | Not supported |
 
 ## Dependencies
