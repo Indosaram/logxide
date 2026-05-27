@@ -87,17 +87,19 @@ These benchmarks test actual file I/O operations with realistic formatting, repr
 
 ### Key Findings
 
-**LogXide Performance Advantages:**
-- **12-25% faster** than Picologging across all real I/O scenarios
-- **2.4-2.5x faster** than Structlog in production use cases
-- Consistent performance across different logging patterns
-- Rust's native I/O and memory management provide measurable advantages
+All numbers in this section refer to the **file-I/O benchmark methodology described above** (FileHandler, 100K iterations, the `%(asctime)s - %(name)s - %(levelname)s - %(message)s` format, averaged across 3 runs). They should not be generalized to other handlers, formats, or workloads.
 
-**Detailed Comparison:**
+**LogXide Performance Advantages (file-I/O methodology):**
+- **12-25% faster** than Picologging across all real I/O scenarios in this benchmark
+- **2.4-2.5x faster** than Structlog in the same file-I/O scenarios
+- Consistent performance across the simple / structured / error patterns tested here
+- Rust's native I/O and memory management provide measurable advantages on this path
+
+**Detailed Comparison (file-I/O methodology):**
 - **Simple Logging**: LogXide 25% faster than Picologging
 - **Structured Logging**: LogXide 12% faster than Picologging (smallest gap)
 - **Error Logging**: LogXide 16% faster than Picologging
-- **Overall**: LogXide maintains performance advantage in all realistic scenarios
+- **Overall**: LogXide maintains its advantage across the file-I/O scenarios in this document
 
 ## Performance Analysis Summary
 
@@ -120,6 +122,9 @@ These benchmarks test actual file I/O operations with realistic formatting, repr
 5. **No GIL Overhead**: Native code execution without Global Interpreter Lock impact
 
 ## Historical Benchmarks (Legacy Results)
+
+!!! warning "Different methodology"
+    The numbers in this section come from an older benchmark harness (different iteration counts, different formatting setup, different Python and OS environment) and use a different measurement methodology than the **File I/O Benchmarks (Real-World Performance)** tables above. They are kept here for historical reference only and should **not** be compared directly against the file-I/O numbers earlier in this page or against the README results. When in doubt, treat the file-I/O tables above as the authoritative LogXide-vs-others comparison for this document.
 
 ### Python 3.12.6 - Complete Library Comparison
 

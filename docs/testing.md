@@ -103,3 +103,22 @@ handler.clear()         # Reset for next test
 
 !!! tip "Performance"
     `MemoryHandler` stores records in Rust's `Vec<LogRecord>` behind a `Mutex`, making it significantly faster than Python-based alternatives for high-volume capture.
+
+---
+
+## Optimization Regression Suite
+
+`tests/test_optimizations.py` is a tracked regression suite that covers the Step 1–4 optimizations shipped in v0.1.19. It runs alongside the standard test suite.
+
+The suite covers:
+
+1. **Message round-trip verification (Step 1)**: standard formatting and log round-trips remain correct after removing redundant dynamic message-text caching.
+2. **Tuple-to-array serialization (Step 2)**: `tuple`-valued fields inside `global_context` or `extra` serialize to JSON arrays through the unified Python-to-JSON helper.
+3. **Direct ANSI color placeholder support (Step 3)**: `RustFormatter` (and `Formatter`) parse `%(ansi_level_color)s` and `%(ansi_reset_color)s` directly.
+4. **Compat caller-info activation (Step 4)**: handlers configured through `compat_handlers.py` activate the `activate_caller_info` layer only when the format references caller-info placeholders such as `%(funcName)s`.
+
+Run it with:
+
+```bash
+pytest tests/test_optimizations.py
+```

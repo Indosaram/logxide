@@ -105,6 +105,15 @@ pytest tests/ -m "not slow"     # Exclude slow tests
 pytest tests/ -n auto
 ```
 
+### Running Regression Tests
+
+`tests/test_optimizations.py` is a tracked regression suite covering the Step 1–4 optimizations (string-cache cleanup, the consolidated Python-to-JSON converter, direct ANSI placeholder support, and compat caller-info activation) shipped in v0.1.19.
+
+```bash
+# Run the optimization regression tests
+pytest tests/test_optimizations.py
+```
+
 ### Test Categories
 
 - **Unit Tests**: Basic functionality, API compatibility

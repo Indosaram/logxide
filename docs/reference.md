@@ -273,9 +273,14 @@ logging.basicConfig(
 )
 ```
 
+!!! note "Direct ANSI Color Support"
+    The standard `Formatter` (and underlying `RustFormatter`) now **directly** handles ANSI level-coloring placeholders. You can use `%(ansi_level_color)s` and `%(ansi_reset_color)s` in any standard formatter template without needing to instantiate `ColorFormatter`.
+
+---
+
 ### ColorFormatter
 
-Rust-native ANSI color formatter for terminal output. Automatically applies level-based colors.
+Rust-native ANSI color formatter for terminal output. Since the standard `Formatter` now directly supports ANSI color placeholders, `ColorFormatter` is provided primarily as a drop-in compatibility wrapper.
 
 ```python
 # notest
@@ -296,18 +301,18 @@ formatter = ColorFormatter(
 
 | Placeholder | Description |
 |-------------|-------------|
-| `%(ansi_level_color)s` | ANSI escape code for the current log level color |
-| `%(ansi_reset_color)s` | ANSI reset code to end coloring |
+| `%(ansi_level_color)s` | ANSI escape code for the current log level color (Supported in both `Formatter` and `ColorFormatter`) |
+| `%(ansi_reset_color)s` | ANSI reset code to end coloring (Supported in both `Formatter` and `ColorFormatter`) |
 
 **Color mapping:**
 
 | Level | Color |
 |-------|-------|
-| DEBUG | Cyan |
+| DEBUG | White / gray |
 | INFO | Green |
 | WARNING | Yellow |
 | ERROR | Red |
-| CRITICAL | Red (bold) |
+| CRITICAL | Magenta |
 
 ---
 

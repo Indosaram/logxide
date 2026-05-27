@@ -18,7 +18,7 @@ This document provides a high-level compatibility overview. For detailed compari
 | Standard formatters (`%`-style, `{}`-style) | ✅ | Processed natively in Rust |
 | FileHandler, StreamHandler, RotatingFileHandler | ✅ | Rust-native implementations |
 | Custom Python formatters (subclassed `Formatter`) | ❌ | Format strings work; custom `format()` methods don't |
-| Custom Python handlers | ⚠️ | Accepted but bypass Rust performance pipeline |
+| Custom Python handlers | ⚠️ | Accepted; run synchronously in Python alongside Rust pipeline |
 | Subclassing `LogRecord` or `Logger` | ❌ | Rust types, not subclassable |
 | pytest `caplog` | ⚠️ | Use `caplog_logxide` fixture instead |
 | StringIO capture | ❌ | Use file-based logging for tests |
@@ -54,8 +54,8 @@ LogXide maps the format pattern string directly into Rust. If you subclass `logg
 
 *Alternative:* Use JSON templates via `logxide.HTTPHandler` or transform output at the application edge.
 
-### 2. Synchronous Python Custom Handlers
-If you create a new logging sink (e.g., `class MailLog(logging.Handler)`), LogXide cannot translate this into zero-cost Rust runtime behavior. Python handlers assigned to LogXide loggers still work but lose the Rust backend concurrency advantage.
+### 2. Custom Python Handlers
+If you create a custom Python handler (e.g., `class MailLog(logging.Handler)`), LogXide accepts it via `addHandler()`. LogXide will execute its `.handle()` method with a Python `LogRecord` alongside the Rust native pipeline. This means the event fires in both pipelines, but the Python handler runs synchronously on the Python side, losing the Rust native zero-GIL concurrency benefits.
 
 ### 3. Standard Library Unit Tests
 LogXide fails CPython's `test_logging.py` unit tests. These tests validate locking behavior, internal `.handlers` array mutability, and `.disabled` states using memory assertions that conflict with Rust's encapsulated states and RwLocks.
@@ -82,7 +82,7 @@ When migrating an application to LogXide:
 1. **Initialize early:** Import and initialize LogXide before framework initialization (Django/Flask/FastAPI)
 2. **Intercept stdlib:** Call `logxide.intercept_stdlib()` to capture logs from third-party dependencies
 3. **Use structural config:** Prefer `logxide.config.dictConfig` over custom instantiation
-4. **Check custom handlers:** Verify any custom Python handlers are acceptable (they will work but bypass Rust performance)
+4. **Check custom handlers:** Verify any custom Python handlers are acceptable. They are accepted via `addHandler()` and run alongside the Rust pipeline, which means each log event may be processed twice (once by the Rust pipeline and once by the Python handler) and the Python handler does not run on the zero-GIL Rust path.
 5. **Update tests:** Replace `caplog` with `caplog_logxide` and use file-based logging instead of StringIO
 
 For detailed third-party library compatibility information, see the **[Third-Party Compatibility Guide](third-party-compatibility.md)**.

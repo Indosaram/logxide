@@ -110,14 +110,16 @@ Logger → emit() → Mutex<BufWriter<File>> → write + conditional flush
 - `StrFormatStyle` — `{name}` format
 - `StringTemplateStyle` — `$name` / `${name}` format
 - Full support for padding, alignment, and date formatting
+- **Direct ANSI color support**: Support for terminal coloring placeholders (`%(ansi_level_color)s`, `%(ansi_reset_color)s`) is natively absorbed into `PercentStyle` (`RustFormatter`/`Formatter`), eliminating the runtime overhead of delegating to a separate `ColorFormatter` wrapper.
 
 ### Filters (`src/filter.rs`)
 - Name-based filtering matching Python's `logging.Filter`
 - Hierarchical name matching (e.g., `"myapp"` matches `"myapp.database"`)
 
 ### String Cache (`src/string_cache.rs`)
-- `Arc<str>`-based interning for logger names and level names
-- Reduces allocation overhead for frequently used strings
+- `Arc<str>`-based interning specifically for static logger names and level names.
+- **No message-text caching**: To avoid memory overhead and allocation degradation, the dynamic log message body (text) is not cached. Dead string caching states and redundant message-text cache checks have been completely removed.
+- Reduces allocation overhead for frequently used static strings.
 
 ## Handler Architecture
 
@@ -176,10 +178,12 @@ Each logger maintains its own handler list. When `logger.addHandler()` is called
 |-------|---------|
 | `pyo3` | Python-Rust bindings |
 | `chrono` | Timestamp formatting |
-| `regex` | Format string parsing |
 | `parking_lot` | Fast mutexes |
 | `dashmap` | Concurrent logger map |
 | `crossbeam-channel` | Stream/HTTP/OTLP handler channels |
 | `ureq` | HTTP requests (HTTPHandler) |
 | `serde` / `serde_json` | JSON serialization |
 | `prost` / `opentelemetry-proto` | OTLP Protobuf encoding |
+
+!!! note "Format string parsing"
+    The active formatter hot path uses a single-pass O(N) parser; it does not invoke the `regex` crate for `%(field)s` field extraction. The `regex` crate may still appear in `Cargo.toml` for non-hot-path uses, but it is not part of the per-record formatting path.

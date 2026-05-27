@@ -204,11 +204,19 @@ for t in threads:
 | `%(threadName)s` | Thread name |
 | `%(process)d` | Process ID |
 | `%(msecs)d` | Milliseconds |
-| `%(pathname)s` | Full pathname |
-| `%(filename)s` | Filename |
-| `%(module)s` | Module name |
-| `%(lineno)d` | Line number |
-| `%(funcName)s` | Function name |
+| `%(pathname)s` | Full pathname (Triggers caller frame introspection) |
+| `%(filename)s` | Filename (Triggers caller frame introspection) |
+| `%(module)s` | Module name (Triggers caller frame introspection) |
+| `%(lineno)d` | Line number (Triggers caller frame introspection) |
+| `%(funcName)s` | Function name (Triggers caller frame introspection) |
+
+!!! note "Caller-Info Frame Introspection"
+    Using any of the caller-info fields (`%(pathname)s`, `%(filename)s`, `%(module)s`, `%(lineno)d`, `%(funcName)s`) requires CPython stack frame inspection.
+    - **Automatic Activation**: LogXide dynamically detects these placeholders and enables optimized CPython frame extraction.
+    - **Compatibility Layer**: When using standard library formatters via the `compat_handlers.py` path, caller-info context is automatically enabled and routed to the native backend via the `activate_caller_info` mechanism.
+
+!!! note "Tuple and List Serialization"
+    To maintain uniform structured representation, passing Python `tuple` or `list` structures inside `extra` dictionaries or `global_context` will automatically serialize them as JSON arrays (e.g., `(1, 2, 3)` becomes `[1, 2, 3]`) inside native HTTP and structured output pipelines.
 
 ### Advanced Formatting Features
 

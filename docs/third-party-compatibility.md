@@ -76,6 +76,7 @@ Any library that only uses:
 - `addHandler()` with Rust-compatible handlers
 - `addFilter()` with `logging.Filter` instances
 - `isEnabledFor()` level checks
+- **Automatic Caller-Info Introspection**: Standard library handlers configured via the compatibility layer (`compat_handlers.py`) that specify caller-info format placeholders (such as `%(funcName)s`, `%(pathname)s`, `%(lineno)d`) are dynamically connected to our backend via the `activate_caller_info` layer. This automatically enables optimized CPython stack frame introspection when needed.
 
 ### What Breaks
 
@@ -488,7 +489,7 @@ logger.error("Errors tracked with full context")
 Most APM tools hook into Python's stdlib logging module. Since logxide replaces `sys.modules["logging"]`, these tools should detect logxide's `_LoggingModule` as the logging module. However, APMs that:
 
 - Monkey-patch `logging.Logger` class methods directly may conflict
-- Install custom `logging.Handler` subclasses will work but bypass Rust performance
+- Install custom `logging.Handler` subclasses will be accepted, but they run alongside the Rust pipeline (events may be processed twice) and the Python handler does not run on the zero-GIL Rust path
 - Rely on `LogRecord` internal attributes may have issues with logxide's Rust `LogRecord`
 
 If you use these tools with logxide, please report your results.
@@ -656,7 +657,10 @@ Does the library use logging.getLogger() for loggers?
 |       |
 |       +-- NO --> Does it use custom logging.Formatter subclass?
 |           |
-|           +-- YES --> Formatter's format() bypasses Rust pipeline
+|           +-- YES --> Custom Formatter.format() does not run on the primary Rust path.
+|           |           If a Python handler is also attached, the Python handler's
+|           |           formatter can still run on the Python-side LogRecord passed
+|           |           to that handler.
 |           |
 |               +-- NO --> Does it use custom logging.Handler subclass?
 |               |

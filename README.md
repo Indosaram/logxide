@@ -1,6 +1,6 @@
 # LogXide
 
-**2.7x faster Python logging, powered by Rust.**
+**Up to 2.7x faster Python logging, powered by Rust.**
 
 Same stdlib API. Same `getLogger`. Same format strings. Just faster.
 
@@ -10,7 +10,7 @@ import logging                        from logxide import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('myapp')
-logger.info('Hello, world!')          # 2.7x faster. Same code.
+logger.info('Hello, world!')          # Up to 2.7x faster. Same code.
 ```
 
 [![PyPI](https://img.shields.io/pypi/v/logxide)](https://pypi.org/project/logxide/)
@@ -33,13 +33,18 @@ pip install logxide[sentry]
 
 Real-world file logging benchmarks (Python 3.12, 100K iterations):
 
-| Scenario | LogXide | Picologging (C) | stdlib logging | vs Pico | vs stdlib |
-|----------|---------|-----------------|----------------|---------|-----------|
+| Scenario | LogXide | Picologging (C) ¹ | stdlib logging | vs Pico | vs stdlib |
+|----------|---------|-------------------|----------------|---------|-----------|
 | Simple | 446,135 ops/s | 372,020 ops/s | 157,220 ops/s | **+20%** | **+184%** |
 | Structured | 412,235 ops/s | 357,193 ops/s | 153,547 ops/s | **+15%** | **+168%** |
 | Error | 426,294 ops/s | 361,053 ops/s | 155,332 ops/s | **+18%** | **+174%** |
 
-20% faster than Picologging (C-based, Microsoft). 2.7x faster than stdlib. [Full benchmarks →](docs/benchmarks.md)
+¹ *Picologging is Cython-based and only supports Python 3.12 or older (incompatible with 3.13+).*
+
+> ℹ️ **Benchmark Methodology Context**:
+> - **Python Versions & GIL**: Standard benchmarks are run across Python 3.12 and 3.14. Under Python 3.14, LogXide's basic handler tests (10K iterations) show a **1.8x to 6.0x speedup** over stdlib handlers.
+> - **Caller-Info Introspection**: Picologging synthetically inflates its throughput by skipping caller frame extraction (`sys._getframe`), which Python stdlib requires. LogXide performs safe, fully compatible frame introspection when needed, while still maintaining high performance.
+> - For a complete analysis and detailed handler-by-handler metrics, see [Full Benchmarks](docs/benchmarks.md) and [Picologging Comparison](docs/comparison-picologging.md).
 
 ## Works With
 
@@ -140,7 +145,7 @@ LogXide reimplements Python's logging in Rust for speed. The API is the same, bu
 | `basicConfig`, format strings, levels, filters | ✅ Same API |
 | `FileHandler`, `StreamHandler`, `RotatingFileHandler` | ✅ Rust-native |
 | `HTTPHandler`, `OTLPHandler` | ✅ Rust-native, high throughput |
-| Custom Python handlers via `addHandler()` | ⚠️ Works, but bypasses Rust pipeline |
+| Custom Python handlers via `addHandler()` | ⚠️ Accepted; runs alongside the Rust pipeline (may cause duplicate processing) |
 | Subclassing `LogRecord` or `Logger` | ❌ Rust types, not subclassable |
 | pytest `caplog` fixture | ⚠️ Use `caplog_logxide` instead |
 

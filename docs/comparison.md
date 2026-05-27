@@ -131,7 +131,7 @@ LogXide prioritizes performance over full stdlib compatibility. Before adopting,
 
 - **Custom Python formatters**: `logging.Formatter` subclasses are not called; format strings are processed natively in Rust
 - **Subclassing**: `LogRecord` and `Logger` are Rust types and cannot be subclassed
-- **Custom Python handlers**: Accepted via `addHandler()` but bypass the Rust performance pipeline
+- **Custom Python handlers**: Accepted via `addHandler()`, but they run alongside the Rust pipeline (events may be processed twice) and do not run on the zero-GIL Rust path
 - **pytest `caplog`**: LogXide provides a custom plugin (auto-registered via entry point); requires explicit `logger.addHandler(caplog.handler)` — see [Testing Guide](testing.md)
 
 For the complete compatibility matrix, see [Compatibility](compatibility.md).
