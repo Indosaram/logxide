@@ -20,27 +20,23 @@ Both LogXide and Picologging pursue the same goal — accelerate Python logging 
 
 ## Performance: Handler-by-Handler Benchmark
 
-All benchmarks run on macOS ARM64 (Apple Silicon), Python 3.12 / 3.14, averaged across 3 runs.
-Handler-by-handler benchmarks use 10,000 iterations (`basic_handlers_benchmark.py`); File I/O scenario benchmarks (Simple / Structured / Error Logging) use 100,000 iterations (`compare_loggers.py`).
+All benchmarks run on macOS ARM64 (Apple Silicon), **Python 3.12** (Picologging's highest supported version), averaged across 3 runs of 10,000 iterations (`benchmark/basic_handlers_benchmark.py`). Same Python version, same harness, same format string for both libraries.
 
 LogXide drops the GIL immediately and delegates formatting and I/O to Rust-native `BufWriter` (file) or crossbeam channels (stream/HTTP), avoiding Python overhead entirely.
 
-> **Note on Picologging numbers**: Picologging was benchmarked on Python 3.12 (its highest supported version) while LogXide numbers are from Python 3.14. Picologging also skips `sys._getframe()` caller frame extraction that the standard library requires, which synthetically inflates its throughput figures.
+> **Note**: Picologging skips `sys._getframe()` caller-frame extraction that the standard library requires, which inflates its raw throughput figures. LogXide performs full stdlib-compatible frame introspection only when the format string requires it (`%(funcName)s`, `%(pathname)s`, etc.).
 
-### Performance Summary
+### Performance Summary (Python 3.12)
 
-| Handler / Scenario | Picologging (3.12) ¹ | LogXide (3.14) | LogXide vs Picologging |
-|--------------------|----------------------|----------------|------------------------|
-| **FileHandler** | 411,327 Ops/sec | **281,741 Ops/sec** | Picologging 1.5x faster ¹ |
-| **StreamHandler** | 758,828 Ops/sec | **48,488 Ops/sec** | Picologging 15.6x faster ¹ |
-| **RotatingFileHandler** | 132,699 Ops/sec | **105,844 Ops/sec** | Picologging 1.3x faster ¹ |
-| **TimedRotatingFileHandler**| N/A | **98,210 Ops/sec** | N/A |
-| **Simple Logging** ² | N/A | **281,741 Ops/sec** | N/A |
-| **Structured Logging** ² | N/A | **266,242 Ops/sec** | N/A |
-| **Error Logging** ² | N/A | **251,238 Ops/sec** | N/A |
+| Handler                      |   Picologging |               LogXide | Speedup           |
+| :--------------------------- | ------------: | --------------------: | :---------------- |
+| **FileHandler**              |       384,319 | **1,139,874 Ops/sec** | **2.97× faster**  |
+| **RotatingFileHandler** ¹    |       411,055 |   **897,118 Ops/sec** | **2.18× faster**  |
+| **TimedRotatingFileHandler** |    N/A (none) |    **897K Ops/sec**   | LogXide-only      |
+| **HTTPHandler**              |    N/A (none) |       (batch + async) | LogXide-only      |
+| **OTLPHandler**              |    N/A (none) |             (native)  | LogXide-only      |
 
-¹ *Picologging runs on Python 3.12 only; LogXide on 3.14. Picologging skips caller frame extraction (`sys._getframe`), which inflates throughput. Direct comparison is approximate.*
-² *Simple / Structured / Error Logging use `compare_loggers.py` (100K iterations). Picologging is excluded because it lacks the Loguru/structlog-compatible test harness used in that script.*
+¹ *Picologging has no `RotatingFileHandler`; the harness substitutes its `FileHandler`. LogXide's number is for the actual rotating handler with size-based rotation enabled.*
 
 ---
 
@@ -80,10 +76,10 @@ For the complete compatibility matrix, see [Compatibility](compatibility.md).
 
 ### Choose LogXide when:
 1. **You use Python 3.13+** — Picologging is completely broken on Python 3.13 and newer.
-2. **You need a Richer Handler Ecosystem** — LogXide provides asynchronous HTTP batching, OTLP, time-based rotation, and gzip compression out of the box.
-3. **You want Active Maintenance** — Picologging's development essentially stopped in 2023.
-4. **Detailed format parity is essential** — LogXide performs exact frame introspections that standard `logging` expects.
+2. **You need raw throughput** — On Python 3.12 (where both run), LogXide is ~3× faster than Picologging on `FileHandler` and `RotatingFileHandler` while still performing full caller-frame introspection.
+3. **You need a Richer Handler Ecosystem** — LogXide provides asynchronous HTTP batching, OTLP, time-based rotation, and gzip compression out of the box.
+4. **You want Active Maintenance** — Picologging's development essentially stopped in 2023.
+5. **Detailed format parity is essential** — LogXide performs exact frame introspections that standard `logging` expects.
 
 ### Choose Picologging when:
-1. **You are stuck on Python 3.12 or older**.
-2. **You want absolute maximum throughput at the expense of functionality** — skipping frame extraction makes Picologging synthetically faster in file bursts.
+- You are stuck on Python 3.12 or older **and** cannot install a Rust-toolchain-built wheel for any reason. In every other case, LogXide is both faster and better-supported.

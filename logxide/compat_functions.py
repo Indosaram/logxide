@@ -5,7 +5,17 @@ This module provides utility functions that maintain compatibility with
 Python's standard logging module.
 """
 
+import sys as _sys
 import warnings
+
+_getframe = _sys._getframe
+
+
+def _get_caller_info():
+    f = _getframe(1)
+    co = f.f_code
+    return (co.co_filename, co.co_name, f.f_lineno)
+
 
 # Global level name registry
 _levelToName = {

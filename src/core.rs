@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use pyo3::prelude::*;
@@ -36,6 +36,17 @@ impl LogLevel {
             40 => LogLevel::Error,
             50 => LogLevel::Critical,
             _ => LogLevel::NotSet,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            LogLevel::NotSet => "NOTSET",
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Info => "INFO",
+            LogLevel::Warning => "WARNING",
+            LogLevel::Error => "ERROR",
+            LogLevel::Critical => "CRITICAL",
         }
     }
 }
@@ -134,7 +145,7 @@ pub struct LogRecord {
     pub process: u32,
     #[pyo3(get, set)]
     pub msg: String,
-    pub args: Option<String>,
+    pub args: Option<Arc<Value>>,
     #[pyo3(get, set)]
     pub exc_info: Option<String>,
     #[pyo3(get, set)]
@@ -158,11 +169,22 @@ impl LogRecord {
         pathname: String,
         lineno: u32,
         msg: String,
-        args: Option<String>,
+        args: Option<Py<PyAny>>,
         exc_info: Option<String>,
         func_name: String,
         stack_info: Option<String>,
     ) -> Self {
+        let args_value = args.and_then(|py_args| {
+            Python::attach(|py| {
+                let bound = py_args.bind(py);
+                if bound.is_none() {
+                    None
+                } else {
+                    Some(Arc::new(crate::py_logger::py_to_json_value(bound)))
+                }
+            })
+        });
+
         LogRecord {
             name,
             levelno,
@@ -180,7 +202,7 @@ impl LogRecord {
             process_name: "".into(),
             process: 0,
             msg,
-            args,
+            args: args_value,
             exc_info,
             exc_text: None,
             stack_info,
@@ -193,11 +215,7 @@ impl LogRecord {
     fn args(&self, py: Python) -> PyResult<Py<PyAny>> {
         match &self.args {
             None => Ok(py.None()),
-            Some(json_str) => {
-                let value: Value =
-                    serde_json::from_str(json_str).expect("LogRecord.args contains invalid JSON");
-                json_value_to_py(py, &value)
-            }
+            Some(value) => json_value_to_py(py, value.as_ref()),
         }
     }
 
@@ -208,8 +226,7 @@ impl LogRecord {
             self.args = None;
         } else {
             let json_val = crate::py_logger::py_to_json_value(bound);
-            self.args =
-                Some(serde_json::to_string(&json_val).expect("Failed to serialize args to JSON"));
+            self.args = Some(Arc::new(json_val));
         }
         Ok(())
     }
@@ -217,10 +234,8 @@ impl LogRecord {
     fn getMessage(&self, py: Python) -> PyResult<String> {
         match &self.args {
             None => Ok(self.msg.clone()),
-            Some(json_str) => {
-                let value: Value =
-                    serde_json::from_str(json_str).expect("LogRecord.args contains invalid JSON");
-                let py_args = json_value_to_py(py, &value)?;
+            Some(value) => {
+                let py_args = json_value_to_py(py, value.as_ref())?;
                 let py_msg = self.msg.as_str().into_pyobject(py)?;
                 let formatted = py_msg.call_method1("__mod__", (py_args,))?;
                 Ok(formatted.str()?.to_string())
@@ -288,9 +303,7 @@ impl LogRecord {
                     self.args = None;
                 } else {
                     let json_val = crate::py_logger::py_to_json_value(bound);
-                    self.args = Some(
-                        serde_json::to_string(&json_val).expect("Failed to serialize args to JSON"),
-                    );
+                    self.args = Some(Arc::new(json_val));
                 }
             }
             "exc_info" => self.exc_info = bound.extract()?,
@@ -332,10 +345,8 @@ impl LogRecord {
         dict.set_item("message", &self.msg)?;
         match &self.args {
             None => dict.set_item("args", py.None())?,
-            Some(json_str) => {
-                let value: Value =
-                    serde_json::from_str(json_str).expect("LogRecord.args contains invalid JSON");
-                dict.set_item("args", json_value_to_py(py, &value)?)?;
+            Some(value) => {
+                dict.set_item("args", json_value_to_py(py, value.as_ref())?)?;
             }
         }
         dict.set_item("exc_info", &self.exc_info)?;
@@ -355,11 +366,9 @@ impl LogRecord {
     pub fn get_message(&self) -> String {
         match &self.args {
             None => self.msg.clone(),
-            Some(json_str) => Python::attach(|py| {
-                let value: Value =
-                    serde_json::from_str(json_str).expect("LogRecord.args contains invalid JSON");
-                let py_args =
-                    json_value_to_py(py, &value).expect("Failed to convert args to Python object");
+            Some(value) => Python::attach(|py| {
+                let py_args = json_value_to_py(py, value.as_ref())
+                    .expect("Failed to convert args to Python object");
                 let py_msg = self
                     .msg
                     .as_str()
@@ -396,40 +405,35 @@ pub fn create_log_record_with_extra(
     msg: String,
     extra: Option<HashMap<String, Value>>,
 ) -> LogRecord {
-    use crate::string_cache::{get_level_name, get_logger_name};
-
-    let now = chrono::Local::now();
+    let now = chrono::Utc::now();
     let created = now.timestamp() as f64 + now.timestamp_subsec_nanos() as f64 / 1_000_000_000.0;
-    let msecs = (now.timestamp_subsec_millis() % 1000) as f64;
+    let msecs = now.timestamp_subsec_millis() as f64;
 
-    let current_thread = thread::current();
-    let thread_id = format!("{:?}", current_thread.id());
     let thread_name = crate::THREAD_NAME
         .with(|custom_name| custom_name.borrow().clone())
-        .unwrap_or_else(|| current_thread.name().unwrap_or("unnamed").to_string());
-
-    let thread_numeric_id = thread_id
-        .trim_start_matches("ThreadId(")
-        .trim_end_matches(")")
-        .parse::<u64>()
-        .unwrap_or(0);
+        .unwrap_or_else(|| {
+            thread::current()
+                .name()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unnamed".to_string())
+        });
 
     LogRecord {
-        name: get_logger_name(&name).to_string(),
+        name,
         levelno: level as i32,
-        levelname: get_level_name(level).to_string(),
-        pathname: "".to_string(),
-        filename: "".to_string(),
-        module: "".to_string(),
+        levelname: level.as_str().to_string(),
+        pathname: String::new(),
+        filename: String::new(),
+        module: String::new(),
         lineno: 0,
-        func_name: "".to_string(),
+        func_name: String::new(),
         created,
         msecs,
         relative_created: 0.0,
-        thread: thread_numeric_id,
+        thread: cached_thread_id(),
         thread_name,
-        process_name: "".to_string(),
-        process: std::process::id(),
+        process_name: String::new(),
+        process: cached_process_id(),
         msg,
         args: None,
         exc_info: None,
@@ -438,6 +442,28 @@ pub fn create_log_record_with_extra(
         task_name: None,
         extra,
     }
+}
+
+thread_local! {
+    static THREAD_ID_CACHE: u64 = {
+        let dbg = format!("{:?}", thread::current().id());
+        dbg.trim_start_matches("ThreadId(")
+            .trim_end_matches(')')
+            .parse::<u64>()
+            .unwrap_or(0)
+    };
+}
+
+#[inline]
+fn cached_thread_id() -> u64 {
+    THREAD_ID_CACHE.with(|id| *id)
+}
+
+static PROCESS_ID: OnceLock<u32> = OnceLock::new();
+
+#[inline]
+fn cached_process_id() -> u32 {
+    *PROCESS_ID.get_or_init(std::process::id)
 }
 
 impl Logger {

@@ -18,26 +18,20 @@ Both LogXide and Loguru aim to improve upon Python's standard `logging` module, 
 
 ## Performance: Handler-by-Handler Benchmark
 
-All benchmarks run on macOS ARM64 (Apple Silicon), Python 3.12 / 3.14, averaged across 3 runs.
-Handler-by-handler benchmarks use 10,000 iterations (`basic_handlers_benchmark.py`); File I/O scenario benchmarks (Simple / Structured / Error Logging) use 100,000 iterations (`compare_loggers.py`).
+All benchmarks run on macOS ARM64 (Apple Silicon), **Python 3.12**, averaged across 3 runs of 10,000 iterations (`benchmark/basic_handlers_benchmark.py`). Same Python version, same harness, same format string for all libraries.
 
 LogXide drops the GIL immediately and delegates formatting and I/O to Rust-native `BufWriter` (file) or crossbeam channels (stream/HTTP), avoiding Python overhead entirely.
 
-### Performance Summary
+### Performance Summary (Python 3.12)
 
-| Handler Type | Python `logging` | Loguru | LogXide | LogXide vs stdlib | LogXide vs Loguru |
-|--------------|------------------|--------|---------|-------------------|-------------------|
-| **FileHandler** | 153,356 Ops/sec | 140,912 Ops/sec | **281,741 Ops/sec** | **1.8x faster** | **2.0x faster** |
-| **StreamHandler** | 8,009 Ops/sec | 5,447 Ops/sec | **48,488 Ops/sec** | **6.0x faster** | **8.9x faster** |
-| **RotatingFileHandler** | 65,438 Ops/sec | **117,720 Ops/sec** | 105,844 Ops/sec | **1.6x faster** | 10% slower |
-| **TimedRotatingFileHandler** | 52,140 Ops/sec | ⚠️ (via `rotation=` param) | **98,210 Ops/sec** | **1.8x faster** | N/A |
-| **Simple Logging** ¹ | 153,356 Ops/sec | 140,912 Ops/sec | **281,741 Ops/sec** | **1.8x faster** | **2.0x faster** |
-| **Structured Logging** | N/A | ~133,000 Ops/sec | **266,242 Ops/sec** | N/A | **2.0x faster** |
-| **Error Logging** | N/A | ~128,000 Ops/sec | **251,238 Ops/sec** | N/A | **2.0x faster** |
+| Handler                      | Python `logging` |  Loguru | LogXide               | vs stdlib         | vs Loguru           |
+| :--------------------------- | ---------------: | ------: | --------------------: | :---------------- | :------------------ |
+| **FileHandler**              |          145,260 |  93,896 | **1,139,874 Ops/sec** | **7.85× faster**  | **12.14× faster**   |
+| **StreamHandler**            |           17,006 |  10,391 |   **955,112 Ops/sec** | **56.16× faster** | **91.92× faster**   |
+| **RotatingFileHandler**      |           55,579 |  85,203 |   **897,118 Ops/sec** | **16.14× faster** | **10.53× faster**   |
+| **TimedRotatingFileHandler** |    (via stdlib)  | (via `rotation=`) | **(native)**         | LogXide-only      | LogXide-only        |
 
-*Test environment: macOS ARM64 (Apple Silicon), Python 3.12 / 3.14*
-
-*¹ Simple Logging uses FileHandler; numbers are identical to the FileHandler row (same test scenario, 100K iterations).*
+*Same Python 3.12 runtime for all three libraries; format string `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"` for stdlib and LogXide, equivalent format for Loguru. Loguru's RotatingFileHandler is its built-in `rotation="1 MB"` option.*
 
 ---
 

@@ -23,29 +23,30 @@
 //! providing both flexibility and reasonable performance for log formatting.
 
 use chrono::TimeZone;
+use std::cell::RefCell;
+use std::fmt::Write;
 
-/// Trait for converting log records to formatted strings.
-///
-/// Formatters are responsible for converting LogRecord structs into
-/// human-readable string representations. They must be thread-safe
-/// as they may be used concurrently across multiple threads.
-///
-/// # Design Principles
-///
-/// - **Thread Safety**: All formatters must implement Send + Sync
-/// - **Performance**: Formatting should be efficient as it's called for every log record
-/// - **Flexibility**: Support for different output formats and customization
+thread_local! {
+    /// Re-used scratch buffer for format() — keeps capacity across calls so
+    /// each format call only pays a single bounded `String::clone` instead of
+    /// growing a fresh allocation from zero. Cleared on entry, cloned on exit.
+    static FMT_SCRATCH: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
 pub trait Formatter: Send + Sync {
-    /// Format a log record into a string.
-    ///
-    /// # Arguments
-    ///
-    /// * `record` - The log record to format, as a reference to a LogRecord struct.
-    ///
-    /// # Returns
-    ///
-    /// A formatted string representation of the log record.
     fn format(&self, record: &crate::core::LogRecord) -> String;
+}
+
+/// Sentinel formatter used as the default in handlers so the formatter slot can be
+/// stored in an `ArcSwap<dyn Formatter>` without an `Option` wrapper. Returning the
+/// raw record message keeps `handler.emit()` lock-free on the read path while
+/// matching the previous "no formatter set" behaviour exactly.
+pub struct NoOpFormatter;
+
+impl Formatter for NoOpFormatter {
+    fn format(&self, record: &crate::core::LogRecord) -> String {
+        record.get_message()
+    }
 }
 
 /// Simple default formatter with basic log information.
@@ -189,47 +190,41 @@ impl PythonFormatter {
 /// Provides comprehensive Python logging format string support with regex-based
 /// pattern matching for advanced formatting features like padding and alignment.
 impl Formatter for PythonFormatter {
-    /// Format a log record using Python-style format strings.
-    ///
-    /// Processes the format string to replace all %(field)s placeholders with
-    /// corresponding values from the log record. Supports advanced features like
-    /// padding, alignment, and custom date formatting.
-    ///
-    /// # Arguments
-    ///
-    /// * `record` - The log record to format
-    ///
-    /// # Returns
-    ///
-    /// Formatted string with all placeholders replaced
-    ///
-    /// # Performance
-    ///
-    /// Uses a single-pass O(N) parser to perform field formatting with zero regex
-    /// and zero sequential allocations. All values are formatted directly into the
-    /// pre-allocated output buffer.
     fn format(&self, record: &crate::core::LogRecord) -> String {
+        FMT_SCRATCH.with(|cell| {
+            // Reentrancy guard: a record's `__str__` may recursively trigger a
+            // log call on the same thread while we still hold the scratch
+            // buffer. Fall back to a fresh allocation rather than panicking on
+            // RefCell::borrow_mut().
+            if let Ok(mut result) = cell.try_borrow_mut() {
+                result.clear();
+                self.format_into(record, &mut result);
+                result.clone()
+            } else {
+                let mut result = String::with_capacity(self.format_string.len() + 128);
+                self.format_into(record, &mut result);
+                result
+            }
+        })
+    }
+}
+
+impl PythonFormatter {
+    fn format_into(&self, record: &crate::core::LogRecord, result: &mut String) {
         let format_str = &self.format_string;
-        let mut result = String::with_capacity(format_str.len() + 128);
+        if result.capacity() < format_str.len() + 128 {
+            result.reserve(format_str.len() + 128 - result.capacity());
+        }
 
-        // Pre-compute asctime
-        let datetime = chrono::Local
-            .timestamp_opt(record.created as i64, (record.msecs * 1_000_000.0) as u32)
-            .single()
-            .unwrap_or_else(chrono::Local::now);
-
-        let asctime = if let Some(ref date_fmt) = self.date_format {
-            datetime.format(date_fmt).to_string()
-        } else {
-            datetime.format("%Y-%m-%d %H:%M:%S").to_string()
-        };
+        let date_format = self.date_format.as_deref();
+        let mut asctime_cache: Option<String> = None;
 
         let mut chars = format_str.char_indices().peekable();
         while let Some(&(_, c)) = chars.peek() {
             if c == '%' {
-                chars.next(); // Consume '%'
+                chars.next();
                 if let Some(&(_, '(')) = chars.peek() {
-                    chars.next(); // Consume '('
+                    chars.next();
 
                     let mut name_start = None;
                     if let Some(&(idx, _)) = chars.peek() {
@@ -240,7 +235,7 @@ impl Formatter for PythonFormatter {
                     while let Some(&(idx, ch)) = chars.peek() {
                         if ch == ')' {
                             closing_idx = Some(idx);
-                            chars.next(); // Consume ')'
+                            chars.next();
                             break;
                         }
                         chars.next();
@@ -271,35 +266,60 @@ impl Formatter for PythonFormatter {
                             }
                         }
 
-                        // Consume the format type specifier (s, d, f, etc.)
                         if let Some(&(_, _)) = chars.peek() {
                             chars.next();
                         }
 
-                        let val_str = match field_name {
-                            "ansi_level_color" => {
-                                ansi_colors::get_level_color(&record.levelname).to_string()
+                        let mut int_buf = itoa::Buffer::new();
+                        let owned: String;
+
+                        let val_str: &str = match field_name {
+                            "ansi_level_color" => ansi_colors::get_level_color(&record.levelname),
+                            "ansi_reset_color" => ansi_colors::RESET,
+                            "levelname" => &record.levelname,
+                            "threadName" => &record.thread_name,
+                            "name" => &record.name,
+                            "msecs" => int_buf.format(record.msecs as i32),
+                            "levelno" => int_buf.format(record.levelno),
+                            "pathname" => &record.pathname,
+                            "filename" => &record.filename,
+                            "module" => &record.module,
+                            "lineno" => int_buf.format(record.lineno),
+                            "funcName" => &record.func_name,
+                            "thread" => int_buf.format(record.thread),
+                            "processName" => &record.process_name,
+                            "process" => int_buf.format(record.process),
+                            "message" => {
+                                owned = record.get_message();
+                                &owned
                             }
-                            "ansi_reset_color" => ansi_colors::RESET.to_string(),
-                            "levelname" => record.levelname.to_string(),
-                            "threadName" => record.thread_name.to_string(),
-                            "name" => record.name.to_string(),
-                            "msecs" => (record.msecs as i32).to_string(),
-                            "levelno" => record.levelno.to_string(),
-                            "pathname" => record.pathname.to_string(),
-                            "filename" => record.filename.to_string(),
-                            "module" => record.module.to_string(),
-                            "lineno" => record.lineno.to_string(),
-                            "funcName" => record.func_name.to_string(),
-                            "created" => record.created.to_string(),
-                            "relativeCreated" => record.relative_created.to_string(),
-                            "thread" => record.thread.to_string(),
-                            "processName" => record.process_name.to_string(),
-                            "process" => record.process.to_string(),
-                            "message" => record.get_message(),
-                            "asctime" => asctime.clone(),
+                            "created" => {
+                                owned = record.created.to_string();
+                                &owned
+                            }
+                            "relativeCreated" => {
+                                owned = record.relative_created.to_string();
+                                &owned
+                            }
+                            "asctime" => {
+                                let s = asctime_cache.get_or_insert_with(|| {
+                                    let datetime = chrono::Local
+                                        .timestamp_opt(
+                                            record.created as i64,
+                                            (record.msecs * 1_000_000.0) as u32,
+                                        )
+                                        .single()
+                                        .unwrap_or_else(chrono::Local::now);
+                                    if let Some(date_fmt) = date_format {
+                                        datetime.format(date_fmt).to_string()
+                                    } else {
+                                        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+                                    }
+                                });
+                                s.as_str()
+                            }
                             other => {
-                                if let Some(ref extra_fields) = record.extra {
+                                owned = if let Some(ref extra_fields) = record.extra {
                                     if let Some(value) = extra_fields.get(other) {
                                         match value {
                                             serde_json::Value::String(s) => s.clone(),
@@ -311,20 +331,19 @@ impl Formatter for PythonFormatter {
                                     }
                                 } else {
                                     format!("%({other})")
-                                }
+                                };
+                                &owned
                             }
                         };
 
-                        if width > 0 {
-                            if left_align {
-                                result.push_str(&format!("{val_str:<width$}"));
-                            } else if zero_pad {
-                                result.push_str(&format!("{val_str:0>width$}"));
-                            } else {
-                                result.push_str(&format!("{val_str:>width$}"));
-                            }
+                        if width == 0 {
+                            result.push_str(val_str);
+                        } else if left_align {
+                            let _ = write!(result, "{val_str:<width$}");
+                        } else if zero_pad {
+                            let _ = write!(result, "{val_str:0>width$}");
                         } else {
-                            result.push_str(&val_str);
+                            let _ = write!(result, "{val_str:>width$}");
                         }
                     } else {
                         result.push('%');
@@ -338,13 +357,10 @@ impl Formatter for PythonFormatter {
             }
         }
 
-        // Append exc_text if present (traceback from exception())
         if let Some(ref exc_text) = record.exc_text {
             result.push('\n');
             result.push_str(exc_text);
         }
-
-        result
     }
 }
 

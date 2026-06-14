@@ -3,7 +3,7 @@
 //! This module contains global registries, thread-local storage,
 //! and module-level utility functions.
 
-use parking_lot::RwLock;
+use arc_swap::ArcSwap;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use std::cell::RefCell;
@@ -23,9 +23,9 @@ use crate::py_handlers::{
 };
 use crate::py_logger::PyLogger;
 
-/// Global registry of log handlers.
-pub static HANDLERS: Lazy<RwLock<Vec<Arc<dyn Handler + Send + Sync>>>> =
-    Lazy::new(|| RwLock::new(Vec::new()));
+/// Global registry of log handlers (lock-free reads via ArcSwap).
+pub static HANDLERS: Lazy<ArcSwap<Vec<Arc<dyn Handler + Send + Sync>>>> =
+    Lazy::new(|| ArcSwap::from_pointee(Vec::new()));
 
 /// Global flag indicating if caller frame introspection is required by any formatter/handler
 pub static CALLER_INFO_REQUIRED: AtomicBool = AtomicBool::new(false);
@@ -100,13 +100,22 @@ pub fn basicConfig(_py: Python, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult
 
 #[pyfunction]
 pub fn flush(py: Python) -> PyResult<()> {
-    let handlers: Vec<Arc<dyn Handler + Send + Sync>> = { HANDLERS.read().clone() };
+    let handlers_guard = HANDLERS.load();
+    let handlers: Vec<Arc<dyn Handler + Send + Sync>> = handlers_guard.iter().cloned().collect();
     py.detach(|| {
         for h in handlers.iter() {
             h.flush();
         }
     });
     Ok(())
+}
+
+/// Append a handler to the global registry via copy-on-write.
+pub fn push_handler(h: Arc<dyn Handler + Send + Sync>) {
+    let current = HANDLERS.load();
+    let mut new_vec: Vec<Arc<dyn Handler + Send + Sync>> = current.iter().cloned().collect();
+    new_vec.push(h);
+    HANDLERS.store(Arc::new(new_vec));
 }
 
 #[pyfunction]
@@ -137,13 +146,13 @@ pub fn register_http_handler(
         OverflowStrategy::DropOldest,
     ));
     h.set_level(LogLevel::from_usize(level.unwrap_or(20) as usize));
-    HANDLERS.write().push(h);
+    push_handler(h);
     Ok(())
 }
 
 #[pyfunction]
 pub fn clear_handlers(_py: Python) -> PyResult<()> {
-    HANDLERS.write().clear();
+    HANDLERS.store(Arc::new(Vec::new()));
     Ok(())
 }
 
@@ -175,7 +184,7 @@ pub fn register_file_handler(
         handler.set_formatter_instance(Arc::new(formatter));
     }
 
-    HANDLERS.write().push(Arc::new(handler));
+    push_handler(Arc::new(handler));
     Ok(())
 }
 
@@ -198,7 +207,7 @@ pub fn register_rotating_file_handler(
     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
 
     handler.set_level(log_level);
-    HANDLERS.write().push(Arc::new(handler));
+    push_handler(Arc::new(handler));
     Ok(())
 }
 
@@ -242,7 +251,7 @@ pub fn register_stream_handler(
             if let Some(ref f) = formatter {
                 handler.set_formatter_instance(f.clone());
             }
-            HANDLERS.write().push(Arc::new(handler));
+            push_handler(Arc::new(handler));
         } else {
             // For Python file-like objects, we use stderr as fallback
             // since we don't have PythonStreamHandler anymore
@@ -251,7 +260,7 @@ pub fn register_stream_handler(
             if let Some(ref f) = formatter {
                 handler.set_formatter_instance(f.clone());
             }
-            HANDLERS.write().push(Arc::new(handler));
+            push_handler(Arc::new(handler));
         }
     } else {
         // Default to stderr
@@ -260,7 +269,7 @@ pub fn register_stream_handler(
         if let Some(ref f) = formatter {
             handler.set_formatter_instance(f.clone());
         }
-        HANDLERS.write().push(Arc::new(handler));
+        push_handler(Arc::new(handler));
     }
 
     Ok(())
@@ -308,7 +317,7 @@ pub fn add_handler_to_registry(
 
     if let Some(h) = handler_arc {
         if logger_name == "root" {
-            HANDLERS.write().push(h);
+            push_handler(h);
         } else {
             local_handlers.lock().unwrap().push(h);
         }

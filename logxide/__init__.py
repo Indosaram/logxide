@@ -179,6 +179,17 @@ PyLogger = logxide.logging.PyLogger
 Logger = PyLogger
 LogRecord = logxide.logging.LogRecord
 
+try:
+    from .sentry_integration import (
+        SentryHandler as SentryHandler,
+    )
+    from .sentry_integration import (
+        auto_configure_sentry as auto_configure_sentry,
+    )
+except ImportError:
+    SentryHandler = None
+    auto_configure_sentry = None
+
 if "pytest" not in sys.modules and "PYTEST_CURRENT_TEST" not in os.environ:
     _install()
     sys.modules["logging"] = logging

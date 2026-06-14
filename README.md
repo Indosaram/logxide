@@ -1,6 +1,6 @@
 # LogXide
 
-**Up to 2.7x faster Python logging, powered by Rust.**
+**Up to 13× faster Python logging, powered by Rust.**
 
 Same stdlib API. Same `getLogger`. Same format strings. Just faster.
 
@@ -10,7 +10,7 @@ import logging                        from logxide import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('myapp')
-logger.info('Hello, world!')          # Up to 2.7x faster. Same code.
+logger.info('Hello, world!')          # Up to 13× faster. Same code.
 ```
 
 [![PyPI](https://img.shields.io/pypi/v/logxide)](https://pypi.org/project/logxide/)
@@ -31,20 +31,30 @@ pip install logxide[sentry]
 
 ## Performance
 
-Real-world file logging benchmarks (Python 3.12, 100K iterations):
+FileHandler benchmark, Python 3.12, 100K iterations, format `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`, stdlib runs in a subprocess for fair isolation:
 
-| Scenario | LogXide | Picologging (C) ¹ | stdlib logging | vs Pico | vs stdlib |
-|----------|---------|-------------------|----------------|---------|-----------|
-| Simple | 446,135 ops/s | 372,020 ops/s | 157,220 ops/s | **+20%** | **+184%** |
-| Structured | 412,235 ops/s | 357,193 ops/s | 153,547 ops/s | **+15%** | **+168%** |
-| Error | 426,294 ops/s | 361,053 ops/s | 155,332 ops/s | **+18%** | **+174%** |
+| Scenario              |   LogXide |  stdlib | Speedup     |
+| :-------------------- | --------: | ------: | :---------- |
+| Simple                | 1,922,911 | 145,562 | **13.21×**  |
+| Structured (f-string) | 1,612,029 | 144,328 | **11.17×**  |
+| With `%s` args        |   976,572 | 144,156 | **6.77×**   |
 
-¹ *Picologging is Cython-based and only supports Python 3.12 or older (incompatible with 3.13+).*
+Same Python 3.12 across all libraries (10K iterations, `basic_handlers_benchmark.py`):
 
-> ℹ️ **Benchmark Methodology Context**:
-> - **Python Versions & GIL**: Standard benchmarks are run across Python 3.12 and 3.14. Under Python 3.14, LogXide's basic handler tests (10K iterations) show a **1.8x to 6.0x speedup** over stdlib handlers.
-> - **Caller-Info Introspection**: Picologging synthetically inflates its throughput by skipping caller frame extraction (`sys._getframe`), which Python stdlib requires. LogXide performs safe, fully compatible frame introspection when needed, while still maintaining high performance.
-> - For a complete analysis and detailed handler-by-handler metrics, see [Full Benchmarks](docs/benchmarks.md) and [Picologging Comparison](docs/comparison-picologging.md).
+| Library         |   Ops/sec | vs stdlib |
+| :-------------- | --------: | :-------- |
+| **LogXide**     | **1,139,874** | **7.85×** |
+| Structlog       |   932,755 | 6.42×     |
+| Picologging (C) |   384,319 | 2.65×     |
+| stdlib          |   145,260 | 1.0×      |
+| Logbook         |    99,538 | 0.69×     |
+| Loguru          |    93,896 | 0.65×     |
+
+> **Picologging note**: Cython-based, supports Python 3.12 only (incompatible with 3.13+). Picologging skips `sys._getframe()` caller-frame extraction; LogXide performs full stdlib-compatible introspection on every record where the format string requires it.
+
+> **Python 3.14**: LogXide is also faster (4.25–7.23× vs stdlib), though the absolute gap narrows because stdlib's per-iteration overhead is lower under 3.14. See [docs/benchmarks.md](docs/benchmarks.md#python-314) for the full Python 3.14 table.
+
+For per-handler latency, internal optimization wave breakdown, and historical comparison data, see [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Works With
 

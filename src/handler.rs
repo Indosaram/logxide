@@ -12,12 +12,15 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::core::{LogLevel, LogRecord};
 use crate::filter::Filter;
-use crate::formatter::Formatter;
+use crate::formatter::{Formatter, NoOpFormatter};
+
+fn default_formatter() -> Arc<dyn Formatter + Send + Sync> {
+    Arc::new(NoOpFormatter)
+}
 
 pub trait Handler: Send + Sync {
     fn emit(&self, record: &LogRecord);
@@ -43,7 +46,7 @@ pub struct StreamHandler {
     flush_signal: crossbeam_channel::Sender<()>,
     flush_done: crossbeam_channel::Receiver<()>,
     level: AtomicU8,
-    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
+    formatter: parking_lot::Mutex<Arc<dyn Formatter + Send + Sync>>,
 }
 
 impl StreamHandler {
@@ -88,7 +91,7 @@ impl StreamHandler {
             flush_signal: flush_tx,
             flush_done: done_rx,
             level: AtomicU8::new(LogLevel::Debug as u8),
-            formatter: Mutex::new(None),
+            formatter: parking_lot::Mutex::new(default_formatter()),
         }
     }
 
@@ -125,16 +128,12 @@ impl StreamHandler {
     /// Set a formatter for this handler.
     /// Thread-safe: can be called while the handler is in use.
     pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        *self.formatter.lock().unwrap() = Some(formatter);
+        *self.formatter.lock() = formatter;
     }
 
     /// Format a record using the configured formatter, or return the raw message.
     fn format_record(&self, record: &LogRecord) -> String {
-        if let Some(ref formatter) = *self.formatter.lock().unwrap() {
-            formatter.format(record)
-        } else {
-            record.get_message()
-        }
+        self.formatter.lock().format(record)
     }
 }
 
@@ -154,7 +153,7 @@ impl Handler for StreamHandler {
     }
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        *self.formatter.lock().unwrap() = Some(formatter);
+        *self.formatter.lock() = formatter;
     }
 
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
@@ -165,20 +164,20 @@ impl Handler for StreamHandler {
 // ============================================================================
 
 pub struct FileHandler {
-    writer: Mutex<BufWriter<File>>,
+    writer: parking_lot::Mutex<BufWriter<File>>,
     level: AtomicU8,
     flush_level: AtomicU8,
-    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
+    formatter: parking_lot::Mutex<Arc<dyn Formatter + Send + Sync>>,
 }
 
 impl FileHandler {
     pub fn new<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let f = OpenOptions::new().create(true).append(true).open(path)?;
         Ok(Self {
-            writer: Mutex::new(BufWriter::new(f)),
+            writer: parking_lot::Mutex::new(BufWriter::new(f)),
             level: AtomicU8::new(LogLevel::Debug as u8),
             flush_level: AtomicU8::new(LogLevel::Error as u8),
-            formatter: Mutex::new(None),
+            formatter: parking_lot::Mutex::new(default_formatter()),
         })
     }
 
@@ -202,16 +201,12 @@ impl FileHandler {
 
     /// Set a formatter for this handler.
     pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        *self.formatter.lock().unwrap() = Some(formatter);
+        *self.formatter.lock() = formatter;
     }
 
     /// Format a record using the configured formatter, or return the raw message.
     fn format_record(&self, record: &LogRecord) -> String {
-        if let Some(ref formatter) = *self.formatter.lock().unwrap() {
-            formatter.format(record)
-        } else {
-            record.get_message()
-        }
+        self.formatter.lock().format(record)
     }
 }
 
@@ -222,7 +217,7 @@ impl Handler for FileHandler {
             return;
         }
         let output = self.format_record(record);
-        let mut w = self.writer.lock().unwrap();
+        let mut w = self.writer.lock();
         if let Err(e) = writeln!(w, "{output}") {
             eprintln!("[LogXide Error] FileHandler write failed: {e}");
         }
@@ -234,11 +229,11 @@ impl Handler for FileHandler {
     }
 
     fn flush(&self) {
-        let _ = self.writer.lock().unwrap().flush();
+        let _ = self.writer.lock().flush();
     }
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        *self.formatter.lock().unwrap() = Some(formatter);
+        *self.formatter.lock() = formatter;
     }
 
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
@@ -249,14 +244,14 @@ impl Handler for FileHandler {
 // ============================================================================
 
 pub struct RotatingFileHandler {
-    writer: Mutex<BufWriter<File>>,
+    writer: parking_lot::Mutex<BufWriter<File>>,
     filename: PathBuf,
     max_bytes: u64,
     backup_count: u32,
     current_size: std::sync::atomic::AtomicU64,
     level: AtomicU8,
     flush_level: AtomicU8,
-    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
+    formatter: parking_lot::Mutex<Arc<dyn Formatter + Send + Sync>>,
 }
 
 impl RotatingFileHandler {
@@ -268,14 +263,14 @@ impl RotatingFileHandler {
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         Ok(Self {
-            writer: Mutex::new(BufWriter::new(file)),
+            writer: parking_lot::Mutex::new(BufWriter::new(file)),
             filename: path,
             max_bytes,
             backup_count,
             current_size: std::sync::atomic::AtomicU64::new(initial_size),
             level: AtomicU8::new(LogLevel::Debug as u8),
             flush_level: AtomicU8::new(LogLevel::Error as u8),
-            formatter: Mutex::new(None),
+            formatter: parking_lot::Mutex::new(default_formatter()),
         })
     }
 
@@ -295,7 +290,7 @@ impl RotatingFileHandler {
 
     /// Set a formatter for this handler.
     pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        *self.formatter.lock().unwrap() = Some(formatter);
+        *self.formatter.lock() = formatter;
     }
 
     /// Set an error callback for this handler.
@@ -303,11 +298,7 @@ impl RotatingFileHandler {
 
     /// Format a record using the configured formatter, or return the raw message.
     fn format_record(&self, record: &LogRecord) -> String {
-        if let Some(ref formatter) = *self.formatter.lock().unwrap() {
-            formatter.format(record)
-        } else {
-            record.get_message()
-        }
+        self.formatter.lock().format(record)
     }
 
     /// Generate backup filename for given index (e.g., app.log.1, app.log.2)
@@ -384,7 +375,7 @@ impl Handler for RotatingFileHandler {
         let output = self.format_record(record);
         let message_bytes = output.len() as u64 + 1;
 
-        let mut w = self.writer.lock().unwrap();
+        let mut w = self.writer.lock();
 
         // Check rotation
         let cur = self.current_size.load(Ordering::Relaxed);
@@ -412,11 +403,11 @@ impl Handler for RotatingFileHandler {
     }
 
     fn flush(&self) {
-        let _ = self.writer.lock().unwrap().flush();
+        let _ = self.writer.lock().flush();
     }
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        *self.formatter.lock().unwrap() = Some(formatter);
+        *self.formatter.lock() = formatter;
     }
 
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}
@@ -1012,34 +1003,34 @@ impl Handler for OTLPHandler {
 /// - `get_text()` - Returns all captured messages as a single string
 /// - `get_record_tuples()` - Returns (logger_name, level, message) tuples
 pub struct MemoryHandler {
-    records: Arc<Mutex<Vec<LogRecord>>>,
+    records: Arc<parking_lot::Mutex<Vec<LogRecord>>>,
     level: AtomicU8,
-    formatter: Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
+    formatter: parking_lot::Mutex<Option<Arc<dyn Formatter + Send + Sync>>>,
 }
 
 impl MemoryHandler {
     pub fn new() -> Self {
         Self {
-            records: Arc::new(Mutex::new(Vec::new())),
+            records: Arc::new(parking_lot::Mutex::new(Vec::new())),
             level: AtomicU8::new(LogLevel::Debug as u8),
-            formatter: Mutex::new(None),
+            formatter: parking_lot::Mutex::new(None),
         }
     }
 
     /// Returns all captured log records.
     pub fn get_records(&self) -> Vec<LogRecord> {
-        self.records.lock().unwrap().clone()
+        self.records.lock().clone()
     }
 
     /// Returns all captured log messages as a single newline-separated string.
     /// Uses the formatter if set, otherwise returns raw messages.
     pub fn get_text(&self) -> String {
-        let records = self.records.lock().unwrap();
-        let formatter = self.formatter.lock().unwrap();
+        let records = self.records.lock();
+        let formatter_guard = self.formatter.lock();
         records
             .iter()
             .map(|r| {
-                if let Some(ref fmt) = *formatter {
+                if let Some(ref fmt) = *formatter_guard {
                     fmt.format(r)
                 } else {
                     let mut s = format!("{} {} {}\n", r.name, r.levelname, r.get_message());
@@ -1057,7 +1048,6 @@ impl MemoryHandler {
     pub fn get_record_tuples(&self) -> Vec<(String, i32, String)> {
         self.records
             .lock()
-            .unwrap()
             .iter()
             .map(|r| (r.name.clone(), r.levelno, r.get_message()))
             .collect()
@@ -1065,7 +1055,7 @@ impl MemoryHandler {
 
     /// Clear all captured records.
     pub fn clear(&self) {
-        self.records.lock().unwrap().clear();
+        self.records.lock().clear();
     }
 
     pub fn set_level(&self, level: LogLevel) {
@@ -1075,13 +1065,14 @@ impl MemoryHandler {
     /// Set a formatter for this handler.
     /// Thread-safe: can be called while the handler is in use.
     pub fn set_formatter_instance(&self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        *self.formatter.lock().unwrap() = Some(formatter);
+        *self.formatter.lock() = Some(formatter);
     }
 
     /// Format a record using the configured formatter, or return the raw message.
     #[allow(dead_code)]
     fn format_record(&self, record: &LogRecord) -> String {
-        if let Some(ref formatter) = *self.formatter.lock().unwrap() {
+        let guard = self.formatter.lock();
+        if let Some(ref formatter) = *guard {
             formatter.format(record)
         } else {
             record.get_message()
@@ -1095,13 +1086,13 @@ impl Handler for MemoryHandler {
         if record.levelno < level as i32 {
             return;
         }
-        self.records.lock().unwrap().push(record.clone());
+        self.records.lock().push(record.clone());
     }
 
     fn flush(&self) {}
 
     fn set_formatter(&mut self, formatter: Arc<dyn Formatter + Send + Sync>) {
-        *self.formatter.lock().unwrap() = Some(formatter);
+        *self.formatter.lock() = Some(formatter);
     }
 
     fn add_filter(&mut self, _: Arc<dyn Filter + Send + Sync>) {}

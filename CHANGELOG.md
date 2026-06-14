@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-06-15
+
+### Performance
+- **Release profile tuning**: Added `[profile.release]` with `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = "symbols"`. Enables cross-crate inlining throughout the hot path.
+- **Lock-free handler registry**: Replaced the global `parking_lot::RwLock<Vec<Arc<Handler>>>` with `arc_swap::ArcSwap<Vec<Arc<Handler>>>`. Reads on every record dispatch are now lock-free; registration uses copy-on-write through a `push_handler` helper.
+- **Lock-free formatter slot**: Each handler now stores its formatter in `parking_lot::Mutex<Arc<dyn Formatter>>` with a `NoOpFormatter` sentinel as the default, eliminating the per-emit `Mutex<Option<...>>` branch.
+- **Zero-allocation formatter hot path**: `PythonFormatter::format` now uses `itoa::Buffer` for integer fields and `write!` macros for padding, removing `to_string()` and `format!()` allocations from every record. Asctime is computed lazily only when `%(asctime)s` appears in the format string.
+- **Thread-local formatter scratch buffer**: Reuses a per-thread `String` across calls (capacity is preserved between records). Includes a `try_borrow_mut()` reentrancy guard for recursive logging triggered by user-defined `__str__`.
+- **`chrono::Utc::now()` in record creation**: Removes the per-record timezone lookup; the `created` field is timezone-independent epoch seconds. Local-time conversion happens lazily inside the formatter only when needed.
+- **Cached thread/process IDs**: Thread ID is parsed from `ThreadId` Debug format once per thread via `thread_local!`. Process ID is cached via `OnceLock`. Eliminates per-record `format!()` + `parse::<u64>()` round-trip and `process::id()` syscall.
+- **Const `LogLevel::as_str()`**: Returns `&'static str` (`"DEBUG"`, `"INFO"`, ...) for level names, replacing the self-defeating string interning cache.
+- **Caller-info batched via Python helper**: New `_get_caller_info()` in `logxide.compat_functions` returns `(filename, funcName, lineno)` from a single `_getframe` call. Rust caches the helper in `OnceLock<Py<PyAny>>`, replacing 6+ `getattr` round-trips per record. Activated only when `CALLER_INFO_REQUIRED` is set by the format string.
+- **`LogRecord.args` zero-copy storage**: Field type changed from `Option<String>` (JSON-encoded) to `Option<Arc<serde_json::Value>>`. Eliminates `serde_json::to_string` on write and `serde_json::from_str` on read for every record carrying `%`-args.
+- **`parking_lot::Mutex` on hot-path locks**: Replaced `std::sync::Mutex` for `BufWriter`, formatter slot, and record buffer.
+
+### Removed
+- **Dead `regex` dependency**: removed `regex = "1.5"` from `Cargo.toml`. The formatter has used a single-pass parser since 0.1.19.
+- **Dead `string_cache` module**: deleted `src/string_cache.rs`. The intern cache returned `Arc<str>` immediately followed by `.to_string()` at every call site, allocating regardless and defeating the cache.
+
+### Wire format
+- **HTTP/OTLP `args` field**: Now serialized as the actual JSON value (e.g. `"args": ["alice", 42]`) rather than as a JSON-encoded string (`"args": "[\"alice\", 42]"`). Receivers that decoded the field as a string will see structured data; receivers that already JSON-decoded the entire payload will see no escape change. No tests in this repository depended on the previous escaped-string form.
+
+### Benchmarks
+LogXide self-throughput (Python 3.14, macOS arm64, FileHandler + `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"` formatter, 200K iter × 5 runs):
+
+| Scenario              | v0.1.19 baseline | Unreleased | Gain    |
+| :-------------------- | ---------------: | ---------: | :------ |
+| FileHandler info()    |          720,099 |  1,357,691 | **+88.5%** |
+| MemoryHandler info()  |          394,227 |    513,373 | +30.2%  |
+| Filtered debug NOOP   |          24.3M   |    28.2M   | +15.9%  |
+| info() with `%s` args |          280,473 |    357,320 | +27.4%  |
+| FileHandler 4 threads |          299,841 |    388,971 | +29.8%  |
+
+Versus Python stdlib `logging` (subprocess, 100K iter × 3 runs, FileHandler):
+
+| Scenario   | logxide   | stdlib    | speedup    |
+| :--------- | --------: | --------: | :--------- |
+| simple     | 1,228,811 |   182,533 | **6.73×** |
+| structured | 1,064,164 |   177,366 | **6.00×** |
+| args       |   750,129 |   176,633 | **4.25×** |
+
 ## [0.1.19] - 2026-05-27
 
 ### Performance

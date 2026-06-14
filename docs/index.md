@@ -1,6 +1,6 @@
 # Welcome to LogXide
 
-LogXide is a high-performance logging library for Python, delivering exceptional performance through its native Rust implementation. It provides a familiar logging API but prioritizes **performance over full compatibility**.
+LogXide is a high-performance logging library for Python, delivering up to **13× the throughput of stdlib `logging`** through its native Rust implementation. It is API-compatible with Python's standard `logging` module for the common patterns (`getLogger`, `basicConfig`, `dictConfig`, format strings) — drop in `from logxide import logging` and most code keeps working unchanged.
 
 ## Documentation
 
@@ -22,22 +22,24 @@ LogXide is a high-performance logging library for Python, delivering exceptional
 
 ## Key Features
 
-- **High Performance**: Rust-powered logging with exceptional throughput
-- **Familiar API**: Similar to Python's logging module (not a drop-in replacement)
-- **Thread-Safe**: Complete support for multi-threaded applications
+- **High Performance**: Rust-powered logging with up to 13× the throughput of stdlib (Python 3.12, FileHandler simple scenario)
+- **Familiar API**: stdlib-compatible for the common patterns; one-line migration from `import logging`
+- **Thread-Safe**: Complete support for multi-threaded applications via Rust `parking_lot::Mutex` + `arc_swap::ArcSwap`
 - **Direct Processing**: Efficient log message processing with native Rust handlers (file I/O synchronous, stream/HTTP/OTLP non-blocking)
 - **Rich Formatting**: All Python logging format specifiers with advanced features
 - **Level Filtering**: Hierarchical logger levels with inheritance
 - **Sentry Integration**: Automatic error tracking with Sentry (optional)
+- **Native OpenTelemetry**: Built-in OTLP handler for shipping logs to any OTLP-compatible backend
 
-## ⚠️ Important: Not a Drop-in Replacement
+## ⚠️ Compatibility Caveats
 
-LogXide is **NOT** a drop-in replacement for Python's logging module. Key limitations:
+LogXide prioritizes performance over full stdlib compatibility. Before adopting, note:
 
-- **Rust handlers only**: `addHandler()` accepts only LogXide's Rust handlers
-- **No custom Python handlers**: `logging.Handler` subclasses are rejected
-- **No subclassing**: `LogRecord` and `Logger` are Rust types
-- **No pytest caplog**: Use `caplog_logxide` fixture instead
+- **Custom Python handlers via `addHandler()`** — Accepted, but they run alongside the Rust pipeline (records may be processed twice) and do not benefit from the zero-GIL Rust path
+- **Subclassing** — `LogRecord` and `Logger` are Rust types and cannot be subclassed
+- **pytest** — Use the bundled `caplog_logxide` fixture instead of stdlib `caplog`
+
+For the complete compatibility matrix, see [Compatibility](compatibility.md).
 
 ## Installation
 

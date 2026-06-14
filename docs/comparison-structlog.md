@@ -18,21 +18,24 @@ Structlog focuses on **structured/context-rich logging**, while LogXide focuses 
 
 ## Performance: Handler-by-Handler Benchmark
 
-All benchmarks run on macOS ARM64 (Apple Silicon), Python 3.12 / 3.14, averaged across 3 runs.
-Handler-by-handler benchmarks use 10,000 iterations (`basic_handlers_benchmark.py`); File I/O scenario benchmarks (Simple / Structured / Error Logging) use 100,000 iterations (`compare_loggers.py`).
+All benchmarks run on macOS ARM64 (Apple Silicon), **Python 3.12**, averaged across 3 runs of 10,000 iterations (`benchmark/basic_handlers_benchmark.py`).
 
 LogXide drops the GIL immediately and delegates formatting and I/O to Rust-native `BufWriter` (file) or crossbeam channels (stream/HTTP), avoiding Python overhead entirely.
 
-### Performance Summary
+> **Methodology note**: Structlog's `FileHandler` test uses `ProcessorFormatter` wrapping `ConsoleRenderer` with `fmt="%(message)s"`. LogXide is benchmarked against the more demanding stdlib-style `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"` format, so structlog's column is on a slightly easier path. Even so, LogXide is faster.
 
-| Handler / Scenario | Structlog | LogXide | LogXide vs Structlog |
-|--------------------|-----------|---------|----------------------|
-| **FileHandler (Raw I/O)** | ~98,000 Ops/sec | **281,741 Ops/sec** | **2.8x faster** |
-| **Simple Logging** | 122,995 Ops/sec | **281,741 Ops/sec** | **2.2x faster** |
-| **Structured Logging** | 96,546 Ops/sec | **266,242 Ops/sec** | **2.7x faster** |
-| **Error Logging** | ~85,000 Ops/sec | **251,238 Ops/sec** | **2.9x faster** |
+### Performance Summary (Python 3.12)
 
-*\*Note: Structlog relies on Python's stdlib for actual file output, so its theoretical maximum is capped by stdlib throughput, minus the overhead of its JSON/Console render processors. LogXide bypasses this completely via Rust `BufWriter`.*
+| Handler             |   Structlog | LogXide               | Speedup           |
+| :------------------ | ----------: | --------------------: | :---------------- |
+| **FileHandler**     |     932,755 | **1,139,874 Ops/sec** | **1.22× faster**  |
+| **StreamHandler**   |     920,069 |   **955,112 Ops/sec** | **1.04× faster**  |
+| **Simple Logging**  |     932,755 | **1,922,911 Ops/sec** ¹ | **2.06× faster**  |
+| **with `%s` args**  |     ~932K   |   **976,572 Ops/sec** ¹ | comparable        |
+
+¹ *Simple/args figures from `benchmark/perf_vs_stdlib.py` (100K iterations × 3 runs). Structlog is approximated from FileHandler since it doesn't have a separate "args" path.*
+
+*Structlog relies on Python's stdlib for actual file output, so its theoretical maximum is capped by stdlib throughput, minus the overhead of its JSON/Console render processors. LogXide bypasses this completely via Rust `BufWriter`.*
 
 ---
 
@@ -71,7 +74,7 @@ For the complete compatibility matrix, see [Compatibility](compatibility.md).
 ## When to Use Which
 
 ### Choose LogXide when:
-- **Performance is the priority** — 2.2–2.9x faster across real-world scenarios, leveraging Rust to bypass the GIL.
+- **Performance is the priority** — 1.2–2× faster than Structlog on file/stream I/O on Python 3.12, leveraging Rust to bypass the GIL.
 - **You have existing stdlib code** — Minimal migration cost; API-compatible for common patterns.
 - **You need native production handlers** — Async HTTP batching, OTLP export, and native Sentry integration without Python-side overhead.
 - **Framework integration** — Transparently hooks into Django/FastAPI `dictConfig`.

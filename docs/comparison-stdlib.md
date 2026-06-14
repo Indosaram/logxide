@@ -18,22 +18,37 @@ LogXide is a **highly compatible, high-performance alternative** to Python's sta
 
 ## Performance: Handler-by-Handler Benchmark
 
-All benchmarks run on macOS ARM64 (Apple Silicon), Python 3.12 / 3.14, averaged across 3 runs.
-Handler-by-handler benchmarks use 10,000 iterations (`basic_handlers_benchmark.py`); File I/O scenario benchmarks (Simple / Structured / Error Logging) use 100,000 iterations (`compare_loggers.py`).
+All benchmarks run on macOS ARM64 (Apple Silicon), Python 3.12, averaged across 3 runs of 10,000 iterations (`benchmark/basic_handlers_benchmark.py`). Format string `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"` for both libraries.
 
 LogXide drops the GIL immediately and delegates formatting and I/O to Rust-native `BufWriter` (file) or crossbeam channels (stream/HTTP), avoiding Python overhead entirely.
 
-### Performance Summary
+### Performance Summary (Python 3.12)
 
-| Handler / Scenario | Python `logging` | LogXide | LogXide vs stdlib |
-|--------------------|------------------|---------|-------------------|
-| **FileHandler** | 153,356 Ops/sec | **281,741 Ops/sec** | **1.8x faster** |
-| **StreamHandler** | 8,009 Ops/sec | **48,488 Ops/sec** | **6.0x faster** |
-| **RotatingFileHandler** | 65,438 Ops/sec | **105,844 Ops/sec** | **1.6x faster** |
-| **TimedRotatingFileHandler**| 52,140 Ops/sec | **98,210 Ops/sec** | **1.8x faster** |
-| **Simple Logging** | 153,356 Ops/sec | **281,741 Ops/sec** | **1.8x faster** |
-| **Structured Logging** | N/A | **266,242 Ops/sec** | N/A |
-| **Error Logging** | N/A | **251,238 Ops/sec** | N/A |
+| Handler                    | Python `logging` | LogXide               | Speedup        |
+| :------------------------- | ---------------: | --------------------: | :------------- |
+| **FileHandler**            |  145,260 Ops/sec | **1,139,874 Ops/sec** | **7.85× faster** |
+| **StreamHandler**          |   17,006 Ops/sec |   **955,112 Ops/sec** | **56.16× faster** |
+| **RotatingFileHandler**    |   55,579 Ops/sec |   **897,118 Ops/sec** | **16.14× faster** |
+
+### File I/O Scenarios (100,000 iterations, subprocess-isolated stdlib)
+
+Methodology: `benchmark/perf_vs_stdlib.py`, 100K iterations × 3 runs. stdlib runs in a subprocess so LogXide's `logging` module override does not affect it.
+
+| Scenario   | Python `logging` |     LogXide | Speedup       |
+| :--------- | ---------------: | ----------: | :------------ |
+| simple     |  145,562 Ops/sec | **1,922,911** | **13.21× faster** |
+| structured |  144,328 Ops/sec | **1,612,029** | **11.17× faster** |
+| with `%s` args | 144,156 Ops/sec |   **976,572** | **6.77× faster** |
+
+### Python 3.14
+
+LogXide is also faster on Python 3.14, though the absolute gap narrows because stdlib's per-iteration overhead is lower under 3.14:
+
+| Handler                 | stdlib (3.14) | LogXide (3.14)        | Speedup       |
+| :---------------------- | ------------: | --------------------: | :------------ |
+| **FileHandler**         |       170,332 | **1,231,079 Ops/sec** | **7.23× faster** |
+| **StreamHandler**       |        12,206 |   **932,489 Ops/sec** | **76.40× faster** |
+| **RotatingFileHandler** |        99,296 |   **910,023 Ops/sec** | **9.16× faster** |
 
 ---
 

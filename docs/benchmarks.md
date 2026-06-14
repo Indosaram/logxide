@@ -8,7 +8,48 @@ This document provides comprehensive performance analysis of LogXide compared to
 - **Python**: 3.12.12 / 3.14.2
 - **Test Methodology**: Multiple runs (3 iterations) with averages, garbage collection between tests
 - **Libraries Tested**: LogXide, Picologging, Structlog
-- **Test Date**: December 30, 2024 (external), March 19, 2026 (internal)
+- **Test Date**: December 30, 2024 (external), March 19, 2026 (internal), June 12, 2026 (Unreleased)
+
+## Unreleased Optimization Pass (June 12, 2026)
+
+The next release introduces a series of hot-path optimizations measured against the v0.1.19 baseline. Methodology: `benchmark/perf_micro.py`, 200K iterations × 5 runs, FileHandler with formatter `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`, Python 3.14 on macOS arm64, release build with `lto = "fat"` and `codegen-units = 1`.
+
+### Self-Throughput (vs prior LogXide release)
+
+| Scenario              | v0.1.19 baseline | Unreleased | Δ        |
+| :-------------------- | ---------------: | ---------: | :------- |
+| FileHandler info()    |          720,099 |  1,357,691 | **+88.5%** |
+| MemoryHandler info()  |          394,227 |    513,373 | +30.2%   |
+| Filtered debug NOOP   |          24.3M   |    28.2M   | +15.9%   |
+| info() with `%s` args |          280,473 |    357,320 | +27.4%   |
+| FileHandler 4 threads |          299,841 |    388,971 | +29.8%   |
+
+### vs Python stdlib `logging`
+
+Methodology: `benchmark/perf_vs_stdlib.py`, 100K iterations × 3 runs, FileHandler. stdlib runs in a subprocess to avoid LogXide's interceptor overriding `logging.Logger`.
+
+| Scenario   |     LogXide |     stdlib | Speedup    |
+| :--------- | ----------: | ---------: | :--------- |
+| simple     |   1,228,811 |    182,533 | **6.73×**  |
+| structured |   1,064,164 |    177,366 | **6.00×**  |
+| args       |     750,129 |    176,633 | **4.25×**  |
+
+### Optimization Wave Breakdown
+
+| Wave  | Change                                                                 | Primary impact            |
+| :---- | :--------------------------------------------------------------------- | :------------------------ |
+| **0** | `[profile.release]` with `lto = "fat"`, `codegen-units = 1`            | +7-12% across all paths   |
+| **1** | `arc_swap::ArcSwap<Vec<Arc<Handler>>>` for global handler registry     | Lock-free emit dispatch   |
+| **2** | `parking_lot::Mutex<Arc<dyn Formatter>>` + `NoOpFormatter` sentinel    | Removes per-emit Option branch |
+| **3** | `itoa::Buffer` + `write!` macros + lazy asctime in `PythonFormatter`   | Zero-alloc numeric fields |
+| **4** | `chrono::Utc::now()` in record creation                                | Skips TZ lookup           |
+| **5** | Thread-local cached `thread_id`, `OnceLock` cached `process_id`        | Removes per-record syscalls |
+| **A** | Thread-local `FMT_SCRATCH` buffer with reentrancy guard                | Capacity reuse on format() |
+| **B** | `LogLevel::as_str() -> &'static str`, removed self-defeating intern cache | Removes Arc<str>->String round-trip |
+| **C** | Batched caller-info via cached `_get_caller_info()` Python helper      | 6+ getattr calls → 1      |
+| **D** | `LogRecord.args`: `Option<String>` (JSON) → `Option<Arc<Value>>`       | Removes JSON encode/decode round-trip per record |
+
+The largest single contributor is Wave D (args round-trip removal) for the `info() with %s args` path, and the combined Wave 2+3+A bundle for the `FileHandler info()+formatter` path.
 
 ## Internal Handler Benchmarks
 
@@ -23,13 +64,15 @@ Low-level `emit()` latency and throughput measurements for each handler type.
 | RotatingFileHandler | 67ns | 83ns | 84ns | 15.0M |
 | MemoryHandler | 67ns | 83ns | 84ns | 15.0M |
 
-### Throughput (100K messages via `logger.info`)
+### Throughput (200K messages via `logger.info`, Unreleased build)
 
-| Handler | Messages | Time | Msgs/sec |
-|---------|----------|------|----------|
-| FileHandler | 100,000 | 0.298s | 335,069 |
-| RotatingFileHandler | 100,000 | 2.163s | 46,240 |
-| MemoryHandler | 100,000 | 0.345s | 289,504 |
+Methodology: `benchmark/perf_micro.py`, FileHandler with `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"` format, Python 3.14, 5 runs:
+
+| Handler | Messages | Ops/sec |
+|---------|---------:|--------:|
+| FileHandler (with formatter) | 200,000 | **1,357,691** |
+| MemoryHandler | 200,000 |   513,373 |
+| FileHandler (4 threads, 100K total) | 100,000 |   388,971 |
 
 ### flush() Latency (1K calls)
 
@@ -39,87 +82,75 @@ Low-level `emit()` latency and throughput measurements for each handler type.
 
 !!! note "Handler I/O Strategy"
     - **StreamHandler**: crossbeam channel + background thread (non-blocking emit)
-    - **FileHandler / RotatingFileHandler**: synchronous direct write (Mutex + BufWriter)
+    - **FileHandler / RotatingFileHandler**: synchronous direct write (parking_lot::Mutex + BufWriter)
     - **HTTPHandler / OTLPHandler**: crossbeam channel + background thread (batched)
-    - **MemoryHandler**: synchronous Vec::push
+    - **MemoryHandler**: synchronous Vec::push under parking_lot::Mutex
 
-## File I/O Benchmarks (Real-World Performance)
+## Comparative Benchmark — All Logging Libraries (Python 3.12, June 2026)
 
-These benchmarks test actual file I/O operations with realistic formatting, representing real-world production usage scenarios.
+These benchmarks run all libraries through the **same harness** (`benchmark/basic_handlers_benchmark.py`, 10,000 iterations × 3 runs, format `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`) on Python 3.12, the highest version Picologging supports. This is the apples-to-apples reference measurement.
 
-### Test Configuration
+### FileHandler
 
-- **Iterations**: 100,000 log messages per test
-- **Handler**: FileHandler writing to temporary files
-- **Format**: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
-- **Test Runs**: 3 iterations per scenario, averaged
-- **Scenarios**: Simple logging, Structured logging, Error logging
+| Rank | Library         |   Ops/sec | Relative to LogXide |
+| :--- | :-------------- | --------: | :------------------ |
+| 1    | **LogXide**     | **1,139,874** | 1.00× (baseline)   |
+| 2    | Structlog       |   932,755 | 0.82×              |
+| 3    | Picologging     |   384,319 | 0.34× (LogXide 2.97× faster) |
+| 4    | Python `logging`|   145,260 | 0.13× (LogXide 7.85× faster) |
+| 5    | Logbook         |    99,538 | 0.09× (LogXide 11.45× faster) |
+| 6    | Loguru          |    93,896 | 0.08× (LogXide 12.14× faster) |
 
-### Simple Logging Performance
+### StreamHandler
 
-*Test: 100,000 messages with simple string formatting*
+| Rank | Library         |   Ops/sec | Relative to LogXide |
+| :--- | :-------------- | --------: | :------------------ |
+| 1    | **LogXide**     | **955,112** | 1.00× (baseline)   |
+| 2    | Structlog       |   920,069 | 0.96×              |
+| 3    | Python `logging`|    17,006 | 0.02× (LogXide 56.16× faster) |
+| 4    | Loguru          |    10,391 | 0.01× (LogXide 91.92× faster) |
 
-| Rank | Library | Ops/sec | Avg Time (s) | Relative Performance |
-|------|---------|---------|--------------|---------------------|
-| 1st | **LogXide** | **439,913** | 0.227 | **Fastest** |
-| 2nd | Picologging | 352,800 | 0.283 | 1.25x slower |
-| 3rd | Structlog | 179,948 | 0.556 | 2.44x slower |
+### RotatingFileHandler
 
-### Structured Logging Performance
+| Rank | Library         |   Ops/sec | Relative to LogXide |
+| :--- | :-------------- | --------: | :------------------ |
+| 1    | **LogXide**     | **897,118** | 1.00× (baseline)   |
+| 2    | Picologging ¹   |   411,055 | 0.46× (LogXide 2.18× faster) |
+| 3    | Loguru          |    85,203 | 0.09× (LogXide 10.53× faster) |
+| 4    | Python `logging`|    55,579 | 0.06× (LogXide 16.14× faster) |
 
-*Test: 100,000 messages with structured context (key-value pairs)*
+¹ *Picologging has no `RotatingFileHandler`; the harness substitutes its `FileHandler` in this row.*
 
-| Rank | Library | Ops/sec | Avg Time (s) | Relative Performance |
-|------|---------|---------|--------------|---------------------|
-| 1st | **LogXide** | **416,242** | 0.240 | **Fastest** |
-| 2nd | Picologging | 371,144 | 0.269 | 1.12x slower |
-| 3rd | Structlog | 165,936 | 0.603 | 2.51x slower |
+## File I/O Scenarios — vs stdlib `logging` (subprocess-isolated)
 
-### Error Logging Performance
+Methodology: `benchmark/perf_vs_stdlib.py`, 100,000 iterations × 3 runs, FileHandler with the same standard format. stdlib runs in a subprocess so LogXide's import-time module override doesn't pollute the measurement.
 
-*Test: 100,000 error messages with exception context*
+### Python 3.12
 
-| Rank | Library | Ops/sec | Avg Time (s) | Relative Performance |
-|------|---------|---------|--------------|---------------------|
-| 1st | **LogXide** | **411,238** | 0.243 | **Fastest** |
-| 2nd | Picologging | 353,487 | 0.283 | 1.16x slower |
-| 3rd | Structlog | 170,498 | 0.587 | 2.41x slower |
+| Scenario   | stdlib `logging` |     LogXide | Speedup       |
+| :--------- | ---------------: | ----------: | :------------ |
+| simple     |          145,562 | **1,922,911** | **13.21× faster** |
+| structured |          144,328 | **1,612,029** | **11.17× faster** |
+| with `%s` args |      144,156 |   **976,572** | **6.77× faster** |
 
-### Key Findings
+### Python 3.14
 
-All numbers in this section refer to the **file-I/O benchmark methodology described above** (FileHandler, 100K iterations, the `%(asctime)s - %(name)s - %(levelname)s - %(message)s` format, averaged across 3 runs). They should not be generalized to other handlers, formats, or workloads.
+| Scenario   | stdlib `logging` |     LogXide | Speedup       |
+| :--------- | ---------------: | ----------: | :------------ |
+| simple     |          182,533 | **1,228,811** | **6.73× faster** |
+| structured |          177,366 | **1,064,164** | **6.00× faster** |
+| with `%s` args |      176,633 |   **750,129** | **4.25× faster** |
 
-**LogXide Performance Advantages (file-I/O methodology):**
-- **12-25% faster** than Picologging across all real I/O scenarios in this benchmark
-- **2.4-2.5x faster** than Structlog in the same file-I/O scenarios
-- Consistent performance across the simple / structured / error patterns tested here
-- Rust's native I/O and memory management provide measurable advantages on this path
+LogXide is faster on both versions; stdlib's per-iteration overhead dropped on 3.14, narrowing the absolute gap. The Python 3.12 simple-logging scenario remains the best-case headline figure.
 
-**Detailed Comparison (file-I/O methodology):**
-- **Simple Logging**: LogXide 25% faster than Picologging
-- **Structured Logging**: LogXide 12% faster than Picologging (smallest gap)
-- **Error Logging**: LogXide 16% faster than Picologging
-- **Overall**: LogXide maintains its advantage across the file-I/O scenarios in this document
+### Why LogXide is faster
 
-## Performance Analysis Summary
-
-### Real-World Usage (File I/O)
-
-**Winner: LogXide** - Clear performance leader in production scenarios
-
-| Scenario | LogXide | Picologging | Performance Gap |
-|----------|---------|-------------|-----------------|
-| Simple Logging | 439,913 ops/sec | 352,800 ops/sec | **LogXide 25% faster** |
-| Structured Logging | 416,242 ops/sec | 371,144 ops/sec | **LogXide 12% faster** |
-| Error Logging | 411,238 ops/sec | 353,487 ops/sec | **LogXide 16% faster** |
-
-### Why LogXide is Faster
-
-1. **Native Rust I/O**: Direct system calls without Python overhead
-2. **Efficient Memory Management**: Rust's zero-cost abstractions and ownership model
-3. **Optimized Formatting**: Native string formatting faster than Python's
-4. **Better Buffering**: Rust's BufWriter provides optimal buffer management
-5. **No GIL Overhead**: Native code execution without Global Interpreter Lock impact
+1. **Native Rust I/O**: Direct `BufWriter` syscalls without Python overhead
+2. **Zero-allocation formatter hot path**: `itoa::Buffer` + `write!` macros + lazy asctime
+3. **Thread-local format scratch buffer**: Capacity is reused across calls
+4. **Lock-free handler dispatch**: `arc_swap::ArcSwap` for the global handler registry
+5. **Cached caller-info via Python helper**: Single `_getframe(1)` call instead of 6 `getattr` round-trips
+6. **No JSON round-trip on `args`**: Stored as `Arc<serde_json::Value>` directly
 
 ## Historical Benchmarks (Legacy Results)
 
@@ -161,8 +192,8 @@ All numbers in this section refer to the **file-I/O benchmark methodology descri
 ### LogXide Advantages
 
 **1. Real I/O Operations**
-- 12-25% faster than Picologging in actual file writing
-- Rust's native I/O provides measurable performance gains
+- ~3× faster than Picologging on `FileHandler` and `RotatingFileHandler` (Python 3.12, same harness)
+- Rust's native `BufWriter` provides measurable performance gains
 - Efficient buffering and system call optimization
 
 **2. Consistent Performance**
@@ -237,31 +268,32 @@ python benchmark/compare_loggers.py
 
 **LogXide is the best choice for production Python applications:**
 
-1. **Proven Performance**: 12-25% faster than Picologging in real file I/O
+1. **Proven Performance**: ~3× faster than Picologging on `FileHandler` and `RotatingFileHandler`, ~13× faster than stdlib in the simple-logging file-I/O scenario (Python 3.12)
 2. **Real-World Testing**: Benchmarks based on actual file operations, not synthetic tests
 3. **Drop-in Replacement**: No code changes required, instant performance gains
 4. **Consistent Speed**: Maintains advantage across all logging patterns
 5. **Native Performance**: Rust's efficiency provides measurable benefits
 
-### Performance Summary Table
+### Performance Summary Table (Python 3.12, FileHandler, 10K iterations)
 
-| Scenario | LogXide | Picologging | Structlog | Winner |
-|----------|---------|-------------|-----------|---------|
-| **File I/O** | 411-440k ops/sec | 353-371k ops/sec | 166-180k ops/sec | **LogXide** |
-| **Simple Logging** | **439,913** ops/sec | 352,800 ops/sec | 179,948 ops/sec | **LogXide** |
-| **Structured Logging** | **416,242** ops/sec | 371,144 ops/sec | 165,936 ops/sec | **LogXide** |
-| **Error Logging** | **411,238** ops/sec | 353,487 ops/sec | 170,498 ops/sec | **LogXide** |
-| **Overall** | **Best** | Very Good | Good | **LogXide** |
+| Library         |   Ops/sec | Speedup vs stdlib |
+| :-------------- | --------: | :---------------- |
+| **LogXide**     | **1,139,874** | **7.85×**         |
+| Structlog       |   932,755 | 6.42×             |
+| Picologging     |   384,319 | 2.65×             |
+| Python `logging`|   145,260 | 1.0× (baseline)   |
+| Logbook         |    99,538 | 0.69×             |
+| Loguru          |    93,896 | 0.65×             |
 
 ### Key Takeaways
 
-1. **LogXide wins in real-world scenarios**: File I/O benchmarks show clear advantage
-2. **Performance gap is significant**: 12-25% faster is noticeable at scale
-3. **Rust advantage is real**: Native code provides measurable benefits over C (Picologging)
-4. **Consistent across patterns**: LogXide maintains advantage in simple, structured, and error logging
+1. **LogXide wins in real-world scenarios**: File I/O benchmarks show clear advantage on every comparison
+2. **Performance gap is significant**: 3× over Picologging, 7-13× over stdlib, 12× over Loguru
+3. **Rust advantage is real**: Native code provides measurable benefits over C (Picologging) and pure Python
+4. **Consistent across patterns**: LogXide maintains advantage in simple, structured, and `args` logging
 
 **LogXide delivers superior performance where it matters most: actual logging operations in production applications.**
 
 ---
 
-*Benchmarks conducted on macOS ARM64 with Python 3.12.12. Results may vary on different platforms but relative performance should be consistent.*
+*Benchmarks conducted on macOS ARM64 (Apple Silicon) with Python 3.12.0 (`pyenv`) and Python 3.14.2. Results may vary on different platforms but relative performance should be consistent.*

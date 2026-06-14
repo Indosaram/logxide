@@ -368,50 +368,69 @@ impl PyLogger {
     }
 
     /// Populate pathname, filename, lineno, func_name on record via Python frame introspection.
-    /// Uses sys._getframe(0) from Rust — which gives the last Python frame (the caller).
+    /// Uses a cached Python helper that returns (filename, funcName, lineno) in one call,
+    /// roughly halving the number of cross-language attribute lookups vs walking the frame
+    /// from Rust.
     fn populate_caller_info(py: Python, record: &mut LogRecord) {
         if !crate::globals::CALLER_INFO_REQUIRED.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
-        let Ok(sys) = py.import("sys") else { return };
-        // _getframe(0) from Rust returns the most recent Python frame,
-        // which is the frame that called logger.debug/info/etc.
-        let Ok(frame) = sys.call_method1("_getframe", (0i32,)) else {
+
+        static HELPER: std::sync::OnceLock<Py<PyAny>> = std::sync::OnceLock::new();
+        let helper = match HELPER.get() {
+            Some(h) => h,
+            None => match py
+                .import("logxide.compat_functions")
+                .and_then(|m| m.getattr("_get_caller_info"))
+            {
+                Ok(fun) => HELPER.get_or_init(|| fun.unbind()),
+                Err(_) => return,
+            },
+        };
+
+        let Ok(result) = helper.call0(py) else {
+            return;
+        };
+        let Ok((path, func_name, lineno)) = result.extract::<(String, String, u32)>(py) else {
             return;
         };
 
-        // Extract f_code.co_filename → pathname, filename
-        if let Ok(code) = frame.getattr("f_code") {
-            if let Ok(co_filename) = code.getattr("co_filename") {
-                if let Ok(path) = co_filename.extract::<String>() {
-                    // filename = basename of pathname
-                    let filename = path
-                        .rsplit_once(std::path::MAIN_SEPARATOR)
-                        .map(|(_, name)| name.to_string())
-                        .unwrap_or_else(|| path.clone());
-                    // module = filename without extension
-                    let module_name = filename
-                        .rsplit_once('.')
-                        .map(|(base, _)| base.to_string())
-                        .unwrap_or_else(|| filename.clone());
-                    record.pathname = path;
-                    record.filename = filename;
-                    record.module = module_name;
-                }
-            }
-            if let Ok(co_name) = code.getattr("co_name") {
-                if let Ok(func) = co_name.extract::<String>() {
-                    record.func_name = func;
-                }
-            }
-        }
+        let filename = path
+            .rsplit_once(std::path::MAIN_SEPARATOR)
+            .map(|(_, name)| name.to_string())
+            .unwrap_or_else(|| path.clone());
+        let module_name = filename
+            .rsplit_once('.')
+            .map(|(base, _)| base.to_string())
+            .unwrap_or_else(|| filename.clone());
 
-        // Extract f_lineno → lineno
-        if let Ok(lineno) = frame.getattr("f_lineno") {
-            if let Ok(line) = lineno.extract::<u32>() {
-                record.lineno = line;
+        record.pathname = path;
+        record.filename = filename;
+        record.module = module_name;
+        record.func_name = func_name;
+        record.lineno = lineno;
+    }
+}
+
+impl PyLogger {
+    fn serialize_args(&self, _py: Python, args: &Bound<PyAny>) -> Option<Arc<Value>> {
+        let args_tuple = match args.cast::<PyTuple>() {
+            Ok(t) if !t.is_empty() => t,
+            _ => return None,
+        };
+        // If args is a single dict (e.g., `log("%(key)s", {"key": "v"})`) unwrap it
+        // so that `msg % args` works correctly (dict, not tuple-of-dict).
+        let json_val = if args_tuple.len() == 1 {
+            let first = args_tuple.get_item(0).expect("Failed to get first arg");
+            if first.cast::<PyDict>().is_ok() {
+                py_to_json_value(&first)
+            } else {
+                py_to_json_value(args_tuple.as_any())
             }
-        }
+        } else {
+            py_to_json_value(args_tuple.as_any())
+        };
+        Some(Arc::new(json_val))
     }
 }
 
@@ -500,8 +519,8 @@ impl PyLogger {
 
         // 1. Handle Rust handlers
         if local_handlers.is_empty() {
-            let global_handlers: Vec<Arc<dyn Handler + Send + Sync>> = { HANDLERS.read().clone() };
-            for handler in global_handlers.iter() {
+            let global_guard = HANDLERS.load();
+            for handler in global_guard.iter() {
                 handler.emit(&record);
             }
         } else {
@@ -511,9 +530,8 @@ impl PyLogger {
 
             let should_propagate = *self.propagate.lock().unwrap();
             if should_propagate {
-                let global_handlers: Vec<Arc<dyn Handler + Send + Sync>> =
-                    { HANDLERS.read().clone() };
-                for handler in global_handlers.iter() {
+                let global_guard = HANDLERS.load();
+                for handler in global_guard.iter() {
                     handler.emit(&record);
                 }
             }
@@ -708,26 +726,6 @@ impl PyLogger {
         let mut filters = self.filters.lock().unwrap();
         filters.retain(|f| !f.bind(py).is(filter_obj));
         Ok(())
-    }
-
-    fn serialize_args(&self, _py: Python, args: &Bound<PyAny>) -> Option<String> {
-        let args_tuple = match args.cast::<PyTuple>() {
-            Ok(t) if !t.is_empty() => t,
-            _ => return None,
-        };
-        // If args is a single dict (e.g., `log("%(key)s", {"key": "v"})`) unwrap it
-        // so that `msg % args` works correctly (dict, not tuple-of-dict).
-        let json_val = if args_tuple.len() == 1 {
-            let first = args_tuple.get_item(0).expect("Failed to get first arg");
-            if first.cast::<PyDict>().is_ok() {
-                py_to_json_value(&first)
-            } else {
-                py_to_json_value(args_tuple.as_any())
-            }
-        } else {
-            py_to_json_value(args_tuple.as_any())
-        };
-        Some(serde_json::to_string(&json_val).expect("Failed to serialize args to JSON"))
     }
 
     #[pyo3(signature = (msg, *args, **kwargs))]

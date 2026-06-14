@@ -85,3 +85,18 @@ site/
 
 # Agent config (local only)
 AGENT.md
+
+# Tool caches
+.playwright-mcp/
+
+# Internal planning docs (not part of project deliverable)
+plan/
+
+# Marketing drafts (kept locally, not in repo) — root-anchored to avoid matching docs/assets/
+/linkedin-posts.md
+/blog-part*.md
+/blog-part*.png
+/cover-*.md
+/cover-*.html
+/devbull-*.png
+/logxide-repo-page.png

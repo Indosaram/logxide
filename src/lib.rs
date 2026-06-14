@@ -11,7 +11,6 @@ mod globals;
 pub mod handler;
 mod py_handlers;
 mod py_logger;
-mod string_cache;
 
 pub use core::{create_log_record_with_extra, LogLevel, LogRecord};
 pub use formatter::{ColorFormatter, Formatter, PythonFormatter};
