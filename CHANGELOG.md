@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-06-15
+
+### Security
+- **Upgraded `pyo3` from 0.28.2 to 0.29.0** to address two newly disclosed advisories:
+  - **RUSTSEC-2026-0176**: out-of-bounds read in `nth` / `nth_back` for `PyList` / `PyTuple` iterators.
+  - **RUSTSEC-2026-0177**: missing `Sync` bound on `PyCFunction::new_closure` closures (not used by LogXide, but the workspace audit failed regardless).
+  - Both advisories were published 2026-06-11, the day after the v0.1.20 release. v0.1.20 inherits the same upstream vulnerability surface; this release closes both.
+- The pyo3 0.28 → 0.29 upgrade was source-compatible (zero LogXide changes required).
+- `cargo audit` is now clean except for one allowed transitive `rand 0.8.5` advisory (RUSTSEC-2026-0097) reaching us via `opentelemetry-proto`'s tonic stack — unsoundness only manifests with a custom `rand::rng()` logger which LogXide does not configure.
+
+### Verification
+- 306/306 pytest cases still passing.
+- Microbenchmark throughput unchanged from v0.1.20 (statistical noise band):
+  - FileHandler info()+fmt: 1,324,414 ops/s
+  - MemoryHandler info(): 504,175 ops/s
+  - info() with `%s` args: 358,117 ops/s
+
 ## [0.1.20] - 2026-06-15
 
 ### Performance
