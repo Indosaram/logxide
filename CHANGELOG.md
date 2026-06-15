@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-06-15
+
+### Changed
+- **Python 3.15 support claim corrected (docs-only release)**. Previous releases (since v0.1.18) advertised "Python 3.15 fully tested and supported", but direct verification on Python 3.15.0a2 and 3.15.0a7 shows that the compiled extension fails to import at runtime with `ImportError: symbol not found in flat namespace '_PyType_FromSlots'`. The compiled binary references a CPython internal symbol that current 3.15 alpha builds do not export. Build succeeds; runtime `dlopen` fails.
+  - **README.md**: Compatibility section now lists 3.12 / 3.13 / 3.14 only and explicitly documents the 3.15 upstream `pyo3` ↔ Python 3.15-alpha ABI mismatch.
+  - **pyproject.toml**: removed `Programming Language :: Python :: 3.15` classifier.
+  - **`.github/workflows/ci.yml`**: removed `3.15-dev` from the test matrix and dropped the `continue-on-error` workaround. The matrix now reflects what we actually support.
+  - LogXide will re-enable 3.15 once a `pyo3` release ships with a 3.15-compatible ABI.
+- No source code changes. No behavior changes for 3.12 / 3.13 / 3.14.
+
 ## [0.1.21] - 2026-06-15
 
 ### Security
