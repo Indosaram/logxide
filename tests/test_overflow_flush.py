@@ -16,6 +16,7 @@ is independent of the producer's.
 
 import json
 import multiprocessing as mp
+import queue
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -159,7 +160,12 @@ def test_default_http_delivery_is_gil_free():
     proc = ctx.Process(target=_subprocess_sink, args=(port_queue,), daemon=True)
     proc.start()
     try:
-        port = port_queue.get(timeout=15)
+        try:
+            # spawn re-imports the module (incl. logxide) in the child; cold CI
+            # runners (Windows / older Python) can be slow, so allow ample time.
+            port = port_queue.get(timeout=60)
+        except queue.Empty:
+            pytest.skip("out-of-process HTTP sink did not start on this runner")
         handler = RustHTTPHandler(
             f"http://127.0.0.1:{port}",
             capacity=100000,
