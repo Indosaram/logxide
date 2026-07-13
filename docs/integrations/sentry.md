@@ -42,6 +42,9 @@ logger.debug("Debug messages are not sent to Sentry")
 
 That's it! No additional configuration needed.
 
+!!! note "Detection requires a configured SDK"
+    Auto-detection attaches a Sentry handler only when the Sentry SDK is **already configured** — that is, `sentry_sdk.init()` (or the equivalent environment variables) has run before you use LogXide. Merely having `sentry-sdk` installed but never initialized does **not** attach a Sentry handler. As of 0.2.0, importing an unconfigured Sentry SDK also no longer forces process-global caller-frame collection onto unrelated handlers, so logs whose format string does not need caller info stay on the fast path.
+
 ### Manual Handler Configuration
 
 For more control, you can manually configure the Sentry handler:
@@ -144,7 +147,8 @@ You can explicitly control Sentry integration:
 ```python
 from logxide import logging
 
-# Force enable Sentry (even if not configured)
+# Attach the Sentry handler explicitly. It only delivers events once a
+# Sentry SDK has been configured via sentry_sdk.init() or SENTRY_* env vars.
 logging.basicConfig(handlers=[SentryHandler()])
 
 # Note: If you need to disable Sentry integration for some reason,
@@ -467,7 +471,7 @@ sentry_sdk.init(
 
 LogXide's Sentry integration provides:
 
-- **Zero-configuration** automatic integration
+- **Automatic** integration once the Sentry SDK is configured
 - **Smart filtering** of log levels
 - **Rich context** capture
 - **Security-conscious** defaults

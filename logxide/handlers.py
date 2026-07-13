@@ -2,6 +2,7 @@
 Compatibility handlers for LogXide.
 """
 
+import contextlib
 import logging
 import logging.handlers
 import sys
@@ -9,7 +10,49 @@ import sys
 from . import logxide
 
 
-def _prepare_record_for_rust(record):
+def _translatable(fmt):
+    """Decide whether a Formatter can be rendered by the native Rust formatter.
+
+    Returns (ok, fmt_str, datefmt). ok is False for Formatter subclasses that
+    override format(), and for non-%(...) styles ({ or $), which fall back to
+    Python dispatch. Accepts BOTH stdlib logging.Formatter/PercentStyle and
+    logxide.compat_handlers variants by identity.
+    """
+    if fmt is None:
+        return (True, None, None)
+
+    from . import compat_handlers as _compat
+
+    allowed_format: set[object] = {_compat.Formatter.format}
+    allowed_style: set[object] = {_compat.PercentStyle}
+    with contextlib.suppress(AttributeError):
+        allowed_format.add(logging.Formatter.format)
+    with contextlib.suppress(AttributeError):
+        allowed_style.add(logging.PercentStyle)
+
+    if type(fmt).format not in allowed_format:
+        return (False, None, None)
+
+    style = getattr(fmt, "_style", None)
+    if style is not None:
+        # stdlib-shaped Formatter: _style is a PercentStyle/StrFormatStyle/... object.
+        if type(style) not in allowed_style:
+            return (False, None, None)
+        fmt_str = (
+            getattr(fmt, "_fmt", None) or getattr(style, "_fmt", None) or "%(message)s"
+        )
+    else:
+        # compat_handlers.Formatter: .style is the "%"/"{"/"$" character.
+        if getattr(fmt, "style", "%") != "%":
+            return (False, None, None)
+        fmt_str = (
+            getattr(fmt, "fmt", None) or getattr(fmt, "_fmt", None) or "%(message)s"
+        )
+
+    return (True, fmt_str, getattr(fmt, "datefmt", None))
+
+
+def _prepare_record_for_rust(record, native=False):
     # Rust expects an instance of the logxide.logging.LogRecord pyclass.
     # We construct a native Rust-backed LogRecord and populate its fields.
 
@@ -34,13 +77,20 @@ def _prepare_record_for_rust(record):
 
     func_name = getattr(record, "funcName", "") or getattr(record, "func_name", "")
 
+    # Native fast path forwards the RAW template + original args so the Rust formatter
+    # renders %(message)s / %(asctime)s / extras. The pre-format path already set
+    # record.msg = self.format(record) and record.args = None before calling us.
+    # Mirror stdlib's `if self.args:` guard so an empty tuple is not passed as args
+    # (which would attempt `template % ()`).
+    native_args = record.args if (native and record.args) else None
+
     rust_record = logxide.logging.LogRecord(
         record.name,
         record.levelno,
         record.pathname or "",
         record.lineno or 0,
         str(record.msg),
-        None,  # We pre-format with self.format(record), so args can be None
+        native_args,
         exc_info_str,
         func_name,
         getattr(record, "stack_info", None),
@@ -96,23 +146,48 @@ class FileHandler(logging.FileHandler):
     def __init__(self, filename, mode="a", encoding=None, delay=False, errors=None):
         # Initialize inner handler first (before parent creates file handle)
         self._inner = logxide.FileHandler(filename)
+        self._native = True
         super().__init__(filename, mode, encoding, delay, errors)
         # Close parent's file handle since we use Rust handler
         if hasattr(self, "stream") and self.stream:
             self.stream.close()
             self.stream = None
+        self._recompute_native()
+
+    def _recompute_native(self):
+        ok, fmt_str, datefmt = _translatable(self.formatter)
+        if ok and not self.filters:
+            self._inner.setFormatterSpec(fmt_str, datefmt)
+            self._native = True
+        else:
+            self._inner.setPythonDispatch()
+            self._native = False
 
     def setLevel(self, level):
         super().setLevel(level)
         self._inner.setLevel(level)
 
+    def setFormatter(self, fmt):
+        super().setFormatter(fmt)
+        self._recompute_native()
+
+    def addFilter(self, filter):
+        super().addFilter(filter)
+        self._recompute_native()
+
+    def removeFilter(self, filter):
+        super().removeFilter(filter)
+        self._recompute_native()
+
     def emit(self, record):
         try:
-            if self.formatter:
-                record.msg = self.format(record)
-                record.args = None
-            rust_record = _prepare_record_for_rust(record)
-            self._inner.emit(rust_record)
+            if self._native:
+                self._inner.emit(_prepare_record_for_rust(record, native=True))
+            else:
+                if self.formatter:
+                    record.msg = self.format(record)
+                    record.args = None
+                self._inner.emit(_prepare_record_for_rust(record))
         except Exception:
             self.handleError(record)
 
@@ -142,21 +217,46 @@ class FileHandler(logging.FileHandler):
 
 class StreamHandler(logging.StreamHandler):
     def __init__(self, stream=None):
-        super().__init__(stream)
         target = "stdout" if stream is sys.stdout else "stderr"
         self._inner = logxide.StreamHandler(target)
+        self._native = True
+        super().__init__(stream)
+        self._recompute_native()
+
+    def _recompute_native(self):
+        ok, fmt_str, datefmt = _translatable(self.formatter)
+        if ok and not self.filters:
+            self._inner.setFormatterSpec(fmt_str, datefmt)
+            self._native = True
+        else:
+            self._inner.setPythonDispatch()
+            self._native = False
 
     def setLevel(self, level):
         super().setLevel(level)
         self._inner.setLevel(level)
 
+    def setFormatter(self, fmt):
+        super().setFormatter(fmt)
+        self._recompute_native()
+
+    def addFilter(self, filter):
+        super().addFilter(filter)
+        self._recompute_native()
+
+    def removeFilter(self, filter):
+        super().removeFilter(filter)
+        self._recompute_native()
+
     def emit(self, record):
         try:
-            if self.formatter:
-                record.msg = self.format(record)
-                record.args = None
-            rust_record = _prepare_record_for_rust(record)
-            self._inner.emit(rust_record)
+            if self._native:
+                self._inner.emit(_prepare_record_for_rust(record, native=True))
+            else:
+                if self.formatter:
+                    record.msg = self.format(record)
+                    record.args = None
+                self._inner.emit(_prepare_record_for_rust(record))
         except Exception:
             self.handleError(record)
 
@@ -180,23 +280,48 @@ class RotatingFileHandler(logging.handlers.RotatingFileHandler):
     ):
         # Initialize inner handler first (before parent creates file handle)
         self._inner = logxide.RotatingFileHandler(filename, maxBytes, backupCount)
+        self._native = True
         super().__init__(filename, mode, maxBytes, backupCount, encoding, delay)
         # Close parent's file handle since we use Rust handler
         if hasattr(self, "stream") and self.stream:
             self.stream.close()
             self.stream = None
+        self._recompute_native()
+
+    def _recompute_native(self):
+        ok, fmt_str, datefmt = _translatable(self.formatter)
+        if ok and not self.filters:
+            self._inner.setFormatterSpec(fmt_str, datefmt)
+            self._native = True
+        else:
+            self._inner.setPythonDispatch()
+            self._native = False
 
     def setLevel(self, level):
         super().setLevel(level)
         self._inner.setLevel(level)
 
+    def setFormatter(self, fmt):
+        super().setFormatter(fmt)
+        self._recompute_native()
+
+    def addFilter(self, filter):
+        super().addFilter(filter)
+        self._recompute_native()
+
+    def removeFilter(self, filter):
+        super().removeFilter(filter)
+        self._recompute_native()
+
     def emit(self, record):
         try:
-            if self.formatter:
-                record.msg = self.format(record)
-                record.args = None
-            rust_record = _prepare_record_for_rust(record)
-            self._inner.emit(rust_record)
+            if self._native:
+                self._inner.emit(_prepare_record_for_rust(record, native=True))
+            else:
+                if self.formatter:
+                    record.msg = self.format(record)
+                    record.args = None
+                self._inner.emit(_prepare_record_for_rust(record))
         except Exception:
             self.handleError(record)
 
@@ -251,6 +376,7 @@ class HTTPHandler(logging.Handler):
         transform_callback=None,
         context_provider=None,
         error_callback=None,
+        overflow="block",
     ):
         super().__init__()
         self._inner = logxide.HTTPHandler(
@@ -263,6 +389,7 @@ class HTTPHandler(logging.Handler):
             transform_callback=transform_callback,
             context_provider=context_provider,
             error_callback=error_callback,
+            overflow=overflow,
         )
 
     def setLevel(self, level):
@@ -285,6 +412,14 @@ class HTTPHandler(logging.Handler):
     def close(self):
         self._inner.shutdown()
         super().close()
+
+    def get_metrics(self):
+        """
+        Return delivery accounting for this handler.
+
+        Keys: emitted, sink_acknowledged, queue_dropped, delivery_failed, in_flight.
+        """
+        return self._inner.get_metrics()
 
     def setFlushLevel(self, level):
         """
@@ -321,10 +456,11 @@ class OTLPHandler(logging.Handler):
         url,
         service_name,
         headers=None,
+        overflow="block",
     ):
         super().__init__()
         self._inner = logxide.OTLPHandler(
-            url=url, service_name=service_name, headers=headers
+            url=url, service_name=service_name, headers=headers, overflow=overflow
         )
 
     def setLevel(self, level):
@@ -348,6 +484,14 @@ class OTLPHandler(logging.Handler):
         self._inner.shutdown()
         super().close()
 
+    def get_metrics(self):
+        """
+        Return delivery accounting for this handler.
+
+        Keys: emitted, sink_acknowledged, queue_dropped, delivery_failed, in_flight.
+        """
+        return self._inner.get_metrics()
+
 
 class MemoryHandler(logging.Handler):
     """
@@ -370,11 +514,8 @@ class MemoryHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            if self.formatter:
-                record.msg = self.format(record)
-                record.args = None
-            rust_record = _prepare_record_for_rust(record)
-            self._inner.emit(rust_record)
+            # MemoryHandler is always native: forward raw; caplog reads _inner.
+            self._inner.emit(_prepare_record_for_rust(record, native=True))
         except Exception:
             self.handleError(record)
 

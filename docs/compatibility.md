@@ -2,7 +2,7 @@
 
 LogXide is a **high-performance logging library** with a familiar API inspired by Python's standard `logging` module. It delivers significant performance improvements through its Rust native core, prioritizing speed over perfect compatibility.
 
-For common use cases, LogXide provides a highly compatible experience. Standard patterns like `getLogger()`, `basicConfig()`, `dictConfig`, and built-in handlers work with minimal or no code changes. However, LogXide is **not a drop-in replacement** for every stdlib logging scenario. Its Zero-GIL architecture means some advanced patterns, particularly those involving custom Python subclasses or deep monkeypatching, are not supported.
+For common use cases, LogXide provides a highly compatible experience. Standard patterns like `getLogger()`, `basicConfig()`, `dictConfig`, and built-in handlers work with minimal or no code changes. However, LogXide is **not a drop-in replacement** for every stdlib logging scenario. Its Rust core means some advanced patterns, particularly those involving custom Python subclasses or deep monkeypatching, are not supported.
 
 This document provides a high-level compatibility overview. For detailed comparisons against specific logging libraries, see the deep-dive guides below.
 
@@ -18,22 +18,26 @@ This document provides a high-level compatibility overview. For detailed compari
 | Standard formatters (`%`-style, `{}`-style) | ✅ | Processed natively in Rust |
 | FileHandler, StreamHandler, RotatingFileHandler | ✅ | Rust-native implementations |
 | Custom Python formatters (subclassed `Formatter`) | ❌ | Format strings work; custom `format()` methods don't |
-| Custom Python handlers | ⚠️ | Accepted; run synchronously in Python alongside Rust pipeline |
+| Custom Python handlers | ⚠️ | Accepted; a foreign Python handler runs once on the Python side (no fast-path GIL release) |
 | Subclassing `LogRecord` or `Logger` | ❌ | Rust types, not subclassable |
 | pytest `caplog` | ⚠️ | Use `caplog_logxide` fixture instead |
 | StringIO capture | ❌ | Use file-based logging for tests |
 
 ---
 
-## The Zero-GIL Architecture
+## The GIL and What Actually Runs in Rust
 
-LogXide's performance comes from its fundamental architectural differences:
+LogXide's performance comes from moving the log pipeline into a Rust core. How much of that runs without the GIL depends on the path a record takes:
 
 **Standard library logging:** Creates a Python `LogRecord` object for every log call, then recursively bubbles it through all loggers while holding the GIL with `threading.RLock()`.
 
-**LogXide:** Drops the GIL immediately and packs raw attributes into a natively dispatched Rust `Arc<LogRecord>`. Formatting, filtering, bubbling, and I/O all happen outside Python's GIL in Rust.
+**LogXide fast path:** When a record hits no Python filter, no Python handler, and no caller-info field, LogXide extracts the record's fields under the GIL and then releases it for the Rust dispatch. On that path, Rust-native handlers format and write without holding the GIL.
 
-Because of this, any custom logic that overrides standard Python implementations, such as subclassed Formatters with custom `format()` methods, will not execute natively.
+**When the GIL is still held:** A `%`-args call (for example `logger.info("hi %s", name)`) re-acquires the GIL inside `emit()` to run the `%` formatting, so args-bearing logs do not fully parallelize yet. Any Python handler or Python filter also runs under the GIL, as does caller-info collection when the format string needs it.
+
+Because of this scoping, do not expect linear producer scaling across threads on current CPython GIL builds: the fast path shares a handler mutex and the sink I/O is serialized, so adding producer threads does not multiply throughput. Free-threaded CPython builds need separate verification.
+
+Any custom logic that overrides standard Python implementations, such as subclassed Formatters with custom `format()` methods, will not execute natively.
 
 ---
 
@@ -55,7 +59,7 @@ LogXide maps the format pattern string directly into Rust. If you subclass `logg
 *Alternative:* Use JSON templates via `logxide.HTTPHandler` or transform output at the application edge.
 
 ### 2. Custom Python Handlers
-If you create a custom Python handler (e.g., `class MailLog(logging.Handler)`), LogXide accepts it via `addHandler()`. LogXide will execute its `.handle()` method with a Python `LogRecord` alongside the Rust native pipeline. This means the event fires in both pipelines, but the Python handler runs synchronously on the Python side, losing the Rust native zero-GIL concurrency benefits.
+If you create a custom Python handler (e.g., `class MailLog(logging.Handler)`), LogXide accepts it via `addHandler()` and routes it through its Python dispatch path, so its `.handle()` method runs once with a Python `LogRecord`. It runs synchronously on the Python side and does not benefit from the fast-path GIL release. As of 0.2.0, a Rust-backed handler (e.g. `logxide.FileHandler`) attached to one logger is dispatched exactly once and never leaks records to unrelated loggers; earlier releases could double-emit or misroute such records.
 
 ### 3. Standard Library Unit Tests
 LogXide fails CPython's `test_logging.py` unit tests. These tests validate locking behavior, internal `.handlers` array mutability, and `.disabled` states using memory assertions that conflict with Rust's encapsulated states and RwLocks.
@@ -82,7 +86,7 @@ When migrating an application to LogXide:
 1. **Initialize early:** Import and initialize LogXide before framework initialization (Django/Flask/FastAPI)
 2. **Intercept stdlib:** Call `logxide.intercept_stdlib()` to capture logs from third-party dependencies
 3. **Use structural config:** Prefer `logxide.config.dictConfig` over custom instantiation
-4. **Check custom handlers:** Verify any custom Python handlers are acceptable. They are accepted via `addHandler()` and run alongside the Rust pipeline, which means each log event may be processed twice (once by the Rust pipeline and once by the Python handler) and the Python handler does not run on the zero-GIL Rust path.
+4. **Check custom handlers:** Verify any custom Python handlers are acceptable. They are accepted via `addHandler()` and run once on the Python side (synchronously, without the fast-path GIL release). Rust-backed handlers run once on the Rust path.
 5. **Update tests:** Replace `caplog` with `caplog_logxide` and use file-based logging instead of StringIO
 
 For detailed third-party library compatibility information, see the **[Third-Party Compatibility Guide](third-party-compatibility.md)**.

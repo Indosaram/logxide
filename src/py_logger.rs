@@ -11,8 +11,11 @@ use std::sync::{Arc, Mutex};
 
 use crate::core::{create_log_record_with_extra, LogLevel, LogRecord, Logger};
 use crate::fast_logger::FastLogger;
-use crate::globals::{add_handler_to_registry, HANDLERS};
-use crate::handler::Handler;
+use crate::globals::{
+    add_handler_to_registry, remove_handler_from_registry, PyEntry, RustEntry, GLOBAL_PY_HANDLERS,
+    HANDLERS,
+};
+use crate::handler::{DispatchMode, Handler};
 
 /// Check and resolve a log level from either an integer or a string name.
 /// Handles: int passthrough, string lookup (CRITICAL/FATAL/ERROR/WARN/WARNING/INFO/DEBUG/NOTSET).
@@ -100,8 +103,9 @@ pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
 pub struct PyLogger {
     pub(crate) inner: Arc<Mutex<Logger>>,
     pub(crate) fast_logger: Arc<FastLogger>,
-    pub(crate) local_handlers: Arc<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>>,
-    pub(crate) local_python_handlers: Arc<Mutex<Vec<Py<PyAny>>>>,
+    pub(crate) rust_dispatch: Arc<Mutex<Vec<RustEntry>>>,
+    pub(crate) py_dispatch: Arc<Mutex<Vec<PyEntry>>>,
+    pub(crate) lifecycle: Arc<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>>,
     pub(crate) filters: Arc<Mutex<Vec<Py<PyAny>>>>,
     pub(crate) propagate: Arc<Mutex<bool>>,
     pub(crate) parent: Arc<Mutex<Option<Py<PyAny>>>>,
@@ -114,8 +118,9 @@ impl PyLogger {
         PyLogger {
             inner: Arc::new(Mutex::new(Logger::new(name))),
             fast_logger,
-            local_handlers: Arc::new(Mutex::new(Vec::new())),
-            local_python_handlers: Arc::new(Mutex::new(Vec::new())),
+            rust_dispatch: Arc::new(Mutex::new(Vec::new())),
+            py_dispatch: Arc::new(Mutex::new(Vec::new())),
+            lifecycle: Arc::new(Mutex::new(Vec::new())),
             filters: Arc::new(Mutex::new(Vec::new())),
             propagate: Arc::new(Mutex::new(true)),
             parent: Arc::new(Mutex::new(None)),
@@ -131,8 +136,9 @@ impl PyLogger {
         PyLogger {
             inner,
             fast_logger,
-            local_handlers: Arc::new(Mutex::new(Vec::new())),
-            local_python_handlers: Arc::new(Mutex::new(Vec::new())),
+            rust_dispatch: Arc::new(Mutex::new(Vec::new())),
+            py_dispatch: Arc::new(Mutex::new(Vec::new())),
+            lifecycle: Arc::new(Mutex::new(Vec::new())),
             filters: Arc::new(Mutex::new(Vec::new())),
             propagate: Arc::new(Mutex::new(true)),
             parent: Arc::new(Mutex::new(None)),
@@ -146,8 +152,9 @@ impl Clone for PyLogger {
         PyLogger {
             inner: self.inner.clone(),
             fast_logger: self.fast_logger.clone(),
-            local_handlers: self.local_handlers.clone(),
-            local_python_handlers: self.local_python_handlers.clone(),
+            rust_dispatch: self.rust_dispatch.clone(),
+            py_dispatch: self.py_dispatch.clone(),
+            lifecycle: self.lifecycle.clone(),
             filters: self.filters.clone(),
             propagate: self.propagate.clone(),
             parent: self.parent.clone(),
@@ -434,125 +441,217 @@ impl PyLogger {
     }
 }
 
-#[pymethods]
 impl PyLogger {
-    fn emit_record(&self, mut record: LogRecord, exc_info_py: Option<Py<PyAny>>) {
-        // Apply Python callable filters before emission
-        // Filters can modify the record (especially record.msg) and return False to suppress
-        let should_emit = Python::attach(|py| {
-            let filters: Vec<Py<PyAny>> = {
-                let lock = self.filters.lock().unwrap();
-                lock.iter().map(|f| f.clone_ref(py)).collect()
-            };
-            for filter_obj in filters.iter() {
-                let filter_bound = filter_obj.bind(py);
-
-                // Try calling filter.filter(record) if it's a filter object
-                // Or call it directly if it's a callable
-                let result = if let Ok(filter_method) = filter_bound.getattr("filter") {
-                    // Create a mutable Python dict to represent the record
-                    let py_record = pyo3::types::PyDict::new(py);
-                    let _ = py_record.set_item("name", &record.name);
-                    let _ = py_record.set_item("levelno", record.levelno);
-                    let _ = py_record.set_item("levelname", &record.levelname);
-                    let _ = py_record.set_item("msg", &record.msg);
-                    let _ = py_record.set_item("pathname", &record.pathname);
-                    let _ = py_record.set_item("lineno", record.lineno);
-                    let _ = py_record.set_item("func_name", &record.func_name);
-
-                    // Call filter method with reference to dict
-                    let call_result = filter_method.call1((&py_record,));
-
-                    // Check if filter modified the msg (after the call)
-                    if let Ok(Some(new_msg)) = py_record.get_item("msg") {
-                        if let Ok(msg_str) = new_msg.extract::<String>() {
-                            record.msg = msg_str;
-                        }
-                    }
-
-                    match call_result {
-                        Ok(res) => res.is_truthy().unwrap_or(true),
-                        Err(_) => true, // On error, allow the record
-                    }
-                } else if filter_bound.is_callable() {
-                    // Direct callable filter
-                    let py_record = pyo3::types::PyDict::new(py);
-                    let _ = py_record.set_item("name", &record.name);
-                    let _ = py_record.set_item("levelno", record.levelno);
-                    let _ = py_record.set_item("levelname", &record.levelname);
-                    let _ = py_record.set_item("msg", &record.msg);
-                    let _ = py_record.set_item("pathname", &record.pathname);
-                    let _ = py_record.set_item("lineno", record.lineno);
-                    let _ = py_record.set_item("func_name", &record.func_name);
-
-                    // Call filter with reference to dict
-                    let call_result = filter_bound.call1((&py_record,));
-
-                    // Check if filter modified the msg (after the call)
-                    if let Ok(Some(new_msg)) = py_record.get_item("msg") {
-                        if let Ok(msg_str) = new_msg.extract::<String>() {
-                            record.msg = msg_str;
-                        }
-                    }
-
-                    match call_result {
-                        Ok(res) => res.is_truthy().unwrap_or(true),
-                        Err(_) => true,
-                    }
-                } else {
-                    true // Not a valid filter, allow the record
-                };
-
-                if !result {
-                    return false; // Filter rejected the record
-                }
+    /// Emit `record` to the Rust-backed handlers: local rust_dispatch arcs first, then the
+    /// global HANDLERS when propagation is enabled. Pure Rust — shared by the attached and
+    /// detached (GIL-released) paths.
+    fn run_rust_dispatch(
+        rust_arcs: &[Arc<dyn Handler + Send + Sync>],
+        global_handlers: Option<&[Arc<dyn Handler + Send + Sync>]>,
+        record: &LogRecord,
+    ) {
+        for arc in rust_arcs.iter() {
+            arc.emit(record);
+        }
+        if let Some(handlers) = global_handlers {
+            for handler in handlers.iter() {
+                handler.emit(record);
             }
-            true // All filters passed
-        });
+        }
+    }
 
-        if !should_emit {
+    /// Snapshot the per-logger rust handler arcs, the propagation decision, and whether
+    /// every entry is native (so §4 detached dispatch is allowed). Releases every Mutex
+    /// guard before returning so nothing is held across a later `py.detach`.
+    fn dispatch_snapshot(&self) -> (Vec<Arc<dyn Handler + Send + Sync>>, bool, bool, bool) {
+        let (rust_arcs, all_native): (Vec<Arc<dyn Handler + Send + Sync>>, bool) = {
+            let lock = self.rust_dispatch.lock().unwrap();
+            let mut arcs = Vec::with_capacity(lock.len());
+            let mut all_native = true;
+            for e in lock.iter() {
+                if e.wrapper.is_some() && e.arc.dispatch_mode() == DispatchMode::Python {
+                    all_native = false;
+                }
+                arcs.push(e.arc.clone());
+            }
+            (arcs, all_native)
+        };
+        let py_dispatch_empty = self.py_dispatch.lock().unwrap().is_empty();
+        let has_local = !rust_arcs.is_empty() || !py_dispatch_empty;
+        let dispatch_global = !has_local || *self.propagate.lock().unwrap();
+        (rust_arcs, dispatch_global, py_dispatch_empty, all_native)
+    }
+
+    /// Route a fully-built record. When no Python code needs to run during dispatch
+    /// (no filters, no Python-dispatch handlers, every rust entry native), the Rust handler
+    /// emit runs with the GIL released so producers scale across threads (§4). Otherwise
+    /// fall back to the fully-attached emit_record path (filters may mutate the record;
+    /// Python-mode text-sink wrappers + py_dispatch handlers need a py_record).
+    ///
+    /// Caveat: %-args formatting still calls record.get_message() -> Python __mod__ under
+    /// Python::attach (core.rs), so an args-bearing record re-acquires the GIL inside a Rust
+    /// formatter's emit and won't fully parallelize until P1-3. No-args / pre-formatted
+    /// records scale.
+    fn dispatch(&self, py: Python, record: LogRecord, exc_info_py: Option<Py<PyAny>>) {
+        let has_filters = !self.filters.lock().unwrap().is_empty();
+        let (rust_arcs, dispatch_global, py_dispatch_empty, all_native) = self.dispatch_snapshot();
+        let global_py_nonempty = !GLOBAL_PY_HANDLERS.lock().unwrap().is_empty();
+
+        let eligible = !has_filters
+            && py_dispatch_empty
+            && !(dispatch_global && global_py_nonempty)
+            && all_native;
+
+        if !eligible {
+            self.emit_record(record, exc_info_py);
             return;
         }
 
-        let local_handlers: Vec<Arc<dyn Handler + Send + Sync>> =
-            { self.local_handlers.lock().unwrap().clone() };
-
-        // 1. Handle Rust handlers
-        if local_handlers.is_empty() {
-            let global_guard = HANDLERS.load();
-            for handler in global_guard.iter() {
-                handler.emit(&record);
-            }
+        let global_handlers = if dispatch_global {
+            Some(HANDLERS.load_full())
         } else {
-            for handler in local_handlers.iter() {
-                handler.emit(&record);
-            }
+            None
+        };
+        py.detach(move || {
+            let _block_scope = crate::handler::BlockWaitGuard::enter();
+            PyLogger::run_rust_dispatch(
+                &rust_arcs,
+                global_handlers.as_deref().map(|v| v.as_slice()),
+                &record,
+            );
+        });
+    }
+}
 
-            let should_propagate = *self.propagate.lock().unwrap();
-            if should_propagate {
-                let global_guard = HANDLERS.load();
-                for handler in global_guard.iter() {
-                    handler.emit(&record);
+#[pymethods]
+impl PyLogger {
+    fn emit_record(&self, mut record: LogRecord, exc_info_py: Option<Py<PyAny>>) {
+        // Filters can modify the record (especially record.msg) and return False to suppress.
+        // Only enter the GIL when filters are actually present.
+        let has_filters = !self.filters.lock().unwrap().is_empty();
+        if has_filters {
+            let should_emit = Python::attach(|py| {
+                let filters: Vec<Py<PyAny>> = {
+                    let lock = self.filters.lock().unwrap();
+                    lock.iter().map(|f| f.clone_ref(py)).collect()
+                };
+                for filter_obj in filters.iter() {
+                    let filter_bound = filter_obj.bind(py);
+
+                    let result = if let Ok(filter_method) = filter_bound.getattr("filter") {
+                        let py_record = pyo3::types::PyDict::new(py);
+                        let _ = py_record.set_item("name", &record.name);
+                        let _ = py_record.set_item("levelno", record.levelno);
+                        let _ = py_record.set_item("levelname", &record.levelname);
+                        let _ = py_record.set_item("msg", &record.msg);
+                        let _ = py_record.set_item("pathname", &record.pathname);
+                        let _ = py_record.set_item("lineno", record.lineno);
+                        let _ = py_record.set_item("func_name", &record.func_name);
+
+                        let call_result = filter_method.call1((&py_record,));
+
+                        if let Ok(Some(new_msg)) = py_record.get_item("msg") {
+                            if let Ok(msg_str) = new_msg.extract::<String>() {
+                                record.msg = msg_str;
+                            }
+                        }
+
+                        match call_result {
+                            Ok(res) => res.is_truthy().unwrap_or(true),
+                            Err(_) => true,
+                        }
+                    } else if filter_bound.is_callable() {
+                        let py_record = pyo3::types::PyDict::new(py);
+                        let _ = py_record.set_item("name", &record.name);
+                        let _ = py_record.set_item("levelno", record.levelno);
+                        let _ = py_record.set_item("levelname", &record.levelname);
+                        let _ = py_record.set_item("msg", &record.msg);
+                        let _ = py_record.set_item("pathname", &record.pathname);
+                        let _ = py_record.set_item("lineno", record.lineno);
+                        let _ = py_record.set_item("func_name", &record.func_name);
+
+                        let call_result = filter_bound.call1((&py_record,));
+
+                        if let Ok(Some(new_msg)) = py_record.get_item("msg") {
+                            if let Ok(msg_str) = new_msg.extract::<String>() {
+                                record.msg = msg_str;
+                            }
+                        }
+
+                        match call_result {
+                            Ok(res) => res.is_truthy().unwrap_or(true),
+                            Err(_) => true,
+                        }
+                    } else {
+                        true
+                    };
+
+                    if !result {
+                        return false;
+                    }
                 }
+                true
+            });
+
+            if !should_emit {
+                return;
             }
         }
 
-        // 2. Handle Python handlers (like pytest's caplog)
+        // Propagation-gated dispatch. Each rust_dispatch entry emits natively unless it is
+        // a text-sink wrapper flipped to Python mode (custom Formatter / {,$ style / handler
+        // filter), in which case its wrapper.handle() runs once in the Python half below.
+        let (native_arcs, python_wrappers, dispatch_global, py_dispatch_empty) = {
+            let lock = self.rust_dispatch.lock().unwrap();
+            let mut native_arcs: Vec<Arc<dyn Handler + Send + Sync>> =
+                Vec::with_capacity(lock.len());
+            let mut python_wrappers: Vec<Py<PyAny>> = Vec::new();
+            Python::attach(|py| {
+                for e in lock.iter() {
+                    match &e.wrapper {
+                        Some(w) if e.arc.dispatch_mode() == DispatchMode::Python => {
+                            python_wrappers.push(w.clone_ref(py));
+                        }
+                        _ => native_arcs.push(e.arc.clone()),
+                    }
+                }
+            });
+            let py_dispatch_empty = self.py_dispatch.lock().unwrap().is_empty();
+            let has_local =
+                !native_arcs.is_empty() || !python_wrappers.is_empty() || !py_dispatch_empty;
+            let dispatch_global = !has_local || *self.propagate.lock().unwrap();
+            (
+                native_arcs,
+                python_wrappers,
+                dispatch_global,
+                py_dispatch_empty,
+            )
+        };
+
+        for arc in native_arcs.iter() {
+            arc.emit(&record);
+        }
+        if dispatch_global {
+            let global = HANDLERS.load_full();
+            for handler in global.iter() {
+                handler.emit(&record);
+            }
+        }
+
+        let global_py_nonempty = !GLOBAL_PY_HANDLERS.lock().unwrap().is_empty();
+        let need_py = !python_wrappers.is_empty()
+            || !py_dispatch_empty
+            || (dispatch_global && global_py_nonempty);
+        if !need_py {
+            return;
+        }
+
         Python::attach(|py| {
             let local_py_handlers: Vec<Py<PyAny>> = {
-                let lock = self.local_python_handlers.lock().unwrap();
-                lock.iter().map(|h| h.clone_ref(py)).collect()
-            };
-            let global_py_handlers: Vec<Py<PyAny>> = {
-                let lock = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
-                lock.iter().map(|h| h.clone_ref(py)).collect()
+                let lock = self.py_dispatch.lock().unwrap();
+                lock.iter().map(|e| e.obj.clone_ref(py)).collect()
             };
 
-            if local_py_handlers.is_empty() && global_py_handlers.is_empty() {
-                return;
-            }
-
-            // Create a proper Python LogRecord
             let py_record = match self.makeRecord(
                 py,
                 record.name.clone(),
@@ -573,12 +672,10 @@ impl PyLogger {
                 }
             };
 
-            // Set exc_text on the Python LogRecord so stdlib Formatter.format() appends it
             if let Some(ref exc_text) = record.exc_text {
                 let _ = py_record.bind(py).setattr("exc_text", exc_text.as_str());
             }
 
-            // Set func_name/funcName on the Python LogRecord from Rust record's caller info
             if !record.func_name.is_empty() {
                 let _ = py_record
                     .bind(py)
@@ -588,15 +685,25 @@ impl PyLogger {
                     .setattr("funcName", record.func_name.as_str());
             }
 
-            // Call local Python handlers
+            // Python-mode text-sink wrappers (local): one handle() each.
+            for wrapper in python_wrappers.iter() {
+                let _ = wrapper.bind(py).call_method1("handle", (&py_record,));
+            }
+
             for handler in local_py_handlers.iter() {
                 let b_handler = handler.bind(py);
                 let _ = b_handler.call_method1("handle", (&py_record,));
             }
-            // Call global Python handlers
-            for handler in global_py_handlers.iter() {
-                let b_handler = handler.bind(py);
-                let _ = b_handler.call_method1("handle", (&py_record,));
+
+            if dispatch_global {
+                let global_py_handlers: Vec<Py<PyAny>> = {
+                    let lock = GLOBAL_PY_HANDLERS.lock().unwrap();
+                    lock.iter().map(|e| e.obj.clone_ref(py)).collect()
+                };
+                for handler in global_py_handlers.iter() {
+                    let b_handler = handler.bind(py);
+                    let _ = b_handler.call_method1("handle", (&py_record,));
+                }
             }
         });
     }
@@ -701,11 +808,22 @@ impl PyLogger {
         add_handler_to_registry(
             handler,
             &self.fast_logger.name,
-            &self.local_handlers,
-            &self.local_python_handlers,
+            &self.rust_dispatch,
+            &self.py_dispatch,
+            &self.lifecycle,
         )?;
 
         Ok(())
+    }
+
+    fn removeHandler(&self, _py: Python, handler: &Bound<PyAny>) -> PyResult<()> {
+        remove_handler_from_registry(
+            handler,
+            &self.fast_logger.name,
+            &self.rust_dispatch,
+            &self.py_dispatch,
+            &self.lifecycle,
+        )
     }
 
     /// Add a filter to this logger.
@@ -752,7 +870,7 @@ impl PyLogger {
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
-        self.emit_record(record, exc_info_py);
+        self.dispatch(py, record, exc_info_py);
         Ok(())
     }
 
@@ -780,7 +898,7 @@ impl PyLogger {
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
-        self.emit_record(record, exc_info_py);
+        self.dispatch(py, record, exc_info_py);
         Ok(())
     }
 
@@ -808,7 +926,7 @@ impl PyLogger {
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
-        self.emit_record(record, exc_info_py);
+        self.dispatch(py, record, exc_info_py);
         Ok(())
     }
 
@@ -836,7 +954,7 @@ impl PyLogger {
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
-        self.emit_record(record, exc_info_py);
+        self.dispatch(py, record, exc_info_py);
         Ok(())
     }
 
@@ -864,7 +982,7 @@ impl PyLogger {
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
-        self.emit_record(record, exc_info_py);
+        self.dispatch(py, record, exc_info_py);
         Ok(())
     }
 
@@ -892,7 +1010,7 @@ impl PyLogger {
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, true);
         let exc_info_py = self.extract_exc_info_raw(py, kwargs, true);
-        self.emit_record(record, exc_info_py);
+        self.dispatch(py, record, exc_info_py);
         Ok(())
     }
 
@@ -922,7 +1040,7 @@ impl PyLogger {
         record.args = serialized_args;
         record.exc_text = self.extract_exc_info_text(py, kwargs, false);
         let exc_info_py = self.extract_exc_info_raw(py, kwargs, false);
-        self.emit_record(record, exc_info_py);
+        self.dispatch(py, record, exc_info_py);
         Ok(())
     }
 
@@ -962,8 +1080,8 @@ impl PyLogger {
     fn handle(&self, record: Py<PyAny>) -> PyResult<()> {
         Python::attach(|py| {
             let handlers: Vec<Py<PyAny>> = {
-                let lock = crate::globals::PYTHON_HANDLERS_KEEP_ALIVE.lock().unwrap();
-                lock.iter().map(|h| h.clone_ref(py)).collect()
+                let lock = GLOBAL_PY_HANDLERS.lock().unwrap();
+                lock.iter().map(|e| e.obj.clone_ref(py)).collect()
             };
             for handler in handlers.iter() {
                 let _ = handler.call_method1(py, "handle", (record.clone_ref(py),));

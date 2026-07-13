@@ -9,33 +9,35 @@ Structlog focuses on **structured/context-rich logging**, while LogXide focuses 
 | Aspect | LogXide | Structlog |
 |---|---|---|
 | **Implementation** | Rust native core via PyO3 | Pure Python |
-| **GIL Strategy** | Zero-GIL (drops immediately) | Holds GIL for entire pipeline |
+| **GIL Strategy** | Releases GIL for Rust dispatch on the fast path; `%`-args & Python handlers/filters hold it | Holds GIL for entire pipeline |
 | **Core concept** | stdlib `logging` compatible | Processor pipeline |
 | **Log Record** | Rust `Arc<LogRecord>` | Python dict (event dict) |
 | **Thread Safety** | Rust `RwLock` | Thread-local context |
 
 ---
 
-## Performance: Handler-by-Handler Benchmark
+## Performance
 
-All benchmarks run on macOS ARM64 (Apple Silicon), **Python 3.12**, averaged across 3 runs of 10,000 iterations (`benchmark/basic_handlers_benchmark.py`).
+LogXide moves formatting and I/O into a Rust core and releases the GIL for the Rust dispatch on the fast path (no Python filter/handler/caller-info); `%`-args formatting and Python handlers/filters still hold the GIL. See [Compatibility](compatibility.md#the-gil-and-what-actually-runs-in-rust).
 
-LogXide drops the GIL immediately and delegates formatting and I/O to Rust-native `BufWriter` (file) or crossbeam channels (stream/HTTP), avoiding Python overhead entirely.
+!!! note "Cross-library numbers are corrected and sink-verified"
+    An earlier revision withdrew the per-handler tables because the old `benchmark/basic_handlers_benchmark.py` was defective (closed output stream, async drops counted as delivered, a mislabeled "RotatingFileHandler", and stdlib plus LogXide in the same patched process, which also contaminated the stdlib-backed Structlog column). The harness has been rebuilt: each library runs in its own subprocess, the sink is verified after flush, and durable throughput is reported separately from producer latency. The corrected numbers below replace the withdrawn ones.
 
-> **Methodology note**: Structlog's `FileHandler` test uses `ProcessorFormatter` wrapping `ConsoleRenderer` with `fmt="%(message)s"`. LogXide is benchmarked against the more demanding stdlib-style `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"` format, so structlog's column is on a slightly easier path. Even so, LogXide is faster.
+### Durable throughput vs Structlog (corrected, sink-verified)
 
-### Performance Summary (Python 3.12)
+Measured with `benchmark/basic_handlers_benchmark.py` on macOS M4 Max, CPython 3.14.2, release build, `-n 20000`, subprocess-isolated per library. **Durable** = records the sink confirmed after flush (every row verified at 20,200 / 20,200). Numbers are machine-specific and rounded:
 
-| Handler             |   Structlog | LogXide               | Speedup           |
-| :------------------ | ----------: | --------------------: | :---------------- |
-| **FileHandler**     |     932,755 | **1,139,874 Ops/sec** | **1.22× faster**  |
-| **StreamHandler**   |     920,069 |   **955,112 Ops/sec** | **1.04× faster**  |
-| **Simple Logging**  |     932,755 | **1,922,911 Ops/sec** ¹ | **2.06× faster**  |
-| **with `%s` args**  |     ~932K   |   **976,572 Ops/sec** ¹ | comparable        |
+| Sink   | LogXide durable (p50) | Structlog durable (p50) | stdlib durable |
+| :----- | :-------------------- | :---------------------- | :------------- |
+| FILE   | ~739K rec/s (833 ns)  | 41,364 rec/s (5,583 ns) | 74,605 rec/s   |
+| STREAM | ~273K rec/s (917 ns)  | 116,796 rec/s (5,208 ns) | 53,292 rec/s  |
 
-¹ *Simple/args figures from `benchmark/perf_vs_stdlib.py` (100K iterations × 3 runs). Structlog is approximated from FileHandler since it doesn't have a separate "args" path.*
+Structlog is genuinely fast on the **stream** sink here, beating stdlib at ~2.2× (116,796 vs 53,292 rec/s) and outrunning both stdlib and Loguru. On the **file** sink it trails stdlib. LogXide leads all libraries on both sinks (~10× stdlib on file, ~5× on stream). The FILE figure varies ~740K–960K rec/s across runs. See [benchmarks.md](benchmarks.md#comparative-benchmark--all-logging-libraries-corrected-sink-verified) for the full tables and async accounting.
 
-*Structlog relies on Python's stdlib for actual file output, so its theoretical maximum is capped by stdlib throughput, minus the overhead of its JSON/Console render processors. LogXide bypasses this completely via Rust `BufWriter`.*
+### Architectural advantages (independent of any single benchmark)
+
+- Structlog relies on Python's stdlib for actual file output, so its throughput is bounded by stdlib plus its JSON/Console render processors. LogXide writes files through a Rust `BufWriter` and does background async I/O for stream/HTTP/OTLP.
+- **Explicit async accounting**: `get_metrics()` reports `emitted`/`sink_acknowledged`/`queue_dropped`/`delivery_failed`/`in_flight`, so async "throughput" always counts records the sink confirmed — never records that were merely enqueued.
 
 ---
 
@@ -64,7 +66,7 @@ LogXide prioritizes performance over full stdlib compatibility. Before adopting,
 
 - **Custom Python formatters**: `logging.Formatter` subclasses are not called; format strings are processed natively in Rust
 - **Subclassing**: `LogRecord` and `Logger` are Rust types and cannot be subclassed
-- **Custom Python handlers**: Accepted via `addHandler()`, but they run alongside the Rust pipeline (events may be processed twice) and do not run on the zero-GIL Rust path
+- **Custom Python handlers**: Accepted via `addHandler()`; a foreign Python handler runs once on the Python side, without the fast-path GIL release. Rust-backed handlers are dispatched once and no longer double-emit or leak to unrelated loggers (fixed in 0.2.0)
 - **pytest `caplog`**: LogXide provides a custom plugin (auto-registered via entry point); requires explicit `logger.addHandler(caplog.handler)` — see [Testing Guide](testing.md)
 
 For the complete compatibility matrix, see [Compatibility](compatibility.md).
@@ -74,7 +76,7 @@ For the complete compatibility matrix, see [Compatibility](compatibility.md).
 ## When to Use Which
 
 ### Choose LogXide when:
-- **Performance is the priority** — 1.2–2× faster than Structlog on file/stream I/O on Python 3.12, leveraging Rust to bypass the GIL.
+- **Performance is the priority** — LogXide runs formatting and file I/O in a Rust core rather than through Python's stdlib output path. On the corrected, sink-verified harness it leads Structlog on every sink (~10× stdlib on file, ~5× on stream), even though Structlog itself beats stdlib on the stream sink.
 - **You have existing stdlib code** — Minimal migration cost; API-compatible for common patterns.
 - **You need native production handlers** — Async HTTP batching, OTLP export, and native Sentry integration without Python-side overhead.
 - **Framework integration** — Transparently hooks into Django/FastAPI `dictConfig`.

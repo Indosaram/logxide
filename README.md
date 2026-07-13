@@ -31,7 +31,23 @@ pip install logxide[sentry]
 
 ## Performance
 
-FileHandler benchmark, Python 3.12, 100K iterations, format `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`, stdlib runs in a subprocess for fair isolation:
+LogXide is performance-first: its native Rust handlers dispatch on the GIL-released fast path, formatting and writing without materializing a Python `LogRecord`. As of 0.2.0 the text-sink wrappers (`FileHandler`, `StreamHandler`, `RotatingFileHandler`) emit through that native Rust path **by default**; a handler only falls back to the Python path for a custom `Formatter` subclass, `{`/`$`-style format strings, or a handler-level Python filter.
+
+### Cross-library durable throughput (sink-verified)
+
+Measured with `benchmark/basic_handlers_benchmark.py` on macOS M4 Max, CPython 3.14.2, release build, `-n 20000`, each library in its own subprocess. **Durable** = records the sink actually confirmed after flush (every row verified at 20,200 / 20,200), not records merely enqueued. Numbers are machine-specific and rounded:
+
+| Sink        |  LogXide durable rec/s |    stdlib | LogXide vs stdlib |
+| :---------- | ---------------------: | --------: | :---------------- |
+| FILE        |             ~739K–960K |    74,605 | **~10×**          |
+| STREAM      |                ~273K   |    53,292 | **~5×**           |
+| ROTATING    |                ~202K   |    42,981 | **~4.7×**         |
+
+LogXide leads every sink. On STREAM, Structlog is the runner-up (~117K rec/s, ~2.2× stdlib) but still well behind LogXide. Full tables, per-library p50 latencies, and async delivery accounting are in [docs/benchmarks.md](docs/benchmarks.md#comparative-benchmark--all-logging-libraries-corrected-sink-verified).
+
+### vs stdlib, single-format FileHandler (subprocess-isolated)
+
+FileHandler benchmark, Python 3.12, 100K iterations, format `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`, LogXide vs stdlib with stdlib in a subprocess for fair isolation. `FileHandler` is synchronous, so these are durable numbers (no async drops). Figures are machine-specific:
 
 | Scenario              |   LogXide |  stdlib | Speedup     |
 | :-------------------- | --------: | ------: | :---------- |
@@ -39,22 +55,9 @@ FileHandler benchmark, Python 3.12, 100K iterations, format `"%(asctime)s - %(na
 | Structured (f-string) | 1,612,029 | 144,328 | **11.17×**  |
 | With `%s` args        |   976,572 | 144,156 | **6.77×**   |
 
-Same Python 3.12 across all libraries (10K iterations, `basic_handlers_benchmark.py`):
-
-| Library         |   Ops/sec | vs stdlib |
-| :-------------- | --------: | :-------- |
-| **LogXide**     | **1,139,874** | **7.85×** |
-| Structlog       |   932,755 | 6.42×     |
-| Picologging (C) |   384,319 | 2.65×     |
-| stdlib          |   145,260 | 1.0×      |
-| Logbook         |    99,538 | 0.69×     |
-| Loguru          |    93,896 | 0.65×     |
-
-> **Picologging note**: Cython-based, supports Python 3.12 only (incompatible with 3.13+). Picologging skips `sys._getframe()` caller-frame extraction; LogXide performs full stdlib-compatible introspection on every record where the format string requires it.
-
 > **Python 3.14**: LogXide is also faster (4.25–7.23× vs stdlib), though the absolute gap narrows because stdlib's per-iteration overhead is lower under 3.14. See [docs/benchmarks.md](docs/benchmarks.md#python-314) for the full Python 3.14 table.
 
-For per-handler latency, internal optimization wave breakdown, and historical comparison data, see [docs/benchmarks.md](docs/benchmarks.md).
+For per-handler latency, async accounting, internal optimization wave breakdown, and historical comparison data, see [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Works With
 
@@ -68,7 +71,7 @@ LogXide intercepts stdlib logging — most libraries work without changes.
 | SQLAlchemy | ✅ | SQL query logging via `echo=True` |
 | requests / httpx | ✅ | HTTP connection logs captured |
 | boto3 / botocore | ✅ | AWS SDK logs captured |
-| Sentry | ✅ | **Native integration** — auto-detects SDK |
+| Sentry | ✅ | **Native integration** — auto-detects an already-configured SDK |
 | Celery | ⚠️ | Requires `setup_logging` signal ([guide](docs/third-party-compatibility.md#celery)) |
 | pytest | ⚠️ | Use `caplog_logxide` instead of `caplog` |
 
@@ -88,9 +91,11 @@ logger = logging.getLogger(__name__)
 logger.error("This is automatically sent to Sentry")
 ```
 
-- Auto-detects Sentry SDK
+- Auto-detects a **configured** Sentry SDK (a call to `sentry_sdk.init()` must have run first)
 - WARNING+ sent as events, INFO as breadcrumbs
 - Full stack traces and custom context
+
+An installed-but-unconfigured Sentry SDK does not attach a handler, and (as of 0.2.0) importing it no longer forces process-global caller-frame collection onto unrelated handlers.
 
 ## Native OpenTelemetry Support
 
@@ -155,7 +160,7 @@ LogXide reimplements Python's logging in Rust for speed. The API is the same, bu
 | `basicConfig`, format strings, levels, filters | ✅ Same API |
 | `FileHandler`, `StreamHandler`, `RotatingFileHandler` | ✅ Rust-native |
 | `HTTPHandler`, `OTLPHandler` | ✅ Rust-native, high throughput |
-| Custom Python handlers via `addHandler()` | ⚠️ Accepted; runs alongside the Rust pipeline (may cause duplicate processing) |
+| Custom Python handlers via `addHandler()` | ⚠️ Accepted; runs once on the Python side (no fast-path GIL release) |
 | Subclassing `LogRecord` or `Logger` | ❌ Rust types, not subclassable |
 | pytest `caplog` fixture | ⚠️ Use `caplog_logxide` instead |
 

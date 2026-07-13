@@ -31,7 +31,7 @@ LogXide delivers high performance through its native Rust implementation, provid
 
 ### PyO3 Integration (`src/lib.rs`, `src/py_logger.rs`, `src/py_handlers.rs`)
 - Python bindings exposing Logger, Handler, and Formatter types
-- `addHandler()` accepts LogXide's Rust native handlers (fast path) and standard Python `logging.Handler` subclasses (run alongside the Rust pipeline, no zero-GIL path; may cause duplicate processing)
+- `addHandler()` accepts LogXide's Rust native handlers (fast path) and standard Python `logging.Handler` subclasses (run once on the Python side, without the fast-path GIL release). As of 0.2.0, Rust-backed handlers are dispatched exactly once and never leak to unrelated loggers.
 
 ### Core Types (`src/core.rs`)
 - `LogRecord` — Rust struct holding log metadata (name, level, message, timestamp, thread info, extras)
@@ -145,12 +145,25 @@ Logger → emit() → Mutex<BufWriter<File>> → write + conditional flush
 
 Each logger maintains its own handler list. When `logger.addHandler()` is called with a Rust handler, it is stored in the logger's local handler list. Global handlers configured via `basicConfig()` are also supported.
 
+!!! note "Handler routing and formatting (0.2.0)"
+    Handlers route by backend kind, and each is dispatched exactly once:
+
+    - **Structured sinks** (`HTTPHandler`, `OTLPHandler`) serialize the record in Rust (JSON / protobuf), so `extra` fields are preserved.
+    - **Text-sink wrappers** (`FileHandler`, `StreamHandler`, `RotatingFileHandler`, `MemoryHandler`) format the line via their Python `emit()` override, which is what makes formatted output and pytest capture behave correctly.
+    - **Foreign Python handlers** run once on the Python side.
+
+    A Rust-backed handler attached to one logger no longer double-emits or leaks records to unrelated loggers, and `removeHandler()` / `clear_handlers()` / `close()` tear down routing and the background worker together.
+
+## GIL Scope
+
+LogXide releases the GIL for the Rust dispatch only on the **fast path**: a record that hits no Python filter, no Python handler, and no caller-info field. On that path, field extraction happens under the GIL and the subsequent Rust dispatch (formatting + I/O for Rust-native handlers) runs with the GIL released. A `%`-args call re-acquires the GIL inside `emit()` to run `%` formatting, and any Python handler/filter or caller-info collection also holds the GIL. On current CPython GIL builds, producer throughput does not scale linearly across threads because the fast path shares a handler mutex and sink I/O is serialized; free-threaded builds need separate verification.
+
 ## Thread Safety
 
 - **Mutex-protected handlers** — `parking_lot::Mutex` for handler state
 - **Thread-safe logger registry** — `DashMap` for concurrent logger access
 - **Atomic level checks** — `AtomicU8` for fast level filtering without locks
-- **OS-level stream writes** — stdout/stderr bypass Python's GIL
+- **Background-thread I/O** — stream/HTTP/OTLP writes run on a worker thread that does not hold Python's GIL
 
 ## Memory Management
 
@@ -168,7 +181,7 @@ Each logger maintains its own handler list. When `logger.addHandler()` is called
 | **String formatting** | Python string operations | Rust native formatting |
 | **Thread safety** | Global lock (`_lock`) | Per-handler mutexes |
 | **I/O** | Python file objects | Direct OS I/O (bypasses GIL) |
-| **Custom handlers** | Unlimited (Python subclasses) | Rust native handlers (fast path); Python subclasses also accepted, run alongside the Rust pipeline |
+| **Custom handlers** | Unlimited (Python subclasses) | Rust native handlers (fast path); Python subclasses also accepted, run once on the Python side |
 | **subclassing** | Full support | Not supported |
 
 ## Dependencies

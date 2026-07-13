@@ -287,11 +287,12 @@ def _install(sentry=None):
         def wrapped_add(hdlr):
             original_add(hdlr)
             target = getattr(std_logger, "_logxide_pylogger", logxide_logger)
-            if hasattr(hdlr, "_inner"):
-                target.addHandler(hdlr._inner)
-            else:
-                with contextlib.suppress(Exception):
-                    target.addHandler(hdlr)
+            # Pass the WRAPPER itself: the Rust classifier resolves `_inner` for native
+            # fast-path dispatch and keeps the wrapper for the Python fallback (custom
+            # Formatter / {,$ style / handler-level filter). Foreign handlers with no
+            # `_inner` route to Python dispatch as before.
+            with contextlib.suppress(Exception):
+                target.addHandler(hdlr)
 
         std_logger.addHandler = wrapped_add
 

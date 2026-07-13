@@ -9,29 +9,36 @@ Both LogXide and Loguru aim to improve upon Python's standard `logging` module, 
 | | LogXide | Loguru |
 |---|---|---|
 | **Implementation** | Rust native core via PyO3 | Pure Python |
-| **GIL Strategy** | Zero-GIL — drops the GIL immediately, all formatting and I/O happens in Rust | Holds GIL throughout the entire logging pipeline |
+| **GIL Strategy** | Releases the GIL for Rust dispatch on the fast path (no Python filter/handler/caller-info); `%`-args formatting and Python handlers/filters still hold it | Holds GIL throughout the entire logging pipeline |
 | **Thread Safety** | Rust `RwLock` + `Arc` (lock-free reads) | Python `threading.Lock` |
 | **Log Record** | Rust `Arc<LogRecord>` — never creates a Python object | Python dict/object per log call |
 | **I/O Model** | Direct Rust `BufWriter` syscalls (File), crossbeam channels (HTTP/OTLP) | Python file I/O with internal buffering |
 
 ---
 
-## Performance: Handler-by-Handler Benchmark
+## Performance
 
-All benchmarks run on macOS ARM64 (Apple Silicon), **Python 3.12**, averaged across 3 runs of 10,000 iterations (`benchmark/basic_handlers_benchmark.py`). Same Python version, same harness, same format string for all libraries.
+LogXide is performance-first. As of 0.2.0 its text-sink wrappers (`FileHandler`, `StreamHandler`, `RotatingFileHandler`) emit through the native Rust fast path by default, falling back to the Python path only for custom `Formatter` subclasses, `{`/`$`-style format strings, or handler-level Python filters.
 
-LogXide drops the GIL immediately and delegates formatting and I/O to Rust-native `BufWriter` (file) or crossbeam channels (stream/HTTP), avoiding Python overhead entirely.
+### Corrected, sink-verified throughput vs Loguru
 
-### Performance Summary (Python 3.12)
+Measured with `benchmark/basic_handlers_benchmark.py` on macOS M4 Max, CPython 3.14.2, release build, `-n 20000`, each library in its own subprocess. **Durable** throughput counts records the sink confirmed after flush (every row verified at 20,200 / 20,200), reported separately from producer latency (p50 shown). Numbers are machine-specific and rounded:
 
-| Handler                      | Python `logging` |  Loguru | LogXide               | vs stdlib         | vs Loguru           |
-| :--------------------------- | ---------------: | ------: | --------------------: | :---------------- | :------------------ |
-| **FileHandler**              |          145,260 |  93,896 | **1,139,874 Ops/sec** | **7.85× faster**  | **12.14× faster**   |
-| **StreamHandler**            |           17,006 |  10,391 |   **955,112 Ops/sec** | **56.16× faster** | **91.92× faster**   |
-| **RotatingFileHandler**      |           55,579 |  85,203 |   **897,118 Ops/sec** | **16.14× faster** | **10.53× faster**   |
-| **TimedRotatingFileHandler** |    (via stdlib)  | (via `rotation=`) | **(native)**         | LogXide-only      | LogXide-only        |
+| Sink     | LogXide (p50)       | Loguru (p50)       |
+| :------- | :------------------ | :----------------- |
+| FILE     | ~739K rec/s (833 ns) | 57,511 rec/s (8,500 ns) |
+| STREAM   | ~273K rec/s (917 ns) | 52,508 rec/s (8,459 ns) |
+| ROTATING | ~202K rec/s (833 ns) | 33,095 rec/s (9,666 ns) |
 
-*Same Python 3.12 runtime for all three libraries; format string `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"` for stdlib and LogXide, equivalent format for Loguru. Loguru's RotatingFileHandler is its built-in `rotation="1 MB"` option.*
+LogXide leads Loguru by roughly an order of magnitude on every sink here. For reference, LogXide is ~10× stdlib on file, ~5× on stream, and ~4.7× on rotating; Loguru trails stdlib on all three. The FILE durable figure varies ~740K–960K rec/s across runs. Full cross-library tables and async delivery accounting are in [benchmarks.md](benchmarks.md#comparative-benchmark--all-logging-libraries-corrected-sink-verified).
+
+### Architectural advantages (independent of any single benchmark)
+
+- **Rust core** formats and writes without materializing a Python `LogRecord` on the fast path.
+- **Background async I/O**: stream/HTTP/OTLP handlers hand records to a worker thread instead of blocking the caller on the sink; `FileHandler` writes through a Rust `BufWriter` synchronously.
+- **Explicit async accounting**: `get_metrics()` reports `emitted`, `sink_acknowledged`, `queue_dropped`, `delivery_failed`, and `in_flight`, so "throughput" always counts records the sink confirmed.
+
+On current CPython GIL builds, expect no linear producer scaling across threads — the fast path shares a handler mutex and sink I/O is serialized. LogXide releases the GIL for Rust dispatch only on the fast path; `%`-args formatting and any Python handler/filter still take the GIL. See [Compatibility](compatibility.md#the-gil-and-what-actually-runs-in-rust) for the exact scope.
 
 ---
 
@@ -125,7 +132,7 @@ LogXide prioritizes performance over full stdlib compatibility. Before adopting,
 
 - **Custom Python formatters**: `logging.Formatter` subclasses are not called; format strings are processed natively in Rust
 - **Subclassing**: `LogRecord` and `Logger` are Rust types and cannot be subclassed
-- **Custom Python handlers**: Accepted via `addHandler()`, but they run alongside the Rust pipeline (events may be processed twice) and do not run on the zero-GIL Rust path
+- **Custom Python handlers**: Accepted via `addHandler()`; a foreign Python handler runs once on the Python side, without the fast-path GIL release. Rust-backed handlers are dispatched once and no longer double-emit or leak to unrelated loggers (fixed in 0.2.0)
 - **pytest `caplog`**: LogXide provides a custom plugin (auto-registered via entry point); requires explicit `logger.addHandler(caplog.handler)` — see [Testing Guide](testing.md)
 
 For the complete compatibility matrix, see [Compatibility](compatibility.md).
@@ -138,7 +145,7 @@ For the complete compatibility matrix, see [Compatibility](compatibility.md).
 - **Performance is critical** — high-throughput services, real-time systems
 - **You need stdlib compatibility** — existing `logging.getLogger()` code, Django/FastAPI `dictConfig`
 - **You need production observability** — built-in HTTP batching, OTLP export, Sentry integration
-- **Multi-threaded workloads** — Zero-GIL gives true parallel logging without contention
+- **Multi-threaded workloads** — the fast path releases the GIL for Rust dispatch, so no-args/preformatted logging can proceed off the GIL (note: current CPython GIL builds serialize on a shared handler mutex, so throughput does not scale linearly across threads yet)
 - **pytest integration** — native `caplog` support without hacks
 
 ### Choose Loguru when:

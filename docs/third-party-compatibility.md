@@ -85,12 +85,12 @@ Libraries that:
 - **Subclass `logging.Logger`** — Rust type, not subclassable
 - **Subclass `logging.LogRecord`** — Rust type, not subclassable
 - **Override `logging.Formatter.format()`** — On the Rust code path (primary), custom `format()` methods are not called because Rust handles formatting directly. However, if a Python handler is attached, its formatter's `format()` method **will** be called on the Python LogRecord passed to that handler.
-- **Use Python `logging.Handler` subclasses** — They are accepted and their `.handle()` method is called with a Python LogRecord, but log processing also goes through the Rust pipeline independently. This means logs are processed twice (Rust + Python handler), not "bypassed."
+- **Use Python `logging.Handler` subclasses** — They are accepted and their `.handle()` method is called once with a Python LogRecord. As of 0.2.0 each handler is dispatched exactly once (a Rust-backed handler no longer double-emits or leaks records to unrelated loggers); a foreign Python handler runs on the Python side, without the fast-path GIL release.
 - **Use `StringIO` stream capture** — Not supported (Rust writes directly)
 - **Rely on `caplog` in pytest** — Must use `caplog_logxide` instead
 
 !!! warning "Custom Python Handlers"
-    Python `logging.Handler` subclasses are accepted via `addHandler()`. LogXide stores them separately and calls their `.handle()` method with a Python LogRecord object after the Rust pipeline processes the log. This means both Rust handlers and Python handlers fire for each log event. For maximum performance, use Rust-native handlers: `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `HTTPHandler`, `OTLPHandler`.
+    Python `logging.Handler` subclasses are accepted via `addHandler()`. LogXide routes them through its Python dispatch path and calls their `.handle()` method once with a Python LogRecord object. As of 0.2.0 each handler fires exactly once — Rust-backed handlers no longer double-emit — so a foreign Python handler and any Rust-native handlers each process the record a single time. For maximum performance, use Rust-native handlers: `FileHandler`, `StreamHandler`, `RotatingFileHandler`, `HTTPHandler`, `OTLPHandler`.
 
 ### Alternative: Explicit Stdlib Interception
 
@@ -489,7 +489,7 @@ logger.error("Errors tracked with full context")
 Most APM tools hook into Python's stdlib logging module. Since logxide replaces `sys.modules["logging"]`, these tools should detect logxide's `_LoggingModule` as the logging module. However, APMs that:
 
 - Monkey-patch `logging.Logger` class methods directly may conflict
-- Install custom `logging.Handler` subclasses will be accepted, but they run alongside the Rust pipeline (events may be processed twice) and the Python handler does not run on the zero-GIL Rust path
+- Install custom `logging.Handler` subclasses will be accepted; they run once on the Python side (without the fast-path GIL release), and Rust-backed handlers are dispatched once (no double-emit as of 0.2.0)
 - Rely on `LogRecord` internal attributes may have issues with logxide's Rust `LogRecord`
 
 If you use these tools with logxide, please report your results.
@@ -664,7 +664,7 @@ Does the library use logging.getLogger() for loggers?
 |           |
 |               +-- NO --> Does it use custom logging.Handler subclass?
 |               |
-|               +-- YES --> Works (called alongside Rust pipeline), may cause duplicate output
+|               +-- YES --> Works (called once on the Python side, no fast-path GIL release)
 |               |
 |               +-- NO --> Full compatibility
 |
@@ -705,9 +705,7 @@ import problematic_library  # Its basicConfig() call is intercepted
 
 ### Custom handlers causing duplicate output
 
-Python `logging.Handler` subclasses are called **in addition to** the Rust pipeline, not instead of it. This means each log event is processed twice — once by Rust handlers and once by your Python handler. If you see duplicate output, this is likely the cause.
-
-To use only the Rust pipeline, replace Python handlers with Rust-native equivalents:
+Python `logging.Handler` subclasses are dispatched once via LogXide's Python path (as of 0.2.0 — the earlier double-emit bug is fixed). If you still see duplicate output, it usually comes from attaching handlers to both a child logger and the root logger (propagation), or from attaching two handlers that write to the same sink. To use only the Rust pipeline, replace Python handlers with Rust-native equivalents:
 
 | Python Handler | LogXide Equivalent |
 |----------------|-------------------|

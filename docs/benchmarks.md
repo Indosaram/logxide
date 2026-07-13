@@ -86,44 +86,90 @@ Methodology: `benchmark/perf_micro.py`, FileHandler with `"%(asctime)s - %(name)
     - **HTTPHandler / OTLPHandler**: crossbeam channel + background thread (batched)
     - **MemoryHandler**: synchronous Vec::push under parking_lot::Mutex
 
-## Comparative Benchmark — All Logging Libraries (Python 3.12, June 2026)
+## Comparative Benchmark — All Logging Libraries (corrected, sink-verified)
 
-These benchmarks run all libraries through the **same harness** (`benchmark/basic_handlers_benchmark.py`, 10,000 iterations × 3 runs, format `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`) on Python 3.12, the highest version Picologging supports. This is the apples-to-apples reference measurement.
+The defective cross-library harness flagged in the [performance audit](performance-bottleneck-report-2026-07-13.md) (§5) has been rebuilt. The corrected harness lives at `benchmark/basic_handlers_benchmark.py`. It:
 
-### FileHandler
+- runs **every library in its own subprocess** per scenario, so stdlib `logging` and Structlog are never measured inside LogXide's monkey-patched process;
+- writes to a **real sink** and, after flushing, **counts the records the sink actually received** (every row below was sink-verified at 20,200 / 20,200 records);
+- reports **durable throughput** (sink-confirmed records ÷ total wall time including flush) separately from **producer latency** (p50/p95/p99 of the logging call), so a fast-returning async producer can never be scored as durable throughput;
+- uses a genuine `RotatingFileHandler` for the rotating row instead of substituting a plain `StreamHandler`.
 
-| Rank | Library         |   Ops/sec | Relative to LogXide |
-| :--- | :-------------- | --------: | :------------------ |
-| 1    | **LogXide**     | **1,139,874** | 1.00× (baseline)   |
-| 2    | Structlog       |   932,755 | 0.82×              |
-| 3    | Picologging     |   384,319 | 0.34× (LogXide 2.97× faster) |
-| 4    | Python `logging`|   145,260 | 0.13× (LogXide 7.85× faster) |
-| 5    | Logbook         |    99,538 | 0.09× (LogXide 11.45× faster) |
-| 6    | Loguru          |    93,896 | 0.08× (LogXide 12.14× faster) |
+!!! note "These numbers are machine-specific"
+    Measured on **macOS M4 Max, CPython 3.14.2, release build, `-n 20000`**, per-scenario subprocess isolation. Absolute throughput depends on the machine, the build, and the sink. Treat the multipliers ("~10×", "~5×") as the durable signal and the raw rec/s as a rounded, run-specific reading. Run-to-run variance is real: the FILE durable figure was observed anywhere from ~740K to ~960K rec/s across repeated runs, so figures here are rounded rather than presented to false precision. Reproduce with `benchmark/basic_handlers_benchmark.py`.
 
-### StreamHandler
+### FILE — durable throughput (synchronous file sink)
 
-| Rank | Library         |   Ops/sec | Relative to LogXide |
-| :--- | :-------------- | --------: | :------------------ |
-| 1    | **LogXide**     | **955,112** | 1.00× (baseline)   |
-| 2    | Structlog       |   920,069 | 0.96×              |
-| 3    | Python `logging`|    17,006 | 0.02× (LogXide 56.16× faster) |
-| 4    | Loguru          |    10,391 | 0.01× (LogXide 91.92× faster) |
+| Library        | Durable rec/s | p50 latency | vs stdlib |
+| :------------- | ------------: | ----------: | :-------- |
+| **LogXide**    |   **739,332** |     833 ns  | **~10×**  |
+| Python logging |        74,605 |   6,167 ns  | 1.0× (baseline) |
+| Loguru         |        57,511 |   8,500 ns  | 0.77×     |
+| Structlog      |        41,364 |   5,583 ns  | 0.55×     |
 
-### RotatingFileHandler
+LogXide lands around **~10× stdlib** on the durable file path. Observed range across runs: ~740K–960K rec/s.
 
-| Rank | Library         |   Ops/sec | Relative to LogXide |
-| :--- | :-------------- | --------: | :------------------ |
-| 1    | **LogXide**     | **897,118** | 1.00× (baseline)   |
-| 2    | Picologging ¹   |   411,055 | 0.46× (LogXide 2.18× faster) |
-| 3    | Loguru          |    85,203 | 0.09× (LogXide 10.53× faster) |
-| 4    | Python `logging`|    55,579 | 0.06× (LogXide 16.14× faster) |
+### STREAM — durable throughput
 
-¹ *Picologging has no `RotatingFileHandler`; the harness substitutes its `FileHandler` in this row.*
+| Library        | Durable rec/s | p50 latency | vs stdlib |
+| :------------- | ------------: | ----------: | :-------- |
+| **LogXide**    |   **272,829** |     917 ns  | **~5×**   |
+| Structlog      |       116,796 |   5,208 ns  | 2.2×      |
+| Python logging |        53,292 |   6,334 ns  | 1.0× (baseline) |
+| Loguru         |        52,508 |   8,459 ns  | 0.99×     |
+
+Structlog beats stdlib on the stream sink here (about 2.2×), but LogXide still leads all libraries at **~5× stdlib**.
+
+### ROTATING — durable throughput (real `RotatingFileHandler`)
+
+| Library        | Durable rec/s | p50 latency | vs stdlib |
+| :------------- | ------------: | ----------: | :-------- |
+| **LogXide**    |   **201,663** |     833 ns  | **~4.7×** |
+| Python logging |        42,981 |   8,542 ns  | 1.0× (baseline) |
+| Loguru         |        33,095 |   9,666 ns  | 0.77×     |
+
+Picologging is not included in the corrected runs (it does not install on Python 3.13+), so no cross-library number is asserted against it; see [comparison-picologging.md](comparison-picologging.md) for the qualitative discussion.
+
+### Async accounting — durable vs lossy producers
+
+Async handlers are only meaningful if "throughput" means records the sink confirmed, not records that were merely enqueued. After the run flushes, LogXide's accounting satisfies `in_flight == 0` and the identity `emitted == sink_acknowledged + queue_dropped + delivery_failed`. Two HTTP scenarios show the two honest outcomes:
+
+| Scenario           | emitted | sink_acknowledged | queue_dropped | Producer behavior            |
+| :----------------- | ------: | ----------------: | ------------: | :--------------------------- |
+| `http_block`       |  20,000 |            20,000 |             0 | durable, producer p99 ~3 ms  |
+| `http_drop_newest` |  20,000 |               262 |        19,738 | instant producer, lossy      |
+
+`http_block` back-pressures the producer (slower calls, but every record lands). `http_drop_newest` returns instantly and drops under saturation, so its "producer throughput" would look enormous while only 262 records actually reached the sink. This is exactly the trap the old harness fell into; `get_metrics()` makes the distinction explicit.
+
+### Micro benchmarks (LogXide native path, sink-verified)
+
+Single-process producer micro-benchmarks via `benchmark/perf_micro.py`, sink-verified:
+
+| Path                         | Throughput        |
+| :--------------------------- | ----------------: |
+| FileHandler (native)         | ~960K rec/s       |
+| MemoryHandler (native)       | ~980K rec/s       |
+| Filtered / no-op producer    | ~5.8M ops/s       |
+
+!!! note "Numbers reflect 0.2.0 native-default dispatch"
+    As of 0.2.0, the text-sink handler wrappers (`FileHandler`, `StreamHandler`, `RotatingFileHandler`) emit through the **native Rust fast path by default**. A handler only falls back to the Python path when it needs custom Python behavior: a custom `logging.Formatter` subclass, `{`- or `$`-style format strings, or a handler-level Python filter. The durable figures above measure the default native path.
+
+### Architectural advantages (independent of any single benchmark)
+
+Regardless of the exact numbers, LogXide's design has real, qualitative advantages:
+
+1. **Native Rust I/O**: `FileHandler`/`RotatingFileHandler` write through a Rust `BufWriter` without materializing a Python `LogRecord` on the fast path.
+2. **Background async I/O**: stream/HTTP/OTLP handlers hand records to a worker thread instead of blocking the caller on the sink.
+3. **Explicit async accounting**: `get_metrics()` reports `emitted`, `sink_acknowledged`, `queue_dropped`, `delivery_failed`, and `in_flight`, so "throughput" always means records the sink confirmed — never records that were merely enqueued.
+
+The corrected harness quantifies these advantages honestly: on this machine they show up as roughly ~10× stdlib on the file path, ~5× on stream, and ~4.7× on rotating (durable, sink-verified), rather than the inflated multipliers the old harness produced.
 
 ## File I/O Scenarios — vs stdlib `logging` (subprocess-isolated)
 
 Methodology: `benchmark/perf_vs_stdlib.py`, 100,000 iterations × 3 runs, FileHandler with the same standard format. stdlib runs in a subprocess so LogXide's import-time module override doesn't pollute the measurement.
+
+!!! note "Scope of these numbers"
+    These compare only LogXide against stdlib, each in its own process — the subprocess isolation the [audit](performance-bottleneck-report-2026-07-13.md) (§5) recommends. `FileHandler` is a **synchronous** Rust handler, so there is no async queue and "durable throughput" equals producer throughput here; no records are dropped. The figures are still specific to the machine and build below, and they measure a single format-string scenario. The corrected, sink-verified cross-library and async-handler numbers are published in the [comparative section above](#comparative-benchmark--all-logging-libraries-corrected-sink-verified).
 
 ### Python 3.12
 
@@ -154,8 +200,8 @@ LogXide is faster on both versions; stdlib's per-iteration overhead dropped on 3
 
 ## Historical Benchmarks (Legacy Results)
 
-!!! warning "Different methodology"
-    The numbers in this section come from an older benchmark harness (different iteration counts, different formatting setup, different Python and OS environment) and use a different measurement methodology than the **File I/O Benchmarks (Real-World Performance)** tables above. They are kept here for historical reference only and should **not** be compared directly against the file-I/O numbers earlier in this page or against the README results. When in doubt, treat the file-I/O tables above as the authoritative LogXide-vs-others comparison for this document.
+!!! warning "Legacy cross-library numbers — not evidence"
+    The numbers in this section come from an older cross-library harness of the same family flagged in the [performance audit](performance-bottleneck-report-2026-07-13.md) (§5). They use a different iteration count, formatting setup, Python/OS environment, and measurement methodology, and they share the same reliability problems (no sink verification, async drops counted as throughput, same-process library imports). They are kept only as a historical record and must **not** be cited as performance evidence or compared against any other table. Treat them as withdrawn pending re-measurement with the corrected harness.
 
 ### Python 3.12.6 - Complete Library Comparison
 
@@ -192,9 +238,9 @@ LogXide is faster on both versions; stdlib's per-iteration overhead dropped on 3
 ### LogXide Advantages
 
 **1. Real I/O Operations**
-- ~3× faster than Picologging on `FileHandler` and `RotatingFileHandler` (Python 3.12, same harness)
-- Rust's native `BufWriter` provides measurable performance gains
+- Runs actual file writes through Rust's native `BufWriter` rather than synthetic no-ops
 - Efficient buffering and system call optimization
+- Cross-library durable throughput is now sink-verified: ~10× stdlib on file, ~5× on stream, ~4.7× on rotating (see the [corrected comparative section](#comparative-benchmark--all-logging-libraries-corrected-sink-verified)); Picologging is excluded because it does not install on Python 3.13+
 
 **2. Consistent Performance**
 - Maintains advantage across all logging patterns
@@ -268,31 +314,23 @@ python benchmark/compare_loggers.py
 
 **LogXide is the best choice for production Python applications:**
 
-1. **Proven Performance**: ~3× faster than Picologging on `FileHandler` and `RotatingFileHandler`, ~13× faster than stdlib in the simple-logging file-I/O scenario (Python 3.12)
+1. **Strong file-I/O performance**: Against stdlib in the subprocess-isolated, synchronous-`FileHandler` scenario, LogXide is substantially faster. The corrected, sink-verified harness puts LogXide at ~10× stdlib on the durable file path, ~5× on stream, and ~4.7× on rotating; exact multipliers are machine- and scenario-specific.
 2. **Real-World Testing**: Benchmarks based on actual file operations, not synthetic tests
-3. **Drop-in Replacement**: No code changes required, instant performance gains
-4. **Consistent Speed**: Maintains advantage across all logging patterns
-5. **Native Performance**: Rust's efficiency provides measurable benefits
+3. **Drop-in Replacement**: No code changes required for common patterns
+4. **Native Performance**: Rust's efficiency provides measurable benefits
 
-### Performance Summary Table (Python 3.12, FileHandler, 10K iterations)
+### Performance Summary Table (durable, sink-verified)
 
-| Library         |   Ops/sec | Speedup vs stdlib |
-| :-------------- | --------: | :---------------- |
-| **LogXide**     | **1,139,874** | **7.85×**         |
-| Structlog       |   932,755 | 6.42×             |
-| Picologging     |   384,319 | 2.65×             |
-| Python `logging`|   145,260 | 1.0× (baseline)   |
-| Logbook         |    99,538 | 0.69×             |
-| Loguru          |    93,896 | 0.65×             |
+The old per-library summary that reranked everything from the defective harness has been replaced by the corrected, sink-verified [comparative tables above](#comparative-benchmark--all-logging-libraries-corrected-sink-verified). On the reference machine (macOS M4 Max, CPython 3.14.2), the durable headline is: LogXide leads every sink, at roughly ~10× stdlib on file, ~5× on stream, and ~4.7× on rotating. Structlog is the runner-up on stream (~2.2× stdlib). Every figure is machine-specific and rounded to avoid false precision.
 
 ### Key Takeaways
 
-1. **LogXide wins in real-world scenarios**: File I/O benchmarks show clear advantage on every comparison
-2. **Performance gap is significant**: 3× over Picologging, 7-13× over stdlib, 12× over Loguru
-3. **Rust advantage is real**: Native code provides measurable benefits over C (Picologging) and pure Python
-4. **Consistent across patterns**: LogXide maintains advantage in simple, structured, and `args` logging
+1. **LogXide is designed for real-world file I/O**: the durable path writes through a Rust `BufWriter` with no Python `LogRecord` on the fast path
+2. **Cross-library gaps are now sink-verified**: LogXide leads all measured libraries on durable throughput (~10× stdlib on file, ~5× on stream, ~4.7× on rotating); numbers are machine-specific and reproduced via `benchmark/basic_handlers_benchmark.py`
+3. **Rust advantage is architectural**: native code and background async I/O provide measurable benefits, quantified honestly by the corrected harness
+4. **Async delivery is accounted**: `get_metrics()` distinguishes delivered records from dropped ones, so async "throughput" is never inflated by drops
 
-**LogXide delivers superior performance where it matters most: actual logging operations in production applications.**
+**LogXide targets performance where it matters most: actual logging operations in production applications, measured honestly.**
 
 ---
 

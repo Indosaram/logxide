@@ -96,6 +96,109 @@ impl Formatter for DefaultFormatter {
     }
 }
 
+/// A single parsed element of a format string. Built once at formatter construction so
+/// `format()` walks the plan instead of re-parsing the format string per record.
+enum Token {
+    Literal(String),
+    Field {
+        name: String,
+        left_align: bool,
+        zero_pad: bool,
+        width: usize,
+    },
+}
+
+/// Parse a Python-style format string into a token plan. This mirrors the exact scanning
+/// rules the per-record formatter previously used: `%(name)` fields with optional `-`
+/// (left align), `0` (zero pad) and width digits, an unconditionally-consumed trailing
+/// conversion char (`s`/`d`/`f`/…), and the fallbacks for a bare `%`, a `%(` with no
+/// closing `)`, and `%(name)` with no trailing conversion char.
+fn parse_plan(format_str: &str) -> Vec<Token> {
+    let mut plan: Vec<Token> = Vec::new();
+    let mut literal = String::new();
+
+    let mut chars = format_str.char_indices().peekable();
+    while let Some(&(_, c)) = chars.peek() {
+        if c == '%' {
+            chars.next();
+            if let Some(&(_, '(')) = chars.peek() {
+                chars.next();
+
+                let mut name_start = None;
+                if let Some(&(idx, _)) = chars.peek() {
+                    name_start = Some(idx);
+                }
+
+                let mut closing_idx = None;
+                while let Some(&(idx, ch)) = chars.peek() {
+                    if ch == ')' {
+                        closing_idx = Some(idx);
+                        chars.next();
+                        break;
+                    }
+                    chars.next();
+                }
+
+                if let (Some(start), Some(end)) = (name_start, closing_idx) {
+                    let field_name = &format_str[start..end];
+
+                    let mut left_align = false;
+                    if let Some(&(_, '-')) = chars.peek() {
+                        left_align = true;
+                        chars.next();
+                    }
+
+                    let mut zero_pad = false;
+                    if let Some(&(_, '0')) = chars.peek() {
+                        zero_pad = true;
+                        chars.next();
+                    }
+
+                    let mut width = 0;
+                    while let Some(&(_, ch)) = chars.peek() {
+                        if ch.is_ascii_digit() {
+                            width = width * 10 + ch.to_digit(10).unwrap() as usize;
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Unconditionally consume the trailing conversion char (s/d/f/…),
+                    // matching the previous per-record parser exactly.
+                    if let Some(&(_, _)) = chars.peek() {
+                        chars.next();
+                    }
+
+                    if !literal.is_empty() {
+                        plan.push(Token::Literal(std::mem::take(&mut literal)));
+                    }
+                    plan.push(Token::Field {
+                        name: field_name.to_string(),
+                        left_align,
+                        zero_pad,
+                        width,
+                    });
+                } else {
+                    // `%(` with no closing `)`: emit only `%` (the scanned chars are dropped,
+                    // exactly as the original parser did).
+                    literal.push('%');
+                }
+            } else {
+                literal.push('%');
+            }
+        } else {
+            literal.push(c);
+            chars.next();
+        }
+    }
+
+    if !literal.is_empty() {
+        plan.push(Token::Literal(literal));
+    }
+    plan
+}
+
 /// Python-compatible formatter supporting Python logging format strings.
 ///
 /// This formatter provides full compatibility with Python's logging module
@@ -133,6 +236,8 @@ pub struct PythonFormatter {
     pub format_string: String,
     /// Optional custom date format (strftime format)
     pub date_format: Option<String>,
+    /// Format string parsed once into a token plan (see `parse_plan`).
+    plan: Vec<Token>,
 }
 
 impl PythonFormatter {
@@ -153,9 +258,11 @@ impl PythonFormatter {
     /// );
     /// ```
     pub fn new(format_string: String) -> Self {
+        let plan = parse_plan(&format_string);
         Self {
             format_string,
             date_format: None,
+            plan,
         }
     }
 
@@ -178,9 +285,11 @@ impl PythonFormatter {
     /// );
     /// ```
     pub fn with_date_format(format_string: String, date_format: String) -> Self {
+        let plan = parse_plan(&format_string);
         Self {
             format_string,
             date_format: Some(date_format),
+            plan,
         }
     }
 }
@@ -211,149 +320,104 @@ impl Formatter for PythonFormatter {
 
 impl PythonFormatter {
     fn format_into(&self, record: &crate::core::LogRecord, result: &mut String) {
-        let format_str = &self.format_string;
-        if result.capacity() < format_str.len() + 128 {
-            result.reserve(format_str.len() + 128 - result.capacity());
+        if result.capacity() < self.format_string.len() + 128 {
+            result.reserve(self.format_string.len() + 128 - result.capacity());
         }
 
         let date_format = self.date_format.as_deref();
+        // Per-call cache: dedupes repeated %(asctime)s within one format string. Not shared
+        // across calls (a shared cache would reintroduce cross-thread contention on the §4
+        // detached path, and a custom datefmt could carry sub-second fields).
         let mut asctime_cache: Option<String> = None;
 
-        let mut chars = format_str.char_indices().peekable();
-        while let Some(&(_, c)) = chars.peek() {
-            if c == '%' {
-                chars.next();
-                if let Some(&(_, '(')) = chars.peek() {
-                    chars.next();
+        for token in &self.plan {
+            let (name, left_align, zero_pad, width) = match token {
+                Token::Literal(s) => {
+                    result.push_str(s);
+                    continue;
+                }
+                Token::Field {
+                    name,
+                    left_align,
+                    zero_pad,
+                    width,
+                } => (name.as_str(), *left_align, *zero_pad, *width),
+            };
 
-                    let mut name_start = None;
-                    if let Some(&(idx, _)) = chars.peek() {
-                        name_start = Some(idx);
-                    }
+            let mut int_buf = itoa::Buffer::new();
+            let owned: String;
 
-                    let mut closing_idx = None;
-                    while let Some(&(idx, ch)) = chars.peek() {
-                        if ch == ')' {
-                            closing_idx = Some(idx);
-                            chars.next();
-                            break;
-                        }
-                        chars.next();
-                    }
-
-                    if let (Some(start), Some(end)) = (name_start, closing_idx) {
-                        let field_name = &format_str[start..end];
-
-                        let mut left_align = false;
-                        if let Some(&(_, '-')) = chars.peek() {
-                            left_align = true;
-                            chars.next();
-                        }
-
-                        let mut zero_pad = false;
-                        if let Some(&(_, '0')) = chars.peek() {
-                            zero_pad = true;
-                            chars.next();
-                        }
-
-                        let mut width = 0;
-                        while let Some(&(_, ch)) = chars.peek() {
-                            if ch.is_ascii_digit() {
-                                width = width * 10 + ch.to_digit(10).unwrap() as usize;
-                                chars.next();
-                            } else {
-                                break;
-                            }
-                        }
-
-                        if let Some(&(_, _)) = chars.peek() {
-                            chars.next();
-                        }
-
-                        let mut int_buf = itoa::Buffer::new();
-                        let owned: String;
-
-                        let val_str: &str = match field_name {
-                            "ansi_level_color" => ansi_colors::get_level_color(&record.levelname),
-                            "ansi_reset_color" => ansi_colors::RESET,
-                            "levelname" => &record.levelname,
-                            "threadName" => &record.thread_name,
-                            "name" => &record.name,
-                            "msecs" => int_buf.format(record.msecs as i32),
-                            "levelno" => int_buf.format(record.levelno),
-                            "pathname" => &record.pathname,
-                            "filename" => &record.filename,
-                            "module" => &record.module,
-                            "lineno" => int_buf.format(record.lineno),
-                            "funcName" => &record.func_name,
-                            "thread" => int_buf.format(record.thread),
-                            "processName" => &record.process_name,
-                            "process" => int_buf.format(record.process),
-                            "message" => {
-                                owned = record.get_message();
-                                &owned
-                            }
-                            "created" => {
-                                owned = record.created.to_string();
-                                &owned
-                            }
-                            "relativeCreated" => {
-                                owned = record.relative_created.to_string();
-                                &owned
-                            }
-                            "asctime" => {
-                                let s = asctime_cache.get_or_insert_with(|| {
-                                    let datetime = chrono::Local
-                                        .timestamp_opt(
-                                            record.created as i64,
-                                            (record.msecs * 1_000_000.0) as u32,
-                                        )
-                                        .single()
-                                        .unwrap_or_else(chrono::Local::now);
-                                    if let Some(date_fmt) = date_format {
-                                        datetime.format(date_fmt).to_string()
-                                    } else {
-                                        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
-                                    }
-                                });
-                                s.as_str()
-                            }
-                            other => {
-                                owned = if let Some(ref extra_fields) = record.extra {
-                                    if let Some(value) = extra_fields.get(other) {
-                                        match value {
-                                            serde_json::Value::String(s) => s.clone(),
-                                            serde_json::Value::Null => "null".to_string(),
-                                            other_val => other_val.to_string(),
-                                        }
-                                    } else {
-                                        format!("%({other})")
-                                    }
-                                } else {
-                                    format!("%({other})")
-                                };
-                                &owned
-                            }
-                        };
-
-                        if width == 0 {
-                            result.push_str(val_str);
-                        } else if left_align {
-                            let _ = write!(result, "{val_str:<width$}");
-                        } else if zero_pad {
-                            let _ = write!(result, "{val_str:0>width$}");
+            let val_str: &str = match name {
+                "ansi_level_color" => ansi_colors::get_level_color(&record.levelname),
+                "ansi_reset_color" => ansi_colors::RESET,
+                "levelname" => &record.levelname,
+                "threadName" => &record.thread_name,
+                "name" => &record.name,
+                "msecs" => int_buf.format(record.msecs as i32),
+                "levelno" => int_buf.format(record.levelno),
+                "pathname" => &record.pathname,
+                "filename" => &record.filename,
+                "module" => &record.module,
+                "lineno" => int_buf.format(record.lineno),
+                "funcName" => &record.func_name,
+                "thread" => int_buf.format(record.thread),
+                "processName" => &record.process_name,
+                "process" => int_buf.format(record.process),
+                "message" => {
+                    owned = record.get_message();
+                    &owned
+                }
+                "created" => {
+                    owned = record.created.to_string();
+                    &owned
+                }
+                "relativeCreated" => {
+                    owned = record.relative_created.to_string();
+                    &owned
+                }
+                "asctime" => {
+                    let s = asctime_cache.get_or_insert_with(|| {
+                        let datetime = chrono::Local
+                            .timestamp_opt(
+                                record.created as i64,
+                                (record.msecs * 1_000_000.0) as u32,
+                            )
+                            .single()
+                            .unwrap_or_else(chrono::Local::now);
+                        if let Some(date_fmt) = date_format {
+                            datetime.format(date_fmt).to_string()
                         } else {
-                            let _ = write!(result, "{val_str:>width$}");
+                            datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+                        }
+                    });
+                    s.as_str()
+                }
+                other => {
+                    owned = if let Some(ref extra_fields) = record.extra {
+                        if let Some(value) = extra_fields.get(other) {
+                            match value {
+                                serde_json::Value::String(s) => s.clone(),
+                                serde_json::Value::Null => "null".to_string(),
+                                other_val => other_val.to_string(),
+                            }
+                        } else {
+                            format!("%({other})")
                         }
                     } else {
-                        result.push('%');
-                    }
-                } else {
-                    result.push('%');
+                        format!("%({other})")
+                    };
+                    &owned
                 }
+            };
+
+            if width == 0 {
+                result.push_str(val_str);
+            } else if left_align {
+                let _ = write!(result, "{val_str:<width$}");
+            } else if zero_pad {
+                let _ = write!(result, "{val_str:0>width$}");
             } else {
-                result.push(c);
-                chars.next();
+                let _ = write!(result, "{val_str:>width$}");
             }
         }
 
@@ -419,6 +483,8 @@ pub struct ColorFormatter {
     pub format_string: String,
     /// Optional custom date format (strftime format)
     pub date_format: Option<String>,
+    /// Pre-built inner formatter (with its parsed plan) reused across format() calls.
+    inner: PythonFormatter,
 }
 
 impl ColorFormatter {
@@ -441,6 +507,7 @@ impl ColorFormatter {
     /// ```
     pub fn new(format_string: String) -> Self {
         Self {
+            inner: PythonFormatter::new(format_string.clone()),
             format_string,
             date_format: None,
         }
@@ -454,6 +521,7 @@ impl ColorFormatter {
     /// * `date_format` - strftime format string for date/time formatting
     pub fn with_date_format(format_string: String, date_format: String) -> Self {
         Self {
+            inner: PythonFormatter::with_date_format(format_string.clone(), date_format.clone()),
             format_string,
             date_format: Some(date_format),
         }
@@ -463,14 +531,9 @@ impl ColorFormatter {
 impl Formatter for ColorFormatter {
     /// Format a log record with ANSI color support.
     ///
-    /// First replaces color placeholders with appropriate ANSI codes,
-    /// then delegates to PythonFormatter logic for remaining fields.
+    /// Delegates to the pre-built inner PythonFormatter, whose token plan handles the
+    /// %(ansi_level_color)s / %(ansi_reset_color)s fields alongside the standard ones.
     fn format(&self, record: &crate::core::LogRecord) -> String {
-        let python_formatter = PythonFormatter {
-            format_string: self.format_string.clone(),
-            date_format: self.date_format.clone(),
-        };
-
-        python_formatter.format(record)
+        self.inner.format(record)
     }
 }

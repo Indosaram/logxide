@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-13
+
+This release resolves the correctness and performance defects found in the
+2026-07-13 bottleneck audit (`docs/performance-bottleneck-report-2026-07-13.md`).
+It contains **behavior-breaking changes** (flush semantics and the async overflow
+default). Because the project is still `0.x`, these ship in a minor bump; review
+the BREAKING section before upgrading.
+
+### Fixed
+- **Rust-backed handlers no longer double-emit or leak across loggers (P0-1).** A
+  Rust-backed handler was kept in a global keep-alive list that was *also* used as
+  the Python dispatch list, so a public handler emitted the owner's record twice
+  and unrelated loggers received each other's records; cost scaled O(N) with every
+  registered handler (100 handlers → 107x on an unrelated logger). Handler dispatch
+  is now routed by backend kind and scoped per logger: structured sinks
+  (`HTTPHandler`/`OTLPHandler`) and direct Rust handlers dispatch exactly once via
+  their Rust `Arc`; text-sink wrappers (`FileHandler`/`StreamHandler`/
+  `RotatingFileHandler`/`MemoryHandler`) and foreign Python handlers dispatch once
+  via Python. An owner's single `emit` now delivers exactly one record and unrelated
+  loggers receive zero. Keep-alive and dispatch are no longer conflated.
+- **`clear_handlers()`/`removeHandler()`/`close()` now fully tear down routing and
+  background workers (P0-1).** Clearing/removing a handler drops its `Arc`, and for
+  async handlers drains and **joins** the worker thread; previously the global
+  keep-alive list retained handlers and worker threads leaked. `PyLogger.removeHandler`
+  (previously missing) is implemented.
+- **Async queue overflow is now a real, observable policy (P0-2).** `StreamHandler`,
+  `HTTPHandler`, and `OTLPHandler` previously ignored `try_send`/`send_timeout(5ms)`
+  results and dropped records silently. They now implement the selected
+  `OverflowStrategy` and expose payload-free counters via `get_metrics()`
+  (`emitted`, `sink_acknowledged`, `queue_dropped`, `delivery_failed`, `in_flight`);
+  after a drain, `sink_acknowledged + queue_dropped + delivery_failed == emitted`.
+- **`flush()` now drains the queue and waits for sink acknowledgement (P0-2).** The
+  worker previously received only one more record on a flush signal before
+  signalling completion, so `flush()` did not guarantee delivery. It now drains the
+  queue to empty and waits (bounded by a flush timeout) before returning.
+- **Direct `HTTPHandler.flush()` no longer deadlocks against the GIL (P0-2).** The
+  default HTTP JSON serialization ran inside `Python::attach`, so a GIL-holding
+  `flush()` blocked the worker for the full 5s timeout. Default serialization is now
+  pure-Rust and runs **outside** the GIL; `flush()`/`shutdown()` release the GIL
+  while waiting. The GIL is entered only when a `transform_callback`/
+  `context_provider`/`error_callback` is actually configured.
+- **Installing (but not configuring) the Sentry SDK no longer forces process-global
+  caller-frame collection (P1-1).** Caller-info requirement is now derived from the
+  handlers/formatters actually in use and is recomputed when handlers are removed,
+  instead of a one-way global flag. This removes the ~2.1x per-log penalty observed
+  when `sentry-sdk` was merely importable.
+
+### Performance
+- **Enabled logs with no destination do far less work (P1-2).** The Python
+  `LogRecord` mirror is now built lazily only when a Python handler will actually be
+  dispatched, and unrelated no-handler loggers no longer pay record-construction or
+  method-lookup cost.
+- **GIL-released producer fast path (P2).** When a log has no Python filters, no
+  Python-dispatch handlers, and no caller-info requirement, record creation and Rust
+  handler dispatch run inside `py.detach()` (GIL released), allowing genuine
+  parallel emission. Logs using `%`-args still re-acquire the GIL for `msg % args`
+  formatting and will not fully parallelize until a later release; the shared
+  File/Rotating/Memory handler mutex is the next contention point on GIL builds.
+- **Formatters parse their format string once (P1-3).** `PythonFormatter` now builds
+  a token plan at construction instead of re-parsing the format string on every
+  record, and `ColorFormatter` reuses a pre-built inner formatter instead of
+  allocating one per call. Output is byte-identical.
+- **Text-sink handler wrappers now dispatch through the native Rust path by
+  default (performance-first).** `logxide.handlers.FileHandler`/`StreamHandler`/
+  `RotatingFileHandler` previously did a Rust→Python→Rust round trip per record
+  (~55K rec/s). They now emit directly through their Rust `_inner` on the
+  GIL-released fast path, translating a plain `%`-style `logging.Formatter`
+  (fmt + datefmt, `%` style) into the Rust formatter. Sink-verified durable
+  throughput rises to ~740K–960K rec/s (FILE), ~5–10× the stdlib `logging`
+  baseline on the same machine. A handler falls back to the Python path only when
+  a custom `Formatter` subclass, a `{`/`$` style, or a handler-level Python filter
+  is configured — so `dictConfig`, `caplog`, and custom formatters still work.
+
+### Added
+- `get_metrics()` on `HTTPHandler`/`OTLPHandler` (Rust and public wrappers) returning
+  `{emitted, sink_acknowledged, queue_dropped, delivery_failed, in_flight}`.
+- `overflow=` constructor argument on `HTTPHandler`/`OTLPHandler`
+  (`"block"` (default) | `"drop_oldest"` | `"drop_newest"`).
+
+### Changed (BREAKING)
+- **`flush()` now blocks until the queue drains and the sink acknowledges** (bounded
+  by a flush timeout), rather than returning best-effort immediately. The return type
+  is unchanged (`None`), but `logging.shutdown()`/`flush()` may take longer under a
+  slow sink. Use `get_metrics()` for explicit accounting.
+- **Default async overflow strategy is now `block` (durable).** Under sink saturation
+  `HTTPHandler`/`OTLPHandler` apply backpressure instead of silently dropping. Choose
+  `overflow="drop_oldest"`/`"drop_newest"` for the previous lossy-but-non-blocking
+  behavior; drops are then reported in `get_metrics()["queue_dropped"]`.
+- **Handler-level Python filters attached to structured sinks (`HTTPHandler`/
+  `OTLPHandler`) are not applied**, because these dispatch via the Rust `Arc` path.
+  Filter on the logger instead. (Known limitation, documented.)
+- **`__version__` corrected to match the packaged version.** Runtime
+  `logxide.__version__` previously reported `0.1.19` while the package was `0.1.22`;
+  both are now `0.2.0`.
+
+### Benchmarks / Docs
+- The benchmark harness was rewritten to fix credibility defects (per-scenario
+  subprocess isolation so stdlib/structlog are not measured inside a logxide-patched
+  process; a stream sink that stays open; verified sink-delivery counts; a real
+  `RotatingFileHandler` with rotation verification; separate durable-throughput and
+  producer p50/p95/p99 latency reporting; async drop/failure/in-flight accounting).
+- Documentation was corrected to stop presenting the previously-unverified
+  cross-library throughput tables as fact, to accurately scope the GIL-release
+  behavior, and to document the new flush/overflow/metrics contracts and Sentry
+  auto-detection semantics.
+
 ## [0.1.22] - 2026-06-15
 
 ### Changed

@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use once_cell::sync::Lazy;
@@ -27,20 +27,59 @@ use crate::py_logger::PyLogger;
 pub static HANDLERS: Lazy<ArcSwap<Vec<Arc<dyn Handler + Send + Sync>>>> =
     Lazy::new(|| ArcSwap::from_pointee(Vec::new()));
 
+/// Root py_dispatch list: text-sink wrappers + foreign Python handlers attached to root.
+pub static GLOBAL_PY_HANDLERS: Lazy<Mutex<Vec<PyEntry>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Root lifecycle list: all rust-backed arcs attached to root (incl. text-sink `_inner`)
+/// so module-level flush/teardown can reach them.
+pub static GLOBAL_LIFECYCLE: Lazy<Mutex<Vec<Arc<dyn Handler + Send + Sync>>>> =
+    Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Number of currently-attached handlers that require caller-frame introspection.
+/// Lets removeHandler recompute CALLER_INFO_REQUIRED back to false.
+pub static CALLER_INFO_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Identity of a handler entry, used for removeHandler matching.
+/// Rust entries: `Arc::as_ptr` as usize. Python entries: `obj.as_ptr` as usize.
+pub type HandlerId = usize;
+
+/// A rust-backed handler dispatched via `Arc::emit` (structured HTTP/OTLP or direct pyclass).
+pub struct RustEntry {
+    pub arc: Arc<dyn Handler + Send + Sync>,
+    pub id: HandlerId,
+    pub wrapper: Option<Py<PyAny>>,
+}
+
+/// A Python handler dispatched via `handle()` (text-sink wrapper or foreign handler).
+pub struct PyEntry {
+    pub obj: Py<PyAny>,
+    pub id: HandlerId,
+    pub needs_caller: bool,
+}
+
+/// Identity for a rust-backed handler arc.
+pub fn arc_id(arc: &Arc<dyn Handler + Send + Sync>) -> HandlerId {
+    Arc::as_ptr(arc) as *const () as usize
+}
+
 /// Global flag indicating if caller frame introspection is required by any formatter/handler
 pub static CALLER_INFO_REQUIRED: AtomicBool = AtomicBool::new(false);
 
 /// Check if a format string contains caller-related placeholders and activate introspection if so
 pub fn check_caller_info_needed(format_str: &str) {
-    if format_str.contains("%(pathname)")
+    if format_string_needs_caller(format_str) {
+        CALLER_INFO_REQUIRED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether a format string references caller-frame fields.
+pub fn format_string_needs_caller(format_str: &str) -> bool {
+    format_str.contains("%(pathname)")
         || format_str.contains("%(filename)")
         || format_str.contains("%(module)")
         || format_str.contains("%(lineno)")
         || format_str.contains("%(funcName)")
         || format_str.contains("%(func_name)")
-    {
-        CALLER_INFO_REQUIRED.store(true, Ordering::Relaxed);
-    }
 }
 
 /// Expose caller-info activation to Python compatibility layer
@@ -49,9 +88,26 @@ pub fn activate_caller_info(format_str: &str) {
     check_caller_info_needed(format_str);
 }
 
-/// GLOBAL KEEP ALIVE to prevent Python objects from being garbage collected
-pub static PYTHON_HANDLERS_KEEP_ALIVE: Lazy<Mutex<Vec<Py<PyAny>>>> =
-    Lazy::new(|| Mutex::new(Vec::new()));
+/// Decide whether a foreign Python handler needs caller-frame info by inspecting its
+/// formatter's format string. Non-inspectable foreign handlers are treated conservatively
+/// as needing caller info (matches prior always-on behavior for e.g. Sentry).
+fn python_handler_needs_caller(handler: &Bound<PyAny>) -> bool {
+    let Ok(formatter) = handler.getattr("formatter") else {
+        return true;
+    };
+    if formatter.is_none() {
+        return true;
+    }
+    let fmt = formatter
+        .getattr("fmt")
+        .ok()
+        .filter(|f| !f.is_none())
+        .or_else(|| formatter.getattr("_fmt").ok().filter(|f| !f.is_none()));
+    match fmt.and_then(|f| f.extract::<String>().ok()) {
+        Some(fmt_str) => format_string_needs_caller(&fmt_str),
+        None => true,
+    }
+}
 
 /// GLOBAL LOGGER REGISTRY in Rust to keep PyLogger objects alive
 pub static PY_LOGGER_KEEP_ALIVE: Lazy<Mutex<HashMap<String, Py<PyLogger>>>> =
@@ -100,8 +156,9 @@ pub fn basicConfig(_py: Python, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult
 
 #[pyfunction]
 pub fn flush(py: Python) -> PyResult<()> {
-    let handlers_guard = HANDLERS.load();
-    let handlers: Vec<Arc<dyn Handler + Send + Sync>> = handlers_guard.iter().cloned().collect();
+    let mut handlers: Vec<Arc<dyn Handler + Send + Sync>> =
+        HANDLERS.load().iter().cloned().collect();
+    handlers.extend(GLOBAL_LIFECYCLE.lock().unwrap().iter().cloned());
     py.detach(|| {
         for h in handlers.iter() {
             h.flush();
@@ -151,8 +208,17 @@ pub fn register_http_handler(
 }
 
 #[pyfunction]
-pub fn clear_handlers(_py: Python) -> PyResult<()> {
+pub fn clear_handlers(py: Python) -> PyResult<()> {
+    let mut arcs: Vec<Arc<dyn Handler + Send + Sync>> =
+        GLOBAL_LIFECYCLE.lock().unwrap().drain(..).collect();
+    arcs.extend(HANDLERS.load().iter().cloned());
+    py.detach(|| {
+        for arc in arcs.iter() {
+            arc.shutdown();
+        }
+    });
     HANDLERS.store(Arc::new(Vec::new()));
+    GLOBAL_PY_HANDLERS.lock().unwrap().clear();
     Ok(())
 }
 
@@ -275,72 +341,189 @@ pub fn register_stream_handler(
     Ok(())
 }
 
-/// Helper function to add a handler to the appropriate registry
+/// Extract the Rust `Arc<dyn Handler>` from a handler pyclass (HTTP/OTLP/Memory/File/
+/// Stream/Rotating). Used on both the object itself (DIRECT pyclass) and its `_inner`
+/// (public wrapper). All text-sink kinds route through rust_dispatch; the per-record
+/// Native/Python decision lives on the arc's dispatch_mode flag.
+fn extract_rust_arc(obj: &Bound<PyAny>) -> Option<Arc<dyn Handler + Send + Sync>> {
+    if let Ok(h) = obj.extract::<PyRef<PyHTTPHandler>>() {
+        Some(h.inner.clone())
+    } else if let Ok(h) = obj.extract::<PyRef<PyOTLPHandler>>() {
+        Some(h.inner.clone())
+    } else if let Ok(h) = obj.extract::<PyRef<PyMemoryHandler>>() {
+        Some(h.inner.clone())
+    } else if let Ok(h) = obj.extract::<PyRef<PyFileHandler>>() {
+        Some(h.inner.clone())
+    } else if let Ok(h) = obj.extract::<PyRef<PyStreamHandler>>() {
+        Some(h.inner.clone())
+    } else if let Ok(h) = obj.extract::<PyRef<PyRotatingFileHandler>>() {
+        Some(h.inner.clone())
+    } else {
+        None
+    }
+}
+
+fn decrement_caller_info() {
+    if CALLER_INFO_COUNT.load(Ordering::Relaxed) > 0 {
+        let remaining = CALLER_INFO_COUNT
+            .fetch_sub(1, Ordering::Relaxed)
+            .saturating_sub(1);
+        if remaining == 0 {
+            CALLER_INFO_REQUIRED.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
+fn register_rust_entry(
+    is_root: bool,
+    arc: Arc<dyn Handler + Send + Sync>,
+    wrapper: Option<Py<PyAny>>,
+    rust_dispatch: &Mutex<Vec<RustEntry>>,
+    lifecycle: &Mutex<Vec<Arc<dyn Handler + Send + Sync>>>,
+) {
+    let id = arc_id(&arc);
+    if is_root {
+        // Root handlers live in the global HANDLERS list (Arc only). Text-sink wrappers
+        // attached to root therefore dispatch natively (no per-entry wrapper is kept).
+        push_handler(arc.clone());
+        GLOBAL_LIFECYCLE.lock().unwrap().push(arc);
+    } else {
+        rust_dispatch.lock().unwrap().push(RustEntry {
+            arc: arc.clone(),
+            id,
+            wrapper,
+        });
+        lifecycle.lock().unwrap().push(arc);
+    }
+}
+
+/// Route a handler into the correct dispatch list by backend kind (PHASE 6).
+/// A DIRECT rust pyclass (RustFileHandler etc.) -> rust_dispatch{wrapper:None}. A public
+/// wrapper whose `_inner` is a rust pyclass (File/Stream/Rotating/Memory/HTTP/OTLP) ->
+/// rust_dispatch{wrapper:Some(handler)} so emit_record can read the arc's dispatch_mode and
+/// fall back to `wrapper.handle()` in Python mode. FOREIGN Python handlers -> py_dispatch.
+/// `name == "root"` targets the global lists; otherwise the per-logger lists.
 pub fn add_handler_to_registry(
     handler: &Bound<PyAny>,
     logger_name: &str,
-    local_handlers: &Mutex<Vec<Arc<dyn Handler + Send + Sync>>>,
-    local_python_handlers: &Mutex<Vec<Py<PyAny>>>,
+    rust_dispatch: &Mutex<Vec<RustEntry>>,
+    py_dispatch: &Mutex<Vec<PyEntry>>,
+    lifecycle: &Mutex<Vec<Arc<dyn Handler + Send + Sync>>>,
 ) -> PyResult<bool> {
-    let handler_arc: Option<Arc<dyn Handler + Send + Sync>> =
-        if let Ok(file_handler) = handler.extract::<PyRef<PyFileHandler>>() {
-            Some(file_handler.inner.clone())
-        } else if let Ok(stream_handler) = handler.extract::<PyRef<PyStreamHandler>>() {
-            Some(stream_handler.inner.clone())
-        } else if let Ok(rotating_handler) = handler.extract::<PyRef<PyRotatingFileHandler>>() {
-            Some(rotating_handler.inner.clone())
-        } else if let Ok(http_handler) = handler.extract::<PyRef<PyHTTPHandler>>() {
-            Some(http_handler.inner.clone())
-        } else if let Ok(otlp_handler) = handler.extract::<PyRef<PyOTLPHandler>>() {
-            Some(otlp_handler.inner.clone())
-        } else if let Ok(memory_handler) = handler.extract::<PyRef<PyMemoryHandler>>() {
-            Some(memory_handler.inner.clone())
-        } else if let Ok(inner) = handler.getattr("_inner") {
-            if let Ok(file_handler) = inner.extract::<PyRef<PyFileHandler>>() {
-                Some(file_handler.inner.clone())
-            } else if let Ok(stream_handler) = inner.extract::<PyRef<PyStreamHandler>>() {
-                Some(stream_handler.inner.clone())
-            } else if let Ok(rotating_handler) = inner.extract::<PyRef<PyRotatingFileHandler>>() {
-                Some(rotating_handler.inner.clone())
-            } else if let Ok(http_handler) = inner.extract::<PyRef<PyHTTPHandler>>() {
-                Some(http_handler.inner.clone())
-            } else if let Ok(otlp_handler) = inner.extract::<PyRef<PyOTLPHandler>>() {
-                Some(otlp_handler.inner.clone())
-            } else if let Ok(memory_handler) = inner.extract::<PyRef<PyMemoryHandler>>() {
-                Some(memory_handler.inner.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+    let is_root = logger_name == "root";
+    let inner = handler.getattr("_inner").ok();
 
-    if let Some(h) = handler_arc {
-        if logger_name == "root" {
-            push_handler(h);
-        } else {
-            local_handlers.lock().unwrap().push(h);
-        }
-        // CRITICAL: Prevent Python object from being GC'd
-        PYTHON_HANDLERS_KEEP_ALIVE
-            .lock()
-            .unwrap()
-            .push(handler.clone().unbind());
-        Ok(true)
-    } else {
-        // Allow Python handlers
-        CALLER_INFO_REQUIRED.store(true, Ordering::Relaxed);
-        if logger_name == "root" {
-            PYTHON_HANDLERS_KEEP_ALIVE
-                .lock()
-                .unwrap()
-                .push(handler.clone().unbind());
-        } else {
-            local_python_handlers
-                .lock()
-                .unwrap()
-                .push(handler.clone().unbind());
-        }
-        Ok(true)
+    // DIRECT rust pyclass: the object itself is a handler.
+    if let Some(arc) = extract_rust_arc(handler) {
+        register_rust_entry(is_root, arc, None, rust_dispatch, lifecycle);
+        return Ok(true);
     }
+
+    // Public wrapper: its `_inner` is a rust pyclass.
+    if let Some(arc) = inner.as_ref().and_then(extract_rust_arc) {
+        register_rust_entry(
+            is_root,
+            arc,
+            Some(handler.clone().unbind()),
+            rust_dispatch,
+            lifecycle,
+        );
+        return Ok(true);
+    }
+
+    // FOREIGN python handler.
+    let needs_caller = python_handler_needs_caller(handler);
+    if needs_caller {
+        CALLER_INFO_COUNT.fetch_add(1, Ordering::Relaxed);
+        CALLER_INFO_REQUIRED.store(true, Ordering::Relaxed);
+    }
+    let entry = PyEntry {
+        obj: handler.clone().unbind(),
+        id: handler.as_ptr() as usize,
+        needs_caller,
+    };
+    if is_root {
+        GLOBAL_PY_HANDLERS.lock().unwrap().push(entry);
+    } else {
+        py_dispatch.lock().unwrap().push(entry);
+    }
+    Ok(true)
+}
+
+/// Remove a handler by identity. Rust entries match by `_inner` Arc pointer OR by stored
+/// wrapper identity. Structured/async entries have their worker shut down. Foreign Python
+/// handler removal recomputes CALLER_INFO_REQUIRED.
+pub fn remove_handler_from_registry(
+    handler: &Bound<PyAny>,
+    logger_name: &str,
+    rust_dispatch: &Mutex<Vec<RustEntry>>,
+    py_dispatch: &Mutex<Vec<PyEntry>>,
+    lifecycle: &Mutex<Vec<Arc<dyn Handler + Send + Sync>>>,
+) -> PyResult<()> {
+    let is_root = logger_name == "root";
+    let py_id = handler.as_ptr() as usize;
+    let inner = handler.getattr("_inner").ok();
+    let arc = extract_rust_arc(handler).or_else(|| inner.as_ref().and_then(extract_rust_arc));
+    let arc_identity = arc.as_ref().map(arc_id);
+
+    if is_root {
+        if let Some(aid) = arc_identity {
+            let current = HANDLERS.load();
+            let mut kept: Vec<Arc<dyn Handler + Send + Sync>> = Vec::new();
+            for h in current.iter() {
+                if arc_id(h) == aid {
+                    h.shutdown();
+                } else {
+                    kept.push(h.clone());
+                }
+            }
+            HANDLERS.store(Arc::new(kept));
+            GLOBAL_LIFECYCLE
+                .lock()
+                .unwrap()
+                .retain(|h| arc_id(h) != aid);
+        }
+        GLOBAL_PY_HANDLERS.lock().unwrap().retain(|e| {
+            if e.id == py_id {
+                if e.needs_caller {
+                    decrement_caller_info();
+                }
+                false
+            } else {
+                true
+            }
+        });
+    } else {
+        let mut removed_ids: Vec<HandlerId> = Vec::new();
+        rust_dispatch.lock().unwrap().retain(|e| {
+            let hit = arc_identity == Some(e.id)
+                || e.wrapper
+                    .as_ref()
+                    .is_some_and(|w| w.as_ptr() as usize == py_id);
+            if hit {
+                e.arc.shutdown();
+                removed_ids.push(e.id);
+                false
+            } else {
+                true
+            }
+        });
+        if !removed_ids.is_empty() {
+            lifecycle
+                .lock()
+                .unwrap()
+                .retain(|h| !removed_ids.contains(&arc_id(h)));
+        }
+        py_dispatch.lock().unwrap().retain(|e| {
+            if e.id == py_id {
+                if e.needs_caller {
+                    decrement_caller_info();
+                }
+                false
+            } else {
+                true
+            }
+        });
+    }
+    Ok(())
 }

@@ -28,14 +28,14 @@ LogXide is a high-performance logging library for Python, delivering up to **13�
 - **Direct Processing**: Efficient log message processing with native Rust handlers (file I/O synchronous, stream/HTTP/OTLP non-blocking)
 - **Rich Formatting**: All Python logging format specifiers with advanced features
 - **Level Filtering**: Hierarchical logger levels with inheritance
-- **Sentry Integration**: Automatic error tracking with Sentry (optional)
+- **Sentry Integration**: Automatic error tracking when a Sentry SDK is already configured (optional)
 - **Native OpenTelemetry**: Built-in OTLP handler for shipping logs to any OTLP-compatible backend
 
 ## ⚠️ Compatibility Caveats
 
 LogXide prioritizes performance over full stdlib compatibility. Before adopting, note:
 
-- **Custom Python handlers via `addHandler()`** — Accepted, but they run alongside the Rust pipeline (records may be processed twice) and do not benefit from the zero-GIL Rust path
+- **Custom Python handlers via `addHandler()`** — Accepted; a foreign Python handler runs once on the Python side (no fast-path GIL release). Rust-backed handlers are dispatched once and no longer double-emit or leak to unrelated loggers (fixed in 0.2.0)
 - **Subclassing** — `LogRecord` and `Logger` are Rust types and cannot be subclassed
 - **pytest** — Use the bundled `caplog_logxide` fixture instead of stdlib `caplog`
 

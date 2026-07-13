@@ -12,7 +12,7 @@ The primary interface, imported via `from logxide import logging`.
 
 - `logging.basicConfig(**kwargs)` — Configure root logger with handlers and formatters
 - `logging.getLogger(name=None)` — Get or create a named logger
-- `logging.flush()` — Ensure all pending log messages are processed
+- `logging.flush()` — Drain all async handler queues and wait (bounded by each handler's flush timeout) for their sinks to acknowledge before returning
 - `logging.set_thread_name(name)` — Set the thread name for logging
 - `logging.clear_handlers()` — Remove all handlers from the root logger
 
@@ -121,6 +121,7 @@ handler = HTTPHandler(
     capacity=10000,
     batch_size=1000,
     flush_interval=30,
+    overflow="block",
     global_context={"app": "myapp", "env": "production"},
     transform_callback=None,
     context_provider=None,
@@ -135,6 +136,7 @@ handler = HTTPHandler(
 | `capacity` | `int` | `10000` | Max buffer capacity |
 | `batch_size` | `int` | `1000` | Records per batch |
 | `flush_interval` | `int` | `30` | Seconds between auto-flush |
+| `overflow` | `str` | `"block"` | Queue-saturation policy: `"block"` (durable, no drops), `"drop_oldest"`, or `"drop_newest"` |
 | `global_context` | `dict \| None` | `None` | Static fields added to every record |
 | `transform_callback` | `Callable \| None` | `None` | `fn(records) -> transformed` for custom JSON |
 | `context_provider` | `Callable \| None` | `None` | `fn() -> dict` for dynamic context per batch |
@@ -146,8 +148,9 @@ handler = HTTPHandler(
 |--------|-------------|
 | `setFlushLevel(level)` | Records at or above this level trigger immediate batch send (default: `ERROR`). |
 | `getFlushLevel()` | Returns the current flush level. |
-| `flush()` | Triggers immediate batch send and waits for completion. |
-| `close()` | Shuts down the background thread and flushes remaining records. |
+| `flush()` | Drains the batch queue and waits (up to the flush timeout) for the sink to acknowledge the enqueued records. Returns `None`. |
+| `get_metrics()` | Returns `dict{emitted, sink_acknowledged, queue_dropped, delivery_failed, in_flight}` (payload-free). After a drain, `sink_acknowledged + queue_dropped + delivery_failed == emitted` and `in_flight == 0`. |
+| `close()` | Drains the queue, then joins the background worker thread. |
 
 ### OTLPHandler
 
@@ -164,6 +167,7 @@ handler = OTLPHandler(
     capacity=10000,
     batch_size=1000,
     flush_interval=30,
+    overflow="block",
     error_callback=None,
 )
 ```
@@ -176,14 +180,16 @@ handler = OTLPHandler(
 | `capacity` | `int` | `10000` | Max buffer capacity |
 | `batch_size` | `int` | `1000` | Records per batch |
 | `flush_interval` | `int` | `30` | Seconds between auto-flush |
+| `overflow` | `str` | `"block"` | Queue-saturation policy: `"block"` (durable, no drops), `"drop_oldest"`, or `"drop_newest"` |
 | `error_callback` | `Callable \| None` | `None` | `fn(error_msg)` for failure handling |
 
 **Advanced methods:**
 
 | Method | Description |
 |--------|-------------|
-| `flush()` | Triggers immediate batch send and waits for completion. |
-| `close()` | Shuts down the background thread and flushes remaining records. |
+| `flush()` | Drains the batch queue and waits (up to the flush timeout) for the sink to acknowledge the enqueued records. Returns `None`. |
+| `get_metrics()` | Returns `dict{emitted, sink_acknowledged, queue_dropped, delivery_failed, in_flight}` (payload-free). After a drain, `sink_acknowledged + queue_dropped + delivery_failed == emitted` and `in_flight == 0`. |
+| `close()` | Drains the queue, then joins the background worker thread. |
 
 ### MemoryHandler
 

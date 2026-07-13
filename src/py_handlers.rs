@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::{LogLevel, LogRecord};
-use crate::formatter::{ColorFormatter, Formatter, PythonFormatter};
+use crate::formatter::{ColorFormatter, Formatter, NoOpFormatter, PythonFormatter};
 use crate::globals::check_caller_info_needed;
 use crate::handler::{
-    FileHandler, HTTPHandler, HTTPHandlerConfig, Handler, MemoryHandler, OTLPHandler,
-    OTLPHandlerConfig, RotatingFileHandler, StreamHandler,
+    DispatchMode, FileHandler, HTTPHandler, HTTPHandlerConfig, Handler, MemoryHandler, OTLPHandler,
+    OTLPHandlerConfig, OverflowStrategy, RotatingFileHandler, StreamHandler,
 };
 use crate::py_logger::check_level;
 
@@ -166,6 +166,35 @@ impl PyFileHandler {
         self.inner.emit(&rust_record);
         Ok(())
     }
+
+    #[pyo3(name = "setFormatterSpec", signature = (fmt=None, datefmt=None))]
+    fn set_formatter_spec(&self, fmt: Option<String>, datefmt: Option<String>) -> PyResult<()> {
+        match fmt {
+            Some(f) => {
+                check_caller_info_needed(&f);
+                let formatter: Arc<dyn Formatter + Send + Sync> = match datefmt {
+                    Some(df) => Arc::new(PythonFormatter::with_date_format(f, df)),
+                    None => Arc::new(PythonFormatter::new(f)),
+                };
+                self.inner.set_formatter_instance(formatter);
+            }
+            None => self.inner.set_formatter_instance(Arc::new(NoOpFormatter)),
+        }
+        self.inner.set_dispatch_mode(DispatchMode::Native);
+        Ok(())
+    }
+
+    #[pyo3(name = "setPythonDispatch")]
+    fn set_python_dispatch(&self) -> PyResult<()> {
+        self.inner.set_formatter_instance(Arc::new(NoOpFormatter));
+        self.inner.set_dispatch_mode(DispatchMode::Python);
+        Ok(())
+    }
+
+    #[pyo3(name = "isNative")]
+    fn is_native(&self) -> PyResult<bool> {
+        Ok(self.inner.dispatch_mode() == DispatchMode::Native)
+    }
 }
 
 #[pyclass(name = "StreamHandler", subclass)]
@@ -216,6 +245,35 @@ impl PyStreamHandler {
         let rust_record = record.extract::<LogRecord>()?;
         self.inner.emit(&rust_record);
         Ok(())
+    }
+
+    #[pyo3(name = "setFormatterSpec", signature = (fmt=None, datefmt=None))]
+    fn set_formatter_spec(&self, fmt: Option<String>, datefmt: Option<String>) -> PyResult<()> {
+        match fmt {
+            Some(f) => {
+                check_caller_info_needed(&f);
+                let formatter: Arc<dyn Formatter + Send + Sync> = match datefmt {
+                    Some(df) => Arc::new(PythonFormatter::with_date_format(f, df)),
+                    None => Arc::new(PythonFormatter::new(f)),
+                };
+                self.inner.set_formatter_instance(formatter);
+            }
+            None => self.inner.set_formatter_instance(Arc::new(NoOpFormatter)),
+        }
+        self.inner.set_dispatch_mode(DispatchMode::Native);
+        Ok(())
+    }
+
+    #[pyo3(name = "setPythonDispatch")]
+    fn set_python_dispatch(&self) -> PyResult<()> {
+        self.inner.set_formatter_instance(Arc::new(NoOpFormatter));
+        self.inner.set_dispatch_mode(DispatchMode::Python);
+        Ok(())
+    }
+
+    #[pyo3(name = "isNative")]
+    fn is_native(&self) -> PyResult<bool> {
+        Ok(self.inner.dispatch_mode() == DispatchMode::Native)
     }
 }
 
@@ -285,6 +343,35 @@ impl PyRotatingFileHandler {
         self.inner.emit(&rust_record);
         Ok(())
     }
+
+    #[pyo3(name = "setFormatterSpec", signature = (fmt=None, datefmt=None))]
+    fn set_formatter_spec(&self, fmt: Option<String>, datefmt: Option<String>) -> PyResult<()> {
+        match fmt {
+            Some(f) => {
+                check_caller_info_needed(&f);
+                let formatter: Arc<dyn Formatter + Send + Sync> = match datefmt {
+                    Some(df) => Arc::new(PythonFormatter::with_date_format(f, df)),
+                    None => Arc::new(PythonFormatter::new(f)),
+                };
+                self.inner.set_formatter_instance(formatter);
+            }
+            None => self.inner.set_formatter_instance(Arc::new(NoOpFormatter)),
+        }
+        self.inner.set_dispatch_mode(DispatchMode::Native);
+        Ok(())
+    }
+
+    #[pyo3(name = "setPythonDispatch")]
+    fn set_python_dispatch(&self) -> PyResult<()> {
+        self.inner.set_formatter_instance(Arc::new(NoOpFormatter));
+        self.inner.set_dispatch_mode(DispatchMode::Python);
+        Ok(())
+    }
+
+    #[pyo3(name = "isNative")]
+    fn is_native(&self) -> PyResult<bool> {
+        Ok(self.inner.dispatch_mode() == DispatchMode::Native)
+    }
 }
 
 #[pyclass(name = "HTTPHandler", subclass)]
@@ -308,7 +395,8 @@ impl PyHTTPHandler {
         global_context=None,
         transform_callback=None,
         context_provider=None,
-        error_callback=None
+        error_callback=None,
+        overflow="block"
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -322,6 +410,7 @@ impl PyHTTPHandler {
         transform_callback: Option<Py<PyAny>>,
         context_provider: Option<Py<PyAny>>,
         error_callback: Option<Py<PyAny>>,
+        overflow: &str,
     ) -> PyResult<Self> {
         let h_map = headers.unwrap_or_default();
 
@@ -344,6 +433,7 @@ impl PyHTTPHandler {
             transform_callback: transform_callback.map(|cb| cb.clone_ref(py)),
             context_provider: context_provider.map(|cb| cb.clone_ref(py)),
             error_callback: error_callback.map(|cb| cb.clone_ref(py)),
+            overflow: OverflowStrategy::from_overflow_str(overflow),
         };
 
         let h = HTTPHandler::with_config(config, capacity, batch_size, flush_interval);
@@ -357,14 +447,31 @@ impl PyHTTPHandler {
         Ok(())
     }
 
-    fn flush(&self) -> PyResult<()> {
-        self.inner.flush();
+    fn flush(&self, py: Python) -> PyResult<()> {
+        py.detach(|| self.inner.flush());
         Ok(())
     }
 
-    fn shutdown(&self) -> PyResult<()> {
-        self.inner.shutdown();
+    fn shutdown(&self, py: Python) -> PyResult<()> {
+        py.detach(|| self.inner.shutdown());
         Ok(())
+    }
+
+    #[pyo3(name = "get_metrics")]
+    fn get_metrics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let (emitted, sink_acknowledged, queue_dropped, delivery_failed) =
+            self.inner.metrics_snapshot();
+        let in_flight = emitted
+            .saturating_sub(sink_acknowledged)
+            .saturating_sub(queue_dropped)
+            .saturating_sub(delivery_failed);
+        let dict = PyDict::new(py);
+        dict.set_item("emitted", emitted)?;
+        dict.set_item("sink_acknowledged", sink_acknowledged)?;
+        dict.set_item("queue_dropped", queue_dropped)?;
+        dict.set_item("delivery_failed", delivery_failed)?;
+        dict.set_item("in_flight", in_flight)?;
+        Ok(dict)
     }
 
     /// Set the flush level. Records at or above this level trigger immediate flush.
@@ -409,7 +516,8 @@ impl PyOTLPHandler {
         capacity=10000,
         batch_size=1000,
         flush_interval=30,
-        error_callback=None
+        error_callback=None,
+        overflow="block"
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -421,6 +529,7 @@ impl PyOTLPHandler {
         batch_size: usize,
         flush_interval: u64,
         error_callback: Option<Py<PyAny>>,
+        overflow: &str,
     ) -> PyResult<Self> {
         let h_map = headers.unwrap_or_default();
 
@@ -429,6 +538,7 @@ impl PyOTLPHandler {
             headers: h_map,
             service_name,
             error_callback: error_callback.map(|cb| cb.clone_ref(py)),
+            overflow: OverflowStrategy::from_overflow_str(overflow),
         };
 
         let h = OTLPHandler::with_config(config, capacity, batch_size, flush_interval);
@@ -442,14 +552,31 @@ impl PyOTLPHandler {
         Ok(())
     }
 
-    fn flush(&self) -> PyResult<()> {
-        self.inner.flush();
+    fn flush(&self, py: Python) -> PyResult<()> {
+        py.detach(|| self.inner.flush());
         Ok(())
     }
 
-    fn shutdown(&self) -> PyResult<()> {
-        self.inner.shutdown();
+    fn shutdown(&self, py: Python) -> PyResult<()> {
+        py.detach(|| self.inner.shutdown());
         Ok(())
+    }
+
+    #[pyo3(name = "get_metrics")]
+    fn get_metrics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let (emitted, sink_acknowledged, queue_dropped, delivery_failed) =
+            self.inner.metrics_snapshot();
+        let in_flight = emitted
+            .saturating_sub(sink_acknowledged)
+            .saturating_sub(queue_dropped)
+            .saturating_sub(delivery_failed);
+        let dict = PyDict::new(py);
+        dict.set_item("emitted", emitted)?;
+        dict.set_item("sink_acknowledged", sink_acknowledged)?;
+        dict.set_item("queue_dropped", queue_dropped)?;
+        dict.set_item("delivery_failed", delivery_failed)?;
+        dict.set_item("in_flight", in_flight)?;
+        Ok(dict)
     }
 
     fn emit(&self, _py: Python, record: &Bound<PyAny>) -> PyResult<()> {

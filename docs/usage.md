@@ -52,7 +52,7 @@ logging.basicConfig(
 
 ### Using addHandler
 
-LogXide's Rust native handlers give the best throughput, but `addHandler()` also accepts standard Python `logging.Handler` subclasses, which run alongside the Rust pipeline:
+LogXide's Rust native handlers give the best throughput, but `addHandler()` also accepts standard Python `logging.Handler` subclasses, which run once on the Python side (without the fast-path GIL release):
 
 ```python
 from logxide import logging, FileHandler, StreamHandler, RotatingFileHandler
@@ -76,6 +76,13 @@ logger.addHandler(rotating)
 stream = StreamHandler()
 logger.addHandler(stream)
 ```
+
+!!! note "How handlers are routed (0.2.0)"
+    A Rust-backed handler attached to one logger is dispatched **exactly once** and never leaks records to unrelated loggers — the double-emit and cross-logger misrouting from earlier releases are fixed. Handlers route by backend kind:
+
+    - **Structured sinks** (`HTTPHandler`, `OTLPHandler`) serialize the record in Rust (JSON / protobuf), preserving `extra` fields.
+    - **Text-sink wrappers** (`FileHandler`, `StreamHandler`, `RotatingFileHandler`, `MemoryHandler`) format the line via their Python `emit()` override, which is what makes formatted output and pytest capture work.
+    - **Foreign Python handlers** (your own `logging.Handler` subclass, Sentry, etc.) run once on the Python side, without the fast-path GIL release.
 
 ### HTTP and OTLP Handlers
 
@@ -105,8 +112,8 @@ import logging as stdlib
 
 logger = logging.getLogger('myapp')
 
-# ⚠️ Accepted, but runs alongside the Rust pipeline (no zero-GIL path)
-logger.addHandler(stdlib.FileHandler('app.log'))  # may cause duplicate processing
+# ⚠️ Accepted, but a foreign Python handler runs on the Python side (no fast-path GIL release)
+logger.addHandler(stdlib.FileHandler('app.log'))  # runs once, synchronously in Python
 
 # ✅ PREFERRED — Use LogXide handlers for the fast path
 logger.addHandler(FileHandler('app.log'))
@@ -233,13 +240,49 @@ Ensure all log messages are processed before program exit:
 
 ```python
 logger.info('Important message')
-logging.flush()  # Wait for all logging to complete
+logging.flush()  # Drain the async queue and wait for the sink to acknowledge
 ```
+
+As of 0.2.0, `flush()` is a **drain-and-wait** operation (its return type is still `None`):
+
+- It drains the async queue to empty, then waits — bounded by the handler's flush timeout — until the sink has acknowledged the enqueued records before returning.
+- For synchronous `FileHandler` / `RotatingFileHandler`, it flushes the Rust `BufWriter` to disk.
 
 !!! note "Handler-specific flush behavior"
     - **FileHandler / RotatingFileHandler**: `flush()` flushes the `BufWriter` buffer to disk (synchronous)
-    - **StreamHandler**: `flush()` signals the background thread to drain all queued messages, then waits for completion
-    - **HTTPHandler / OTLPHandler**: `flush()` triggers immediate batch send and waits for completion
+    - **StreamHandler**: `flush()` drains the background queue and waits for the worker to write everything
+    - **HTTPHandler / OTLPHandler**: `flush()` drains the batch queue and waits (up to the flush timeout) for the sink to acknowledge delivery
+
+!!! note "Shutdown"
+    `close()` / `shutdown()` on an async handler first drains the queue (like `flush()`), then joins the background worker thread, so no records are silently abandoned on teardown.
+
+### Async delivery metrics and overflow policy
+
+Async handlers (`HTTPHandler`, `OTLPHandler`) expose an explicit, payload-free delivery accounting via `get_metrics()`:
+
+```python
+# notest
+from logxide import HTTPHandler
+
+handler = HTTPHandler(url="https://logs.example.com", overflow="block")
+# ... emit records ...
+handler.flush()
+m = handler.get_metrics()
+# m == {"emitted": ..., "sink_acknowledged": ..., "queue_dropped": ...,
+#       "delivery_failed": ..., "in_flight": ...}
+```
+
+After a successful drain, `sink_acknowledged + queue_dropped + delivery_failed == emitted` and `in_flight == 0`.
+
+The `overflow` constructor argument controls what happens when the queue saturates:
+
+| `overflow` | Behavior |
+|------------|----------|
+| `"block"` (default) | Durable: the producer waits for queue space, so no records are dropped (`queue_dropped` stays 0) |
+| `"drop_oldest"` | Under saturation, evict the oldest queued record to make room; dropped records are counted in `queue_dropped` |
+| `"drop_newest"` | Under saturation, drop the incoming record; counted in `queue_dropped` |
+
+Choose `"block"` when durability matters and `"drop_oldest"`/`"drop_newest"` when you would rather shed load than back-pressure the producer. Either way, `get_metrics()` tells you exactly how many records were delivered versus dropped.
 
 ## Examples
 

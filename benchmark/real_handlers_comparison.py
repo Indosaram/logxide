@@ -1,325 +1,212 @@
 #!/usr/bin/env python3
 """
-Real handler comparison: LogXide vs Picologging vs Structlog with actual file/stream I/O.
+Real handler comparison: logxide vs picologging vs structlog (file & stream).
 
-This benchmark tests the same conditions as the original basic_handlers_benchmark.py
-but only compares the three libraries we care about.
+This is a credibility-corrected rewrite (report section 5). The old version
+imported logxide, picologging and structlog into the SAME process and measured
+call-rate with no sink verification; the logxide "stream" case used
+``basicConfig()`` with no filename, so it was not even a stream to a verifiable
+sink. Fixes:
+
+* Each library runs in its OWN fresh subprocess. Non-logxide workers never
+  import logxide.
+* Missing optional libraries (picologging / structlog) are skipped cleanly.
+* Every case VERIFIES the sink: file cases count file lines; the logxide stream
+  case redirects the OS-level stdout fd to a real file and counts its lines.
+* Throughput is DURABLE (sink-confirmed records / total time incl. flush).
+
+Usage:
+    python benchmark/real_handlers_comparison.py -n 10000
 """
 
-import gc
+from __future__ import annotations
+
+import argparse
+import json
 import os
-import statistics
+import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
-# Add parent directory for logxide import
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))
+from _bench_common import RedirectedFD, count_lines, wait_until_count  # noqa: E402
 
-# Import logxide
-try:
-    # Remove parent directory from path to avoid local import
-    original_path = sys.path.copy()
-    parent_dir = str(Path(__file__).parent.parent)
-    if parent_dir in sys.path:
-        sys.path.remove(parent_dir)
-    if "." in sys.path:
-        sys.path.remove(".")
-
-    import logxide as logxide_rust
-
-    logging_mod = logxide_rust.logging
-    logxide_getLogger = logging_mod.getLogger
-
-    print("Successfully imported logxide")
-    logxide = logxide_rust
-    sys.path = original_path
-except Exception as e:
-    print(f"Warning: Could not import logxide: {e}")
-    logxide = None
-    logxide_getLogger = None
-    sys.path = original_path
-
-import picologging
-import structlog
+THIS = os.path.abspath(__file__)
+FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LIBRARIES = ["logxide", "picologging", "structlog"]
+HANDLERS = ["file", "stream"]
 
 
-class RealHandlerBenchmark:
-    """Benchmark with real file and stream handlers."""
+def _worker(library: str, handler: str, n: int) -> int:
+    try:
+        confirmed, total = _measure(library, handler, n)
+    except ImportError as e:
+        print(f"RESULT_JSON:{json.dumps({'skipped': True, 'reason': str(e)})}")
+        return 0
+    print(
+        f"RESULT_JSON:{json.dumps({'confirmed': confirmed, 'total_s': total, 'expected': n})}"
+    )
+    return 0
 
-    def __init__(self, iterations=10_000):
-        self.iterations = iterations
-        self.results = {}
 
-    def setup_logxide_file_handler(self, log_file):
-        """Setup logxide with real FileHandler."""
-        if not logxide_getLogger:
-            return None
+def _measure(library: str, handler: str, n: int):
+    tmpdir = tempfile.mkdtemp(prefix=f"rh_{library}_")
+    log_file = os.path.join(tmpdir, "bench.log")
 
-        # Use logxide's logging module basicConfig to setup file handler
-        logging_mod.basicConfig(
-            level=20, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        return logxide_getLogger("benchmark")
+    if library == "logxide":
+        from logxide import logxide as lx
 
-    def setup_logxide_stream_handler(self):
-        """Setup logxide with real StreamHandler to /dev/null."""
-        if not logxide_getLogger:
-            return None
+        if handler == "file":
+            from logxide.handlers import FileHandler
 
-        # Use logxide's logging module basicConfig to setup stream handler
-        logging_mod.basicConfig(
-            level=20, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        return logxide_getLogger("benchmark")
+            logger = lx.logging.getLogger(f"rh_lx_file_{time.time_ns()}")
+            while getattr(logger, "handlers", None):
+                logger.removeHandler(logger.handlers[0])
+            logger.propagate = False
+            h = FileHandler(log_file)
+            logger.addHandler(h)
+            logger.setLevel(20)
+            t0 = time.perf_counter()
+            for i in range(n):
+                logger.info("Test message %d", i)
+            h.flush()
+            lx.logging.flush()
+            confirmed = wait_until_count(lambda: count_lines(log_file), n)
+            return confirmed, time.perf_counter() - t0
+        else:  # stream via OS-fd redirect (verifiable)
+            cap = os.path.join(tmpdir, "stream.out")
+            with RedirectedFD(cap, "stdout"):
+                lx.logging.clear_handlers()
+                lx.logging.register_stream_handler("stdout", 20, "%(message)s", None)
+                logger = lx.logging.getLogger(f"rh_lx_stream_{time.time_ns()}")
+                logger.setLevel(20)
+                t0 = time.perf_counter()
+                for i in range(n):
+                    logger.info("Test message %d", i)
+                lx.logging.flush()
+                confirmed = wait_until_count(lambda: count_lines(cap), n)
+                total = time.perf_counter() - t0
+            return confirmed, total
 
-    def setup_picologging_file_handler(self, log_file):
-        """Setup picologging with real FileHandler."""
-        logger = picologging.getLogger("benchmark")
-        # Clear existing handlers
+    if library == "picologging":
+        import picologging  # ImportError -> skipped
+
+        logger = picologging.getLogger(f"rh_pico_{handler}_{time.time_ns()}")
         logger.handlers.clear()
-
-        handler = picologging.FileHandler(log_file)
-        formatter = picologging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+        logger.propagate = False
+        cap = os.path.join(tmpdir, "stream.out")
+        stream = None
+        if handler == "file":
+            h = picologging.FileHandler(log_file)
+            target = log_file
+        else:
+            stream = open(cap, "w")  # noqa: SIM115
+            h = picologging.StreamHandler(stream)
+            target = cap
+        h.setFormatter(picologging.Formatter(FMT))
+        logger.addHandler(h)
         logger.setLevel(picologging.INFO)
-        return logger
+        t0 = time.perf_counter()
+        for i in range(n):
+            logger.info("Test message %d", i)
+        h.flush()
+        if stream:
+            stream.flush()
+            stream.close()
+        confirmed = count_lines(target)
+        return confirmed, time.perf_counter() - t0
 
-    def setup_picologging_stream_handler(self):
-        """Setup picologging with real StreamHandler to /dev/null."""
-        logger = picologging.getLogger("benchmark")
-        logger.handlers.clear()
+    if library == "structlog":
+        import structlog  # ImportError -> skipped
 
-        # Keep devnull file handle open
-        self._picologging_devnull = open(os.devnull, "w")  # noqa: SIM115
-        handler = picologging.StreamHandler(self._picologging_devnull)
-        formatter = picologging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.setLevel(picologging.INFO)
-        return logger
-
-    def setup_structlog_file_handler(self, log_file):
-        """Setup structlog with real file output."""
-        # Keep file handle open by storing it in the logger
-        self._structlog_file = open(log_file, "w")  # noqa: SIM115
-        structlog.configure(
-            processors=[
-                structlog.processors.TimeStamper(fmt="iso"),
-                structlog.processors.add_log_level,
-                structlog.processors.JSONRenderer(),
-            ],
-            context_class=dict,
-            logger_factory=structlog.PrintLoggerFactory(file=self._structlog_file),
-        )
-        return structlog.get_logger("benchmark")
-
-    def setup_structlog_stream_handler(self):
-        """Setup structlog with real stream output to /dev/null."""
-        # Keep devnull file handle open
-        self._structlog_devnull = open(os.devnull, "w")  # noqa: SIM115
-        structlog.configure(
-            processors=[
-                structlog.processors.TimeStamper(fmt="iso"),
-                structlog.processors.add_log_level,
-                structlog.processors.JSONRenderer(),
-            ],
-            context_class=dict,
-            logger_factory=structlog.PrintLoggerFactory(file=self._structlog_devnull),
-        )
-        return structlog.get_logger("benchmark")
-
-    def benchmark_logger(self, logger, logger_name, iterations=None):
-        """Benchmark a logger with real I/O."""
-        if iterations is None:
-            iterations = self.iterations
-
-        gc.collect()
-        start_time = time.perf_counter()
-
-        for i in range(iterations):
-            if (
-                logger_name == "logxide"
-                or logger_name == "structlog"
-                or logger_name == "picologging"
-            ):
-                logger.info(f"Test message {i}")
-
-        # Ensure all messages are flushed
-        if logger_name == "logxide":
-            logging_mod.flush()
-        elif logger_name == "structlog":
-            if hasattr(self, "_structlog_file"):
-                self._structlog_file.flush()
-            if hasattr(self, "_structlog_devnull"):
-                self._structlog_devnull.flush()
-        elif logger_name == "picologging" and hasattr(self, "_picologging_devnull"):
-            self._picologging_devnull.flush()
-
-        end_time = time.perf_counter()
-        return end_time - start_time
-
-    def run_file_handler_benchmark(self):
-        """Run FileHandler benchmark."""
-        print("\n=== FileHandler Benchmark ===")
-        results = {}
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            for lib_name, setup_func in [
-                ("logxide", self.setup_logxide_file_handler),
-                ("picologging", self.setup_picologging_file_handler),
-                ("structlog", self.setup_structlog_file_handler),
-            ]:
-                if lib_name == "logxide" and not logxide:
-                    continue
-
-                print(f"  Testing {lib_name}...")
-
-                # Create separate log file for each library
-                log_file = os.path.join(temp_dir, f"{lib_name}_test.log")
-
-                try:
-                    logger = setup_func(log_file)
-                    if logger is None:
-                        continue
-
-                    # Run multiple times and average
-                    times = []
-                    for _run in range(3):
-                        duration = self.benchmark_logger(logger, lib_name)
-                        times.append(duration)
-
-                    avg_time = statistics.mean(times)
-                    ops_per_second = self.iterations / avg_time
-
-                    results[lib_name] = {
-                        "avg_time": avg_time,
-                        "ops_per_second": ops_per_second,
-                        "std_dev": statistics.stdev(times) if len(times) > 1 else 0,
-                    }
-
-                    print(f"    {lib_name}: {ops_per_second:,.0f} ops/sec")
-
-                except Exception as e:
-                    print(f"    {lib_name}: ERROR - {e}")
-
-        return results
-
-    def run_stream_handler_benchmark(self):
-        """Run StreamHandler benchmark."""
-        print("\n=== StreamHandler Benchmark ===")
-        results = {}
-
-        for lib_name, setup_func in [
-            ("logxide", self.setup_logxide_stream_handler),
-            ("picologging", self.setup_picologging_stream_handler),
-            ("structlog", self.setup_structlog_stream_handler),
-        ]:
-            if lib_name == "logxide" and not logxide:
-                continue
-
-            print(f"  Testing {lib_name}...")
-
-            try:
-                logger = setup_func()
-                if logger is None:
-                    continue
-
-                # Run multiple times and average
-                times = []
-                for _run in range(3):
-                    duration = self.benchmark_logger(logger, lib_name)
-                    times.append(duration)
-
-                avg_time = statistics.mean(times)
-                ops_per_second = self.iterations / avg_time
-
-                results[lib_name] = {
-                    "avg_time": avg_time,
-                    "ops_per_second": ops_per_second,
-                    "std_dev": statistics.stdev(times) if len(times) > 1 else 0,
-                }
-
-                print(f"    {lib_name}: {ops_per_second:,.0f} ops/sec")
-
-            except Exception as e:
-                print(f"    {lib_name}: ERROR - {e}")
-
-        return results
-
-    def print_comparison_table(self, results, title):
-        """Print formatted comparison table."""
-        print(f"\n{title}")
-        print("=" * 80)
-
-        if not results:
-            print("No results to display")
-            return
-
-        # Sort by ops_per_second descending
-        sorted_results = sorted(
-            results.items(), key=lambda x: x[1]["ops_per_second"], reverse=True
-        )
-
-        print(
-            f"{'Rank':<5} {'Library':<12} {'Ops/sec':<15} {'Avg Time (s)':<15} {'Relative':<12}"
-        )
-        print("-" * 80)
-
-        fastest_ops = sorted_results[0][1]["ops_per_second"]
-
-        for i, (lib_name, metrics) in enumerate(sorted_results, 1):
-            emoji = "🏆" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
-            relative = metrics["ops_per_second"] / fastest_ops
-
-            print(
-                f"{i}{emoji:<4} {lib_name:<12} {metrics['ops_per_second']:<15,.0f} "
-                f"{metrics['avg_time']:<15.6f} {relative:<12.2f}x"
+        assert "logxide" not in sys.modules
+        cap = os.path.join(tmpdir, "out")
+        stream = open(cap, "w")  # noqa: SIM115
+        try:
+            structlog.configure(
+                processors=[
+                    structlog.processors.TimeStamper(fmt="iso"),
+                    structlog.processors.add_log_level,
+                    structlog.processors.JSONRenderer(),
+                ],
+                logger_factory=structlog.PrintLoggerFactory(file=stream),
+                cache_logger_on_first_use=True,
             )
+            log = structlog.get_logger("rh_structlog")
+            t0 = time.perf_counter()
+            for i in range(n):
+                log.info("Test message", i=i)
+            stream.flush()
+            total = time.perf_counter() - t0
+            confirmed = count_lines(cap)
+        finally:
+            stream.close()
+        return confirmed, total
+
+    raise ImportError(f"unknown library {library}")
 
 
-def main():
-    """Run the real handler comparison benchmark."""
-    print("🚀 Real Handler Comparison: LogXide vs Picologging vs Structlog")
-    print("=" * 80)
-    print(f"Test conditions: {10_000:,} messages per test, 3 runs averaged")
-    print("Testing actual file and stream I/O (same as basic_handlers_benchmark.py)")
-    print()
+def _run(library: str, handler: str, n: int, timeout: float) -> dict:
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            THIS,
+            "--worker",
+            "--library",
+            library,
+            "--handler",
+            handler,
+            "-n",
+            str(n),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+    )
+    for line in proc.stdout.splitlines():
+        if line.startswith("RESULT_JSON:"):
+            return json.loads(line[len("RESULT_JSON:") :])
+    return {"skipped": True, "reason": (proc.stderr[-200:] or "worker failed")}
 
-    benchmark = RealHandlerBenchmark(iterations=10_000)
 
-    # Run benchmarks
-    file_results = benchmark.run_file_handler_benchmark()
-    stream_results = benchmark.run_stream_handler_benchmark()
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-n", "--iterations", type=int, default=10_000)
+    parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--library", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--handler", default="", help=argparse.SUPPRESS)
+    args = parser.parse_args()
 
-    # Print results
-    benchmark.print_comparison_table(file_results, "FILEHANDLER RESULTS")
-    benchmark.print_comparison_table(stream_results, "STREAMHANDLER RESULTS")
+    if args.worker:
+        return _worker(args.library, args.handler, args.iterations)
 
-    print("\n📊 Summary:")
-    if file_results:
-        file_winner = max(file_results.items(), key=lambda x: x[1]["ops_per_second"])
-        print(
-            f"   • FileHandler winner: {file_winner[0]} ({file_winner[1]['ops_per_second']:,.0f} ops/sec)"
-        )
-
-    if stream_results:
-        stream_winner = max(
-            stream_results.items(), key=lambda x: x[1]["ops_per_second"]
-        )
-        print(
-            f"   • StreamHandler winner: {stream_winner[0]} ({stream_winner[1]['ops_per_second']:,.0f} ops/sec)"
-        )
-
-    print("\n✅ This benchmark uses the same conditions as basic_handlers_benchmark.py")
-    print("   for direct comparison with the existing README results.")
+    print("Real Handler Comparison (subprocess-isolated, sink-verified)")
+    print(f"iterations={args.iterations:,}  metric=durable rec/s\n")
+    for handler in HANDLERS:
+        print(f"=== {handler.upper()} HANDLER ===")
+        print(f"{'Library':<14}{'durable rec/s':>16}{'sink':>16}{'verify':>10}")
+        print("-" * 56)
+        rows = []
+        for library in LIBRARIES:
+            r = _run(library, handler, args.iterations, args.timeout)
+            if r.get("skipped"):
+                print(f"{library:<14}{'SKIPPED':>16}  ({r.get('reason', '')[:30]})")
+                continue
+            durable = r["confirmed"] / r["total_s"] if r["total_s"] else 0
+            verify = "OK" if r["confirmed"] == r["expected"] else "MISMATCH"
+            rows.append((library, durable))
+            sink = f"{r['confirmed']}/{r['expected']}"
+            print(f"{library:<14}{durable:>16,.0f}{sink:>16}{verify:>10}")
+        print()
+    print("Numbers are machine-specific; see benchmark/README.md.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
