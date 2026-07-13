@@ -68,7 +68,12 @@ def test_native_parity_plain_percent_formatter(tmp_path):
     time.sleep(0.2)
     lx_bytes = (lx_file).read_bytes()
 
-    assert lx_bytes == std_bytes, f"{lx_bytes!r} != {std_bytes!r}"
+    # Compare formatted content parity, normalizing OS newline translation:
+    # stdlib opens the file in text mode (\r\n on Windows) while the Rust writer
+    # emits \n on every platform.
+    assert lx_bytes.replace(b"\r\n", b"\n") == std_bytes.replace(b"\r\n", b"\n"), (
+        f"{lx_bytes!r} != {std_bytes!r}"
+    )
 
 
 def test_native_with_args(tmp_path):
