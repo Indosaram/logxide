@@ -6,7 +6,7 @@ Last month I was setting up Sentry for a FastAPI project. I'd done this fourteen
 
 Forty minutes later I had three packages installed, a 25-line config file, and Sentry breadcrumbs that still refused to appear. I stared at my screen and thought: this is stupid. This should take thirty seconds.
 
-That's why I built LogXide. It's a drop-in replacement for Python's stdlib logging, written in Rust. Same API. Same `getLogger`, same format strings. But up to 13× faster, and Sentry and OTLP just work. No handlers to configure. No JSON files to juggle.
+That's why I built LogXide. It's a high-performance, largely stdlib-compatible logging library written in Rust — a near-drop-in for common patterns. Same `getLogger`, same format strings. Several-fold faster, and Sentry and OTLP just work. No handlers to configure. No JSON files to juggle. (It's not a strict drop-in — see the compatibility notes for the advanced patterns that differ.)
 
 ## The One-Line Migration
 
@@ -165,15 +165,15 @@ Sentry and OTLP work together. An error can trigger a Sentry event and ship to y
 
 ## Performance
 
-LogXide is up to 13× faster than stdlib logging:
+LogXide is several-fold faster than stdlib logging — roughly 5–11× on file logging depending on the scenario. The numbers are sink-verified (records the sink actually confirmed after flush, not just enqueued), machine-specific, and comparable across Python 3.12 and 3.14, so treat them as ranges rather than a single figure:
 
-| Scenario   |   LogXide |  stdlib |   Speedup |
-| :--------- | --------: | ------: | --------: |
-| Simple msg | 1.92M ops/s | 146K ops/s | **13.21×** |
-| Structured | 1.61M ops/s | 144K ops/s | **11.17×** |
-| with `%s` args | 977K ops/s | 144K ops/s | **6.77×** |
+| Scenario   | vs stdlib (sink-verified) |
+| :--------- | :------------------------ |
+| Simple msg | ~7–9× |
+| Structured | ~7–9× |
+| with `%s` args | ~5–6× |
 
-It's also ~3× faster than Microsoft's picologging on the same Python version, which is written in C. Picologging exists and is good. LogXide is faster, runs on Python 3.13+, and has Sentry/OTLP built in.
+It's also faster than Microsoft's picologging (written in C) on the same Python version, while additionally running on Python 3.13+/3.14 and having Sentry/OTLP built in. Picologging exists and is good; LogXide's edge is the extra reach and integrations.
 
 Full benchmarks with methodology are [on GitHub](https://github.com/Indosaram/logxide/blob/main/docs/benchmarks.md).
 

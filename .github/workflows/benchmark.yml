@@ -1,0 +1,68 @@
+name: Benchmarks
+
+# Reproducible, environment-matched benchmark runs on CI shared runners.
+# Manual (workflow_dispatch) and a weekly schedule — NOT on every push, since
+# shared-runner numbers are noisy and are meant as a documented, re-runnable
+# reference rather than a per-commit gate. The clean CI venv has no sentry-sdk,
+# so it inherently avoids the caller-info measurement artifact fixed in 0.2.1.
+
+on:
+    workflow_dispatch:
+    schedule:
+        - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+env:
+    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+    benchmark:
+        name: Benchmark (durable, sink-verified)
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                python-version: ["3.12", "3.14"]
+        steps:
+            - uses: actions/checkout@v4
+            - name: Set up Python ${{ matrix.python-version }}
+              uses: actions/setup-python@v5
+              with:
+                  python-version: ${{ matrix.python-version }}
+            - name: Set up Rust
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  toolchain: 1.88.0
+            - name: Cache Rust dependencies
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+            - name: Install build deps
+              run: |
+                  python -m pip install --upgrade uv
+                  uv venv
+                  uv pip install maturin
+            - name: Build and install (release)
+              env:
+                  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+              run: uv run maturin develop --release
+            - name: Confirm clean environment (no sentry-sdk)
+              run: |
+                  uv run python -c "import importlib.util as u; assert u.find_spec('sentry_sdk') is None, 'sentry-sdk must NOT be installed for a clean benchmark'; import logxide; print('logxide', logxide.__version__)"
+            - name: Benchmark A — native FileHandler vs stdlib (perf_vs_stdlib)
+              run: uv run python benchmark/perf_vs_stdlib.py
+            - name: Benchmark B — durable cross-library sink (basic_handlers)
+              run: uv run python benchmark/basic_handlers_benchmark.py -n 20000
+            - name: Upload benchmark JSON artifacts
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: benchmark-results-py${{ matrix.python-version }}
+                  path: |
+                      benchmark/perf_results/
+                      basic_handlers_benchmark_*.json
+                  if-no-files-found: ignore

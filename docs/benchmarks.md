@@ -243,7 +243,7 @@ LogXide is faster on both versions. There is no intrinsic Python 3.14 regression
 **Choose LogXide when:**
 - You need maximum performance in production
 - Your application does significant logging to files
-- You want a drop-in replacement with better performance
+- You want a near-drop-in (common patterns) with better performance
 - You value consistent performance across scenarios
 
 **Choose Picologging when:**
@@ -302,7 +302,7 @@ python benchmark/compare_loggers.py
 
 1. **Strong file-I/O performance**: Against stdlib in the subprocess-isolated, synchronous-`FileHandler` scenario, LogXide is substantially faster. The corrected, sink-verified harness puts LogXide at ~6–11× stdlib on the durable file path and ~8–14× on rotating, plus ~5× on the async stream sink when it fully drains; exact multipliers are machine- and scenario-specific, and Python 3.12 and 3.14 are at parity.
 2. **Real-World Testing**: Benchmarks based on actual file operations, not synthetic tests
-3. **Drop-in Replacement**: No code changes required for common patterns
+3. **Near-drop-in**: minimal/no code changes for common patterns (some advanced stdlib scenarios differ — see [compatibility](compatibility.md))
 4. **Native Performance**: Rust's efficiency provides measurable benefits
 
 ### Performance Summary Table (durable, sink-verified)

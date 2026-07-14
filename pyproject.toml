@@ -1,6 +1,6 @@
 [project]
 name = "logxide"
-version = "0.2.1"
+version = "0.2.2"
 description = "High-performance Python logging — Rust-powered, stdlib-compatible API"
 readme = "README.md"
 license = {text = "MIT"}

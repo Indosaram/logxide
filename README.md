@@ -2,7 +2,7 @@
 
 **Several-fold faster than stdlib logging (roughly 5–11× on file logging, scenario- and machine-dependent), sink-verified. Powered by Rust.**
 
-Same stdlib API. Same `getLogger`. Same format strings. Just faster.
+Familiar stdlib-style API — for common patterns, change one import and `getLogger`, format strings, and handlers work as expected. It's a **near**-drop-in, not a strict one: some advanced stdlib behaviors differ (flush now drains/waits, `LogRecord`/`Logger` can't be subclassed, custom `Formatter` subclasses fall back to a slower path). See [compatibility](docs/compatibility.md).
 
 ```python
 # Before                              # After
@@ -10,7 +10,7 @@ import logging                        from logxide import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('myapp')
-logger.info('Hello, world!')          # Same code, several-fold faster.
+logger.info('Hello, world!')          # Common patterns: same code, several-fold faster.
 ```
 
 [![PyPI](https://img.shields.io/pypi/v/logxide)](https://pypi.org/project/logxide/)

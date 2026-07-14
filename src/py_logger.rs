@@ -57,6 +57,19 @@ pub fn check_level(py: Python, level: &Bound<PyAny>) -> PyResult<u32> {
         level.repr()?
     )))
 }
+
+/// Coerce a log `msg` to `String` like `str(msg)`. Exact-`str` fast path reads the
+/// UTF-8 buffer directly and skips `PyObject_Str`; the exact-type check is required for
+/// byte-identical output because `str` subclasses may override `__str__`.
+#[inline]
+fn coerce_msg_to_string(msg: &Bound<PyAny>) -> PyResult<String> {
+    if msg.is_exact_instance_of::<pyo3::types::PyString>() {
+        Ok(msg.cast::<pyo3::types::PyString>()?.to_string())
+    } else {
+        Ok(msg.str()?.to_string())
+    }
+}
+
 pub fn py_to_json_value(obj: &Bound<PyAny>) -> Value {
     if obj.is_none() {
         Value::Null
@@ -858,7 +871,7 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let msg_str = msg.bind(py).str()?.to_string();
+        let msg_str = coerce_msg_to_string(msg.bind(py))?;
         let serialized_args = self.serialize_args(py, args);
         let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
@@ -886,7 +899,7 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let msg_str = msg.bind(py).str()?.to_string();
+        let msg_str = coerce_msg_to_string(msg.bind(py))?;
         let serialized_args = self.serialize_args(py, args);
         let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
@@ -914,7 +927,7 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let msg_str = msg.bind(py).str()?.to_string();
+        let msg_str = coerce_msg_to_string(msg.bind(py))?;
         let serialized_args = self.serialize_args(py, args);
         let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
@@ -942,7 +955,7 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let msg_str = msg.bind(py).str()?.to_string();
+        let msg_str = coerce_msg_to_string(msg.bind(py))?;
         let serialized_args = self.serialize_args(py, args);
         let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
@@ -970,7 +983,7 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let msg_str = msg.bind(py).str()?.to_string();
+        let msg_str = coerce_msg_to_string(msg.bind(py))?;
         let serialized_args = self.serialize_args(py, args);
         let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
@@ -998,7 +1011,7 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let msg_str = msg.bind(py).str()?.to_string();
+        let msg_str = coerce_msg_to_string(msg.bind(py))?;
         let serialized_args = self.serialize_args(py, args);
         let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),
@@ -1028,7 +1041,7 @@ impl PyLogger {
             return Ok(());
         }
         let extra_fields = self.extract_extra_fields(kwargs);
-        let msg_str = msg.bind(py).str()?.to_string();
+        let msg_str = coerce_msg_to_string(msg.bind(py))?;
         let serialized_args = self.serialize_args(py, args);
         let mut record = create_log_record_with_extra(
             self.fast_logger.name.to_string(),

@@ -118,3 +118,47 @@ class TestHandlerOutput:
         finally:
             if os.path.exists(temp_file):
                 os.unlink(temp_file)
+
+    def test_non_str_msg_still_coerces_via_str(self):
+        """Regression guard for the M3 exact-str fast path: non-str msg objects
+        must still be coerced with str(), byte-identical to Python logging."""
+        import time
+
+        from logxide import logging
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".log") as f:
+            temp_file = f.name
+
+        class CustomStr:
+            def __str__(self):
+                return "custom-str-value"
+
+        try:
+            logging.basicConfig(
+                filename=temp_file,
+                level=logging.INFO,
+                format="%(message)s",
+                force=True,
+            )
+            logger = logging.getLogger("test.coerce")
+
+            logger.info(123)  # type: ignore[arg-type]
+            logger.info(CustomStr())  # type: ignore[arg-type]
+            logger.info(["a", "b"])  # type: ignore[arg-type]
+            logger.info("plain str")
+
+            logging.flush()
+            time.sleep(0.2)
+
+            with open(temp_file) as f:
+                lines = f.read().splitlines()
+
+            assert lines == [
+                "123",
+                "custom-str-value",
+                "['a', 'b']",
+                "plain str",
+            ]
+        finally:
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)

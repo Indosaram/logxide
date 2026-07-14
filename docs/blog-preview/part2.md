@@ -6,7 +6,7 @@ The test suite had been running for 47 seconds when it stopped. No error. No out
 
 I stared at the terminal. The cursor wasn't blinking. The progress bar had frozen mid-frame. I hit Ctrl+C. Nothing. I hit it again, harder, as if that would help. The process was deadlocked somewhere deep in the call stack, and I had no idea where.
 
-This was LogXide, my Rust-powered drop-in replacement for Python's logging module. I'd spent weeks making it up to 13× faster than stdlib. The benchmarks were beautiful. Then I merged to main, and everything caught fire.
+This was LogXide, my Rust-powered, largely stdlib-compatible logging library. I'd spent weeks making it several-fold faster than stdlib. The benchmarks were beautiful. Then I merged to main, and everything caught fire.
 
 If you haven't read Part 1, it covers what LogXide actually does: you `pip install logxide`, replace `import logging` with `from logxide import logging`, and suddenly your log calls drop from ~6 microseconds to ~0.5 microseconds. Same API, same handlers, same everything — just Rust underneath. It works with Flask, Django, FastAPI, Sentry, OTLP. That's the happy path. This is the story of how I almost never got there.
 

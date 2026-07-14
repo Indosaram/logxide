@@ -31,6 +31,13 @@ thread_local! {
     /// each format call only pays a single bounded `String::clone` instead of
     /// growing a fresh allocation from zero. Cleared on entry, cloned on exit.
     static FMT_SCRATCH: RefCell<String> = const { RefCell::new(String::new()) };
+
+    /// Per-thread cache of the default-format asctime keyed on the truncated epoch
+    /// second. The default "%Y-%m-%d %H:%M:%S" has no sub-second field, so its output
+    /// is constant within one second — reused here to skip repeated chrono formatting.
+    /// Only used for the default format; custom datefmt (which may carry %f) is never cached.
+    static ASCTIME_SECOND_CACHE: RefCell<(i64, String)> =
+        const { RefCell::new((i64::MIN, String::new())) };
 }
 
 pub trait Formatter: Send + Sync {
@@ -377,17 +384,29 @@ impl PythonFormatter {
                 }
                 "asctime" => {
                     let s = asctime_cache.get_or_insert_with(|| {
-                        let datetime = chrono::Local
-                            .timestamp_opt(
-                                record.created as i64,
-                                (record.msecs * 1_000_000.0) as u32,
-                            )
-                            .single()
-                            .unwrap_or_else(chrono::Local::now);
                         if let Some(date_fmt) = date_format {
+                            let datetime = chrono::Local
+                                .timestamp_opt(
+                                    record.created as i64,
+                                    (record.msecs * 1_000_000.0) as u32,
+                                )
+                                .single()
+                                .unwrap_or_else(chrono::Local::now);
                             datetime.format(date_fmt).to_string()
                         } else {
-                            datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+                            let sec = record.created as i64;
+                            ASCTIME_SECOND_CACHE.with(|cell| {
+                                let mut cached = cell.borrow_mut();
+                                if cached.0 != sec {
+                                    let datetime = chrono::Local
+                                        .timestamp_opt(sec, 0)
+                                        .single()
+                                        .unwrap_or_else(chrono::Local::now);
+                                    cached.1 = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+                                    cached.0 = sec;
+                                }
+                                cached.1.clone()
+                            })
                         }
                     });
                     s.as_str()

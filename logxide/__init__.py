@@ -1,5 +1,7 @@
 """
-LogXide: High-performance, Rust-powered drop-in replacement for Python's logging module.
+LogXide: high-performance, Rust-powered logging with a largely stdlib-compatible
+API. A near-drop-in for common patterns; some advanced stdlib scenarios differ
+(see docs/compatibility.md).
 """
 
 import os
@@ -43,7 +45,7 @@ _check_python_version()
 
 from . import logxide
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 from . import logxide as _logxide_ext
 from .compat_functions import (

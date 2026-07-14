@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-07-14
+
+### Performance
+- **Skip `str()` coercion when the log message is already a `str` (M3).** The hot
+  path previously called `PyObject_Str` on every `logger.info(...)` even when the
+  message was already a `str`; it now reads the UTF-8 directly for exact-`str`
+  messages (guarded by an exact-type check so `str` subclasses and non-`str`
+  objects still coerce via `str()` exactly as before).
+- **Per-second `asctime` cache (M4).** For the default date format
+  (`%Y-%m-%d %H:%M:%S`, no sub-second field), the formatted timestamp prefix is
+  cached per thread per epoch-second — byte-identical output, but avoids
+  re-running the chrono local-time conversion on every record. Custom `datefmt`
+  (which may contain `%f`) is never cached and takes the exact original path.
+- Least-noisy microbench scenarios improved with no regression anywhere
+  (structured ~216K→~307K rec/s, `%`-args ~142K→~204K rec/s on the reference
+  machine; machine-specific).
+- **Deferred (M2):** a Rust-native caller-frame walk was evaluated and NOT done —
+  low payoff now that caller-info is rarely enabled (post-0.2.1), and `PyFrame`/
+  `f_lineno` C-API internals differ across CPython 3.12/3.13/3.14 (correctness
+  risk). `populate_caller_info` is unchanged.
+
+### Documentation
+- **Corrected the "drop-in replacement" overstatement.** README, the package
+  description, `logxide/__init__.py`, docs, and the blog drafts no longer claim a
+  flat "drop-in replacement for Python's logging"; they now say **near-drop-in for
+  common patterns** and link the compatibility notes documenting the differences
+  (flush drains/waits, no `LogRecord`/`Logger` subclassing, custom `Formatter`
+  subclasses fall back to a slower path, changed async-overflow default).
+- Blog drafts: replaced the debunked `13.21×` / `1.9M rec/s` single-machine table
+  with honest sink-verified ranges and the 3.12≈3.14 parity note.
+
+### CI
+- Added `.github/workflows/benchmark.yml` — a manual/weekly, environment-matched
+  (clean, no `sentry-sdk`) benchmark run across Python 3.12 and 3.14 that uploads
+  sink-verified results as artifacts, so the published numbers are reproducible
+  rather than single-machine.
+
 ## [0.2.1] - 2026-07-14
 
 ### Fixed
