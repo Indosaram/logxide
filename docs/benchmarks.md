@@ -5,7 +5,7 @@ This document provides comprehensive performance analysis of LogXide compared to
 ## Test Environment
 
 - **Platform**: macOS ARM64 (Apple Silicon)
-- **Python**: 3.12.12 / 3.14.2
+- **Python**: 3.12.11 / 3.14.2
 - **Test Methodology**: Multiple runs (3 iterations) with averages, garbage collection between tests
 - **Libraries Tested**: LogXide, Picologging, Structlog
 - **Test Date**: December 30, 2024 (external), March 19, 2026 (internal), June 12, 2026 (Unreleased)
@@ -26,13 +26,7 @@ The next release introduces a series of hot-path optimizations measured against 
 
 ### vs Python stdlib `logging`
 
-Methodology: `benchmark/perf_vs_stdlib.py`, 100K iterations × 3 runs, FileHandler. stdlib runs in a subprocess to avoid LogXide's interceptor overriding `logging.Logger`.
-
-| Scenario   |     LogXide |     stdlib | Speedup    |
-| :--------- | ----------: | ---------: | :--------- |
-| simple     |   1,228,811 |    182,533 | **6.73×**  |
-| structured |   1,064,164 |    177,366 | **6.00×**  |
-| args       |     750,129 |    176,633 | **4.25×**  |
+The head-to-head speedup vs stdlib for this build is reported once, for both Python versions, in the canonical **Benchmark A** section below ("File I/O Scenarios — vs stdlib"). It lands at roughly ~7–9× on the simple / structured scenarios and ~5–6× on `%`-args, comparable on Python 3.12 and 3.14.
 
 ### Optimization Wave Breakdown
 
@@ -96,39 +90,35 @@ The defective cross-library harness flagged in the [performance audit](performan
 - uses a genuine `RotatingFileHandler` for the rotating row instead of substituting a plain `StreamHandler`.
 
 !!! note "These numbers are machine-specific"
-    Measured on **macOS M4 Max, CPython 3.14.2, release build, `-n 20000`**, per-scenario subprocess isolation. Absolute throughput depends on the machine, the build, and the sink. Treat the multipliers ("~10×", "~5×") as the durable signal and the raw rec/s as a rounded, run-specific reading. Run-to-run variance is real: the FILE durable figure was observed anywhere from ~740K to ~960K rec/s across repeated runs, so figures here are rounded rather than presented to false precision. Reproduce with `benchmark/basic_handlers_benchmark.py`.
+    Re-run this session on **macOS M4 Max, release build, `-n 20000`**, per-scenario subprocess isolation, on **both CPython 3.12.11 and 3.14.2**. Absolute throughput depends on the machine, the build, and the sink. Treat the rounded ranges (FILE ~6–11×, ROTATING ~8–14×, STREAM ~5×) as the durable signal, not any single raw rec/s. Run-to-run variance is real (roughly ±40% on these baselines), so figures here are presented as ranges rather than to false precision, and CPython 3.12 and 3.14 land at parity. Reproduce with `benchmark/basic_handlers_benchmark.py`.
 
-### FILE — durable throughput (synchronous file sink)
+!!! note "A prior '3.14 regression' was an environment artifact"
+    An earlier draft published a per-version table showing the file path at roughly half the speedup on Python 3.14. That was a measurement artifact, not a real regression: the 3.14 test venv had `sentry-sdk` installed while the 3.12 venv did not, and importing `sentry-sdk` pulled in `urllib3`'s formatter-less `NullHandler`, which forced process-global caller-frame collection on every log (a ~20% tax that only hit the 3.14 runs). This is fixed in 0.2.1. Environment-matched, CPython 3.12 and 3.14 are at parity, so the ranges here apply to both versions.
 
-| Library        | Durable rec/s | p50 latency | vs stdlib |
-| :------------- | ------------: | ----------: | :-------- |
-| **LogXide**    |   **739,332** |     833 ns  | **~10×**  |
-| Python logging |        74,605 |   6,167 ns  | 1.0× (baseline) |
-| Loguru         |        57,511 |   8,500 ns  | 0.77×     |
-| Structlog      |        41,364 |   5,583 ns  | 0.55×     |
+### Benchmark B — LogXide vs stdlib durable throughput (both Python versions)
 
-LogXide lands around **~10× stdlib** on the durable file path. Observed range across runs: ~740K–960K rec/s.
+Re-run this session on both Python 3.12.11 and 3.14.2, sink-verified 20,200 / 20,200. Durable speedup vs stdlib, rounded to ranges and comparable across the two versions:
 
-### STREAM — durable throughput
+| Sink     | Speedup vs stdlib         |
+| :------- | :------------------------ |
+| FILE     | **~6–11×**                |
+| ROTATING | **~8–14×**                |
+| STREAM   | **~5×** (async — see note) |
 
-| Library        | Durable rec/s | p50 latency | vs stdlib |
-| :------------- | ------------: | ----------: | :-------- |
-| **LogXide**    |   **272,829** |     917 ns  | **~5×**   |
-| Structlog      |       116,796 |   5,208 ns  | 2.2×      |
-| Python logging |        53,292 |   6,334 ns  | 1.0× (baseline) |
-| Loguru         |        52,508 |   8,459 ns  | 0.99×     |
+!!! warning "STREAM is asynchronous, not a guaranteed durable multiplier"
+    LogXide's stream handler hands records to a background worker. It reaches ~5× stdlib when the queue fully drains (20,200 / 20,200 on an idle machine), but under a sustained max-rate emit burst its bounded queue can drop records — one loaded run delivered only ~14,420 / 20,200. Call `flush()` and inspect `get_metrics()` to confirm delivery; do not read STREAM as a durable multiplier the way FILE and ROTATING are.
 
-Structlog beats stdlib on the stream sink here (about 2.2×), but LogXide still leads all libraries at **~5× stdlib**.
+### Cross-library runner-up snapshot
 
-### ROTATING — durable throughput (real `RotatingFileHandler`)
+Among the other libraries that install on Python 3.13+ (stdlib, Loguru, Structlog), LogXide leads every sink. Durable throughput of the runner-ups on the reference machine (single cross-library run, rounded):
 
-| Library        | Durable rec/s | p50 latency | vs stdlib |
-| :------------- | ------------: | ----------: | :-------- |
-| **LogXide**    |   **201,663** |     833 ns  | **~4.7×** |
-| Python logging |        42,981 |   8,542 ns  | 1.0× (baseline) |
-| Loguru         |        33,095 |   9,666 ns  | 0.77×     |
+| Library        | FILE durable | STREAM durable | ROTATING durable |
+| :------------- | -----------: | -------------: | ---------------: |
+| Python logging |       74,605 |         53,292 |           42,981 |
+| Structlog      |       41,364 |        116,796 |                — |
+| Loguru         |       57,511 |         52,508 |           33,095 |
 
-Picologging is not included in the corrected runs (it does not install on Python 3.13+), so no cross-library number is asserted against it; see [comparison-picologging.md](comparison-picologging.md) for the qualitative discussion.
+Structlog is the notable exception on the **stream** sink, where it beats stdlib at ~2.2× (116,796 vs 53,292 rec/s) and outruns Loguru — but LogXide still leads it there (~5× stdlib). On FILE and ROTATING, Structlog and Loguru both trail stdlib. Picologging is excluded from the corrected runs (it does not install on Python 3.13+, and the benchmark machine runs CPython 3.14.2), so no cross-library multiplier is asserted against it; see [comparison-picologging.md](comparison-picologging.md) for the qualitative discussion.
 
 ### Async accounting — durable vs lossy producers
 
@@ -137,9 +127,9 @@ Async handlers are only meaningful if "throughput" means records the sink confir
 | Scenario           | emitted | sink_acknowledged | queue_dropped | Producer behavior            |
 | :----------------- | ------: | ----------------: | ------------: | :--------------------------- |
 | `http_block`       |  20,000 |            20,000 |             0 | durable, producer p99 ~3 ms  |
-| `http_drop_newest` |  20,000 |               262 |        19,738 | instant producer, lossy      |
+| `http_drop_newest` |  20,000 |               260 |        19,740 | instant producer, lossy      |
 
-`http_block` back-pressures the producer (slower calls, but every record lands). `http_drop_newest` returns instantly and drops under saturation, so its "producer throughput" would look enormous while only 262 records actually reached the sink. This is exactly the trap the old harness fell into; `get_metrics()` makes the distinction explicit.
+`http_block` back-pressures the producer (slower calls, but every record lands). `http_drop_newest` returns instantly and drops under saturation, so its "producer throughput" would look enormous while only 260 records actually reached the sink. This is exactly the trap the old harness fell into; `get_metrics()` makes the distinction explicit.
 
 ### Micro benchmarks (LogXide native path, sink-verified)
 
@@ -162,32 +152,28 @@ Regardless of the exact numbers, LogXide's design has real, qualitative advantag
 2. **Background async I/O**: stream/HTTP/OTLP handlers hand records to a worker thread instead of blocking the caller on the sink.
 3. **Explicit async accounting**: `get_metrics()` reports `emitted`, `sink_acknowledged`, `queue_dropped`, `delivery_failed`, and `in_flight`, so "throughput" always means records the sink confirmed — never records that were merely enqueued.
 
-The corrected harness quantifies these advantages honestly: on this machine they show up as roughly ~10× stdlib on the file path, ~5× on stream, and ~4.7× on rotating (durable, sink-verified), rather than the inflated multipliers the old harness produced.
+The corrected harness quantifies these advantages honestly: on this machine they show up as roughly ~6–11× stdlib on the file path and ~8–14× on rotating, plus ~5× on the async stream sink when it fully drains (durable, sink-verified), comparable on Python 3.12 and 3.14, rather than the inflated multipliers the old harness produced.
 
 ## File I/O Scenarios — vs stdlib `logging` (subprocess-isolated)
 
-Methodology: `benchmark/perf_vs_stdlib.py`, 100,000 iterations × 3 runs, FileHandler with the same standard format. stdlib runs in a subprocess so LogXide's import-time module override doesn't pollute the measurement.
+This is **Benchmark A**. Methodology: `benchmark/perf_vs_stdlib.py`, 50,000 iterations, FileHandler with the standard format `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`. LogXide and stdlib are each measured in isolation (stdlib in its own process so LogXide's import-time module override doesn't pollute the measurement). Re-run this session on macOS M4 Max, release build, on both Python 3.12.11 and 3.14.2.
 
 !!! note "Scope of these numbers"
-    These compare only LogXide against stdlib, each in its own process — the subprocess isolation the [audit](performance-bottleneck-report-2026-07-13.md) (§5) recommends. `FileHandler` is a **synchronous** Rust handler, so there is no async queue and "durable throughput" equals producer throughput here; no records are dropped. The figures are still specific to the machine and build below, and they measure a single format-string scenario. The corrected, sink-verified cross-library and async-handler numbers are published in the [comparative section above](#comparative-benchmark--all-logging-libraries-corrected-sink-verified).
+    These compare only LogXide against stdlib, each in its own process — the subprocess isolation the [audit](performance-bottleneck-report-2026-07-13.md) (§5) recommends. `FileHandler` is a **synchronous** Rust handler, so there is no async queue and "durable throughput" equals producer throughput here; no records are dropped. The figures are machine-specific and rounded to ranges (baselines are noisy run-to-run, roughly ±40%), and they measure the standard format-string scenarios. The corrected, sink-verified cross-library and async-handler numbers are published in the [comparative section above](#comparative-benchmark--all-logging-libraries-corrected-sink-verified).
 
-### Python 3.12
+### Speedup vs stdlib (comparable on both Python versions)
 
-| Scenario   | stdlib `logging` |     LogXide | Speedup       |
-| :--------- | ---------------: | ----------: | :------------ |
-| simple     |          145,562 | **1,922,911** | **13.21× faster** |
-| structured |          144,328 | **1,612,029** | **11.17× faster** |
-| with `%s` args |      144,156 |   **976,572** | **6.77× faster** |
+Rounded speedup vs stdlib. CPython 3.12 and 3.14 land at parity once the environments match, so a single range covers both:
 
-### Python 3.14
+| Scenario   | Speedup vs stdlib |
+| :--------- | :---------------- |
+| simple     | **~7–9×**         |
+| structured | **~7–9×**         |
+| `%`-args   | **~5–6×**         |
 
-| Scenario   | stdlib `logging` |     LogXide | Speedup       |
-| :--------- | ---------------: | ----------: | :------------ |
-| simple     |          182,533 | **1,228,811** | **6.73× faster** |
-| structured |          177,366 | **1,064,164** | **6.00× faster** |
-| with `%s` args |      176,633 |   **750,129** | **4.25× faster** |
+For reference, LogXide absolute throughput lands around 1.0–1.4M rec/s on the simple and structured scenarios and ~0.8–0.9M rec/s on `%`-args, while stdlib sits around 0.12–0.17M rec/s; exact rec/s swings run-to-run, which is why the table reports ranges.
 
-LogXide is faster on both versions; stdlib's per-iteration overhead dropped on 3.14, narrowing the absolute gap. The Python 3.12 simple-logging scenario remains the best-case headline figure.
+LogXide is faster on both versions. There is no intrinsic Python 3.14 regression: an earlier draft that showed 3.14 at roughly half the file-path speedup was measuring a `sentry-sdk` environment artifact (see the note in the comparative section), fixed in 0.2.1. Every figure is machine-specific and rounded.
 
 ### Why LogXide is faster
 
@@ -240,7 +226,7 @@ LogXide is faster on both versions; stdlib's per-iteration overhead dropped on 3
 **1. Real I/O Operations**
 - Runs actual file writes through Rust's native `BufWriter` rather than synthetic no-ops
 - Efficient buffering and system call optimization
-- Cross-library durable throughput is now sink-verified: ~10× stdlib on file, ~5× on stream, ~4.7× on rotating (see the [corrected comparative section](#comparative-benchmark--all-logging-libraries-corrected-sink-verified)); Picologging is excluded because it does not install on Python 3.13+
+- Cross-library durable throughput is now sink-verified: on the file path LogXide is ~6–11× stdlib, ~8–14× on rotating, and ~5× on the async stream sink (comparable on Python 3.12 and 3.14; see the [corrected comparative section](#comparative-benchmark--all-logging-libraries-corrected-sink-verified)); Picologging is excluded because it does not install on Python 3.13+
 
 **2. Consistent Performance**
 - Maintains advantage across all logging patterns
@@ -314,19 +300,19 @@ python benchmark/compare_loggers.py
 
 **LogXide is the best choice for production Python applications:**
 
-1. **Strong file-I/O performance**: Against stdlib in the subprocess-isolated, synchronous-`FileHandler` scenario, LogXide is substantially faster. The corrected, sink-verified harness puts LogXide at ~10× stdlib on the durable file path, ~5× on stream, and ~4.7× on rotating; exact multipliers are machine- and scenario-specific.
+1. **Strong file-I/O performance**: Against stdlib in the subprocess-isolated, synchronous-`FileHandler` scenario, LogXide is substantially faster. The corrected, sink-verified harness puts LogXide at ~6–11× stdlib on the durable file path and ~8–14× on rotating, plus ~5× on the async stream sink when it fully drains; exact multipliers are machine- and scenario-specific, and Python 3.12 and 3.14 are at parity.
 2. **Real-World Testing**: Benchmarks based on actual file operations, not synthetic tests
 3. **Drop-in Replacement**: No code changes required for common patterns
 4. **Native Performance**: Rust's efficiency provides measurable benefits
 
 ### Performance Summary Table (durable, sink-verified)
 
-The old per-library summary that reranked everything from the defective harness has been replaced by the corrected, sink-verified [comparative tables above](#comparative-benchmark--all-logging-libraries-corrected-sink-verified). On the reference machine (macOS M4 Max, CPython 3.14.2), the durable headline is: LogXide leads every sink, at roughly ~10× stdlib on file, ~5× on stream, and ~4.7× on rotating. Structlog is the runner-up on stream (~2.2× stdlib). Every figure is machine-specific and rounded to avoid false precision.
+The old per-library summary that reranked everything from the defective harness has been replaced by the corrected, sink-verified [comparative tables above](#comparative-benchmark--all-logging-libraries-corrected-sink-verified). On the reference machine (macOS M4 Max), re-run this session on both Python 3.12.11 and 3.14.2, the durable headline is: LogXide leads every sink, at roughly ~6–11× stdlib on file and ~8–14× on rotating, plus ~5× on the async stream sink. The two Python versions come out at parity. Structlog is the runner-up on stream (~2.2× stdlib). Every figure is machine-specific and rounded to ranges to avoid false precision.
 
 ### Key Takeaways
 
 1. **LogXide is designed for real-world file I/O**: the durable path writes through a Rust `BufWriter` with no Python `LogRecord` on the fast path
-2. **Cross-library gaps are now sink-verified**: LogXide leads all measured libraries on durable throughput (~10× stdlib on file, ~5× on stream, ~4.7× on rotating); numbers are machine-specific and reproduced via `benchmark/basic_handlers_benchmark.py`
+2. **Cross-library gaps are now sink-verified**: LogXide leads all measured libraries on durable throughput (~6–11× stdlib on file, ~8–14× on rotating, ~5× on the async stream sink; comparable on Python 3.12 and 3.14); numbers are machine-specific and reproduced via `benchmark/basic_handlers_benchmark.py`
 3. **Rust advantage is architectural**: native code and background async I/O provide measurable benefits, quantified honestly by the corrected harness
 4. **Async delivery is accounted**: `get_metrics()` distinguishes delivered records from dropped ones, so async "throughput" is never inflated by drops
 
@@ -334,4 +320,4 @@ The old per-library summary that reranked everything from the defective harness 
 
 ---
 
-*Benchmarks conducted on macOS ARM64 (Apple Silicon) with Python 3.12.0 (`pyenv`) and Python 3.14.2. Results may vary on different platforms but relative performance should be consistent.*
+*Benchmarks conducted on macOS ARM64 (Apple Silicon) with Python 3.12.11 (`pyenv`) and Python 3.14.2. Results may vary on different platforms but relative performance should be consistent.*

@@ -1,6 +1,6 @@
 # Welcome to LogXide
 
-LogXide is a high-performance logging library for Python, delivering up to **13× the throughput of stdlib `logging`** through its native Rust implementation. It is API-compatible with Python's standard `logging` module for the common patterns (`getLogger`, `basicConfig`, `dictConfig`, format strings) — drop in `from logxide import logging` and most code keeps working unchanged.
+LogXide is a high-performance logging library for Python, delivering **several-fold the throughput of stdlib `logging` (roughly 5–11× on file logging, scenario- and machine-dependent, sink-verified)** through its native Rust implementation. CPython 3.12 and 3.14 come out at parity, so there is no version-specific penalty. It is API-compatible with Python's standard `logging` module for the common patterns (`getLogger`, `basicConfig`, `dictConfig`, format strings) — drop in `from logxide import logging` and most code keeps working unchanged.
 
 ## Documentation
 
@@ -22,7 +22,7 @@ LogXide is a high-performance logging library for Python, delivering up to **13�
 
 ## Key Features
 
-- **High Performance**: Rust-powered logging with up to 13× the throughput of stdlib (Python 3.12, FileHandler simple scenario)
+- **High Performance**: Rust-powered logging with several-fold the throughput of stdlib (roughly 5–11× on file logging; sink-verified, machine-specific, and at parity across Python 3.12 and 3.14)
 - **Familiar API**: stdlib-compatible for the common patterns; one-line migration from `import logging`
 - **Thread-Safe**: Complete support for multi-threaded applications via Rust `parking_lot::Mutex` + `arc_swap::ArcSwap`
 - **Direct Processing**: Efficient log message processing with native Rust handlers (file I/O synchronous, stream/HTTP/OTLP non-blocking)

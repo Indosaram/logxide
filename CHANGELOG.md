@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-14
+
+### Fixed
+- **Merely installing `sentry-sdk` no longer taxes every log call (~20%) — completes
+  the P1-1 fix.** In 0.2.0, importing `sentry-sdk` (even with no DSN / no active
+  client) pulled in `urllib3`, which registers a formatter-less
+  `logging.NullHandler`. That handler hit 0.2.0's "conservative default = require
+  caller-info when a foreign handler's formatter is not inspectable", flipping the
+  process-global caller-frame flag on and running `sys._getframe().f_lineno` on
+  every record. Root-caused by comparative profiling (the frame lookup was
+  ~22–35% of hot-path CPU on CPython 3.14).
+  - Foreign handlers now force caller-info **only** when their formatter demonstrably
+    references a caller field (`%(pathname)s` / `%(filename)s` / `%(module)s` /
+    `%(lineno)s` / `%(funcName)s`); a formatter-less or non-inspectable handler no
+    longer forces it (performance-safe default).
+  - A **configured** Sentry handler still activates caller-info explicitly (it
+    forwards caller frames to Sentry), and formatters that genuinely use caller
+    fields still populate `pathname`/`lineno`/`funcName` as before.
+  - This also corrects a benchmarking pitfall: a 3.12-vs-3.14 comparison run with
+    `sentry-sdk` present in only one environment showed a spurious ~20% "3.14
+    regression". Environment-matched, CPython 3.12 and 3.14 throughput are at
+    parity; there is no intrinsic 3.14 regression.
+
+### Notes
+- No API or wire-format changes. Behavior change is limited to when caller-frame
+  introspection is auto-enabled. 345 tests pass (343 + a new caller-info-scope
+  regression test).
+
 ## [0.2.0] - 2026-07-13
 
 This release resolves the correctness and performance defects found in the
@@ -53,6 +81,11 @@ the BREAKING section before upgrading.
   handlers/formatters actually in use and is recomputed when handlers are removed,
   instead of a one-way global flag. This removes the ~2.1x per-log penalty observed
   when `sentry-sdk` was merely importable.
+  - **Correction (see 0.2.1):** this fix was **incomplete** in 0.2.0. Importing
+    `sentry-sdk` pulls in `urllib3`, which registers a formatter-less
+    `logging.NullHandler`; 0.2.0's "conservative default" still forced caller-info
+    for such handlers, so the ~20% tax persisted whenever `sentry-sdk` was installed.
+    Fully fixed in 0.2.1.
 
 ### Performance
 - **Enabled logs with no destination do far less work (P1-2).** The Python

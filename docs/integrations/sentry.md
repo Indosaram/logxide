@@ -43,7 +43,7 @@ logger.debug("Debug messages are not sent to Sentry")
 That's it! No additional configuration needed.
 
 !!! note "Detection requires a configured SDK"
-    Auto-detection attaches a Sentry handler only when the Sentry SDK is **already configured** — that is, `sentry_sdk.init()` (or the equivalent environment variables) has run before you use LogXide. Merely having `sentry-sdk` installed but never initialized does **not** attach a Sentry handler. As of 0.2.0, importing an unconfigured Sentry SDK also no longer forces process-global caller-frame collection onto unrelated handlers, so logs whose format string does not need caller info stay on the fast path.
+    Auto-detection attaches a Sentry handler only when the Sentry SDK is **already configured** — that is, `sentry_sdk.init()` (or the equivalent environment variables) has run before you use LogXide. Merely having `sentry-sdk` installed but never initialized does **not** attach a Sentry handler. As of 0.2.1, importing an unconfigured Sentry SDK also no longer forces process-global caller-frame collection onto unrelated handlers, so logs whose format string does not need caller info stay on the fast path.
 
 ### Manual Handler Configuration
 

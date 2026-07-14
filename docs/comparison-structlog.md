@@ -25,14 +25,14 @@ LogXide moves formatting and I/O into a Rust core and releases the GIL for the R
 
 ### Durable throughput vs Structlog (corrected, sink-verified)
 
-Measured with `benchmark/basic_handlers_benchmark.py` on macOS M4 Max, CPython 3.14.2, release build, `-n 20000`, subprocess-isolated per library. **Durable** = records the sink confirmed after flush (every row verified at 20,200 / 20,200). Numbers are machine-specific and rounded:
+Measured with `benchmark/basic_handlers_benchmark.py` on macOS M4 Max, release build, `-n 20000`, subprocess-isolated per library, re-run this session on both CPython 3.12.11 and 3.14.2. **Durable** = records the sink confirmed after flush (every row verified at 20,200 / 20,200). Numbers are machine-specific and rounded:
 
-| Sink   | LogXide durable (p50) | Structlog durable (p50) | stdlib durable |
-| :----- | :-------------------- | :---------------------- | :------------- |
-| FILE   | ~739K rec/s (833 ns)  | 41,364 rec/s (5,583 ns) | 74,605 rec/s   |
-| STREAM | ~273K rec/s (917 ns)  | 116,796 rec/s (5,208 ns) | 53,292 rec/s  |
+| Sink   | LogXide vs stdlib | Structlog durable (p50) | stdlib durable |
+| :----- | :---------------- | :---------------------- | :------------- |
+| FILE   | ~6–11×            | 41,364 rec/s (5,583 ns) | 74,605 rec/s   |
+| STREAM | ~5× (async, see note)    | 116,796 rec/s (5,208 ns) | 53,292 rec/s  |
 
-Structlog is genuinely fast on the **stream** sink here, beating stdlib at ~2.2× (116,796 vs 53,292 rec/s) and outrunning both stdlib and Loguru. On the **file** sink it trails stdlib. LogXide leads all libraries on both sinks (~10× stdlib on file, ~5× on stream). The FILE figure varies ~740K–960K rec/s across runs. See [benchmarks.md](benchmarks.md#comparative-benchmark--all-logging-libraries-corrected-sink-verified) for the full tables and async accounting.
+Structlog is genuinely fast on the **stream** sink here, beating stdlib at ~2.2× (116,796 vs 53,292 rec/s) and outrunning both stdlib and Loguru. On the **file** sink it trails stdlib. LogXide leads all libraries on both sinks — ~6–11× stdlib on file and ~5× on the async stream sink when it fully drains, comparable on Python 3.12 and 3.14. STREAM is best-effort under sustained bursts: confirm delivery with `flush()` and `get_metrics()`. See [benchmarks.md](benchmarks.md#comparative-benchmark--all-logging-libraries-corrected-sink-verified) for the full both-version tables and async accounting.
 
 ### Architectural advantages (independent of any single benchmark)
 
@@ -76,7 +76,7 @@ For the complete compatibility matrix, see [Compatibility](compatibility.md).
 ## When to Use Which
 
 ### Choose LogXide when:
-- **Performance is the priority** — LogXide runs formatting and file I/O in a Rust core rather than through Python's stdlib output path. On the corrected, sink-verified harness it leads Structlog on every sink (~10× stdlib on file, ~5× on stream), even though Structlog itself beats stdlib on the stream sink.
+- **Performance is the priority** — LogXide runs formatting and file I/O in a Rust core rather than through Python's stdlib output path. On the corrected, sink-verified harness it leads Structlog on every sink (~6–11× stdlib on file, ~5× on the async stream sink; comparable on Python 3.12 and 3.14), even though Structlog itself beats stdlib on the stream sink.
 - **You have existing stdlib code** — Minimal migration cost; API-compatible for common patterns.
 - **You need native production handlers** — Async HTTP batching, OTLP export, and native Sentry integration without Python-side overhead.
 - **Framework integration** — Transparently hooks into Django/FastAPI `dictConfig`.

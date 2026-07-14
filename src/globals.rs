@@ -88,15 +88,18 @@ pub fn activate_caller_info(format_str: &str) {
     check_caller_info_needed(format_str);
 }
 
-/// Decide whether a foreign Python handler needs caller-frame info by inspecting its
-/// formatter's format string. Non-inspectable foreign handlers are treated conservatively
-/// as needing caller info (matches prior always-on behavior for e.g. Sentry).
+/// Decide whether a foreign Python handler forces global caller-frame collection, by
+/// inspecting its formatter's format string. Caller-info is forced ONLY when the format
+/// string demonstrably references a caller field (%(pathname)s / %(filename)s /
+/// %(module)s / %(lineno)s / %(funcName)s). A formatter-less or non-inspectable handler
+/// (e.g. urllib3's NullHandler, or a merely-installed unconfigured sentry-sdk) does NOT
+/// force it — caller collection is a per-call tax, so the performance-safe default is off.
 fn python_handler_needs_caller(handler: &Bound<PyAny>) -> bool {
     let Ok(formatter) = handler.getattr("formatter") else {
-        return true;
+        return false;
     };
     if formatter.is_none() {
-        return true;
+        return false;
     }
     let fmt = formatter
         .getattr("fmt")
@@ -105,7 +108,7 @@ fn python_handler_needs_caller(handler: &Bound<PyAny>) -> bool {
         .or_else(|| formatter.getattr("_fmt").ok().filter(|f| !f.is_none()));
     match fmt.and_then(|f| f.extract::<String>().ok()) {
         Some(fmt_str) => format_string_needs_caller(&fmt_str),
-        None => true,
+        None => false,
     }
 }
 

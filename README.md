@@ -1,6 +1,6 @@
 # LogXide
 
-**Up to 13× faster Python logging, powered by Rust.**
+**Several-fold faster than stdlib logging (roughly 5–11× on file logging, scenario- and machine-dependent), sink-verified. Powered by Rust.**
 
 Same stdlib API. Same `getLogger`. Same format strings. Just faster.
 
@@ -10,7 +10,7 @@ import logging                        from logxide import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('myapp')
-logger.info('Hello, world!')          # Up to 13× faster. Same code.
+logger.info('Hello, world!')          # Same code, several-fold faster.
 ```
 
 [![PyPI](https://img.shields.io/pypi/v/logxide)](https://pypi.org/project/logxide/)
@@ -33,31 +33,33 @@ pip install logxide[sentry]
 
 LogXide is performance-first: its native Rust handlers dispatch on the GIL-released fast path, formatting and writing without materializing a Python `LogRecord`. As of 0.2.0 the text-sink wrappers (`FileHandler`, `StreamHandler`, `RotatingFileHandler`) emit through that native Rust path **by default**; a handler only falls back to the Python path for a custom `Formatter` subclass, `{`/`$`-style format strings, or a handler-level Python filter.
 
-### Cross-library durable throughput (sink-verified)
+### Benchmarks
 
-Measured with `benchmark/basic_handlers_benchmark.py` on macOS M4 Max, CPython 3.14.2, release build, `-n 20000`, each library in its own subprocess. **Durable** = records the sink actually confirmed after flush (every row verified at 20,200 / 20,200), not records merely enqueued. Numbers are machine-specific and rounded:
+Two sink-verified benchmarks, both re-run this session on **macOS M4 Max, release build**, across **Python 3.12.11 and 3.14.2**. *Sink-verified durable throughput* means records the sink actually confirmed after `flush()`, not records merely enqueued. Numbers are machine-specific and rounded to ranges; baselines are noisy run-to-run (roughly ±40%), so treat the ranges as the signal, not any single figure. **CPython 3.12 and 3.14 come out at parity** once the test environments match, so the ranges below apply to both.
 
-| Sink        |  LogXide durable rec/s |    stdlib | LogXide vs stdlib |
-| :---------- | ---------------------: | --------: | :---------------- |
-| FILE        |             ~739K–960K |    74,605 | **~10×**          |
-| STREAM      |                ~273K   |    53,292 | **~5×**           |
-| ROTATING    |                ~202K   |    42,981 | **~4.7×**         |
+**Benchmark A — native `FileHandler` vs stdlib.** `benchmark/perf_vs_stdlib.py`, LogXide and stdlib each measured in isolation. `FileHandler` is synchronous, so these are durable (no async drops). Rounded speedup vs stdlib, comparable on Python 3.12 and 3.14:
 
-LogXide leads every sink. On STREAM, Structlog is the runner-up (~117K rec/s, ~2.2× stdlib) but still well behind LogXide. Full tables, per-library p50 latencies, and async delivery accounting are in [docs/benchmarks.md](docs/benchmarks.md#comparative-benchmark--all-logging-libraries-corrected-sink-verified).
+| Scenario   | Speedup vs stdlib |
+| :--------- | :---------------- |
+| simple     | **~7–9×**         |
+| structured | **~7–9×**         |
+| `%`-args   | **~5–6×**         |
 
-### vs stdlib, single-format FileHandler (subprocess-isolated)
+**Benchmark B — durable cross-library sink.** `benchmark/basic_handlers_benchmark.py`, each library in its own subprocess, sink-verified 20,200 / 20,200. Rounded speedup vs stdlib, comparable across Python 3.12 and 3.14:
 
-FileHandler benchmark, Python 3.12, 100K iterations, format `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`, LogXide vs stdlib with stdlib in a subprocess for fair isolation. `FileHandler` is synchronous, so these are durable numbers (no async drops). Figures are machine-specific:
+| Sink     | Speedup vs stdlib         |
+| :------- | :------------------------ |
+| FILE     | **~6–11×**                |
+| ROTATING | **~8–14×**                |
+| STREAM   | **~5×** (async, see note) |
 
-| Scenario              |   LogXide |  stdlib | Speedup     |
-| :-------------------- | --------: | ------: | :---------- |
-| Simple                | 1,922,911 | 145,562 | **13.21×**  |
-| Structured (f-string) | 1,612,029 | 144,328 | **11.17×**  |
-| With `%s` args        |   976,572 | 144,156 | **6.77×**   |
+> **STREAM is asynchronous.** It reaches ~5× when its queue fully drains, but under a sustained max-rate burst the bounded queue can drop records (one loaded run delivered ~14,420 / 20,200; an idle machine delivered 20,200 / 20,200). Treat STREAM as fast best-effort delivery: call `flush()` and check `get_metrics()` to confirm what landed, rather than as a guaranteed durable multiplier.
 
-> **Python 3.14**: LogXide is also faster (4.25–7.23× vs stdlib), though the absolute gap narrows because stdlib's per-iteration overhead is lower under 3.14. See [docs/benchmarks.md](docs/benchmarks.md#python-314) for the full Python 3.14 table.
+Async HTTP delivery is accounted honestly on both versions: `http_block` lands 20,000 / 20,000 (durable), while `http_drop_newest` delivers ~260 / 20,000 and drops the rest, with `emitted == sink_acknowledged + queue_dropped + delivery_failed` holding throughout.
 
-For per-handler latency, async accounting, internal optimization wave breakdown, and historical comparison data, see [docs/benchmarks.md](docs/benchmarks.md).
+> A prior draft reported a "Python 3.14 regression" (roughly half the file-path speedup on 3.14). That was a measurement artifact, not a real regression: the 3.14 test environment had `sentry-sdk` installed while the 3.12 one did not, and importing it pulled in a formatter-less `NullHandler` that forced process-global caller-frame collection on every log (a ~20% tax that only hit the 3.14 runs). This is fixed in 0.2.1; environment-matched, the two versions are at parity.
+
+For full per-handler p50/p99 latency, cross-library detail, and async accounting, see [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Works With
 
@@ -95,7 +97,7 @@ logger.error("This is automatically sent to Sentry")
 - WARNING+ sent as events, INFO as breadcrumbs
 - Full stack traces and custom context
 
-An installed-but-unconfigured Sentry SDK does not attach a handler, and (as of 0.2.0) importing it no longer forces process-global caller-frame collection onto unrelated handlers.
+An installed-but-unconfigured Sentry SDK does not attach a handler, and (as of 0.2.1) importing it no longer forces process-global caller-frame collection onto unrelated handlers.
 
 ## Native OpenTelemetry Support
 

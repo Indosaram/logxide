@@ -22,15 +22,15 @@ LogXide is performance-first. As of 0.2.0 its text-sink wrappers (`FileHandler`,
 
 ### Corrected, sink-verified throughput vs Loguru
 
-Measured with `benchmark/basic_handlers_benchmark.py` on macOS M4 Max, CPython 3.14.2, release build, `-n 20000`, each library in its own subprocess. **Durable** throughput counts records the sink confirmed after flush (every row verified at 20,200 / 20,200), reported separately from producer latency (p50 shown). Numbers are machine-specific and rounded:
+Measured with `benchmark/basic_handlers_benchmark.py` on macOS M4 Max, release build, `-n 20000`, each library in its own subprocess, re-run this session on both CPython 3.12.11 and 3.14.2. **Durable** throughput counts records the sink confirmed after flush (every row verified at 20,200 / 20,200), reported separately from producer latency (p50 shown). Numbers are machine-specific and rounded:
 
-| Sink     | LogXide (p50)       | Loguru (p50)       |
-| :------- | :------------------ | :----------------- |
-| FILE     | ~739K rec/s (833 ns) | 57,511 rec/s (8,500 ns) |
-| STREAM   | ~273K rec/s (917 ns) | 52,508 rec/s (8,459 ns) |
-| ROTATING | ~202K rec/s (833 ns) | 33,095 rec/s (9,666 ns) |
+| Sink     | LogXide vs stdlib | Loguru (p50)       |
+| :------- | :---------------- | :----------------- |
+| FILE     | ~6–11×            | 57,511 rec/s (8,500 ns) |
+| STREAM   | ~5× (async, see note)    | 52,508 rec/s (8,459 ns) |
+| ROTATING | ~8–14×            | 33,095 rec/s (9,666 ns) |
 
-LogXide leads Loguru by roughly an order of magnitude on every sink here. For reference, LogXide is ~10× stdlib on file, ~5× on stream, and ~4.7× on rotating; Loguru trails stdlib on all three. The FILE durable figure varies ~740K–960K rec/s across runs. Full cross-library tables and async delivery accounting are in [benchmarks.md](benchmarks.md#comparative-benchmark--all-logging-libraries-corrected-sink-verified).
+LogXide leads Loguru by roughly an order of magnitude on every sink here; Loguru trails stdlib on all three. For reference, LogXide is ~6–11× stdlib on file and ~8–14× on rotating, plus ~5× on the async stream sink when it fully drains — comparable on Python 3.12 and 3.14, with that stream figure best-effort under sustained bursts, so confirm delivery with `flush()` and `get_metrics()`. Full cross-library tables and async delivery accounting are in [benchmarks.md](benchmarks.md#comparative-benchmark--all-logging-libraries-corrected-sink-verified).
 
 ### Architectural advantages (independent of any single benchmark)
 

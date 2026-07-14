@@ -88,6 +88,14 @@ def _auto_configure_sentry(enable=None):
             _std_logging.root.addHandler(handler)  # type: ignore[arg-type]
             # Add to LogXide root logger
             getLogger().addHandler(handler)
+            # A configured SentryHandler forwards caller frame info (pathname/
+            # lineno/funcName) to Sentry, so it genuinely needs global caller-info.
+            # Merely-installed/unconfigured sentry-sdk adds no handler here and must
+            # NOT force this tax — see globals.rs python_handler_needs_caller.
+            with contextlib.suppress(Exception):
+                logxide.logging.activate_caller_info(
+                    "%(pathname)s%(lineno)s%(funcName)s"
+                )
     except ImportError:
         pass
 
