@@ -226,7 +226,9 @@ def test_doc_codeblock_exec(block_id: str, code: str):
             cwd=tmpdir,
             capture_output=True,
             text=True,
-            timeout=10,
+            # Generous: each block spawns a fresh subprocess that cold-imports the
+            # Rust extension; Windows CI runners are slow to start (10s flaked).
+            timeout=45,
         )
         if result.returncode != 0:
             stderr = result.stderr.strip().split("\n")
